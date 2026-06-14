@@ -6,12 +6,12 @@ import {
   CheckCircle2, Zap, Target, Database, Activity, ChevronRight,
   Sparkles, AlertTriangle
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Header } from "@/components/header";
-import { SearchBar } from "@/components/search-bar";
-import { useSearch } from "@/hooks/use-search";
-import { type Vertical, type IntelligenceObject } from "@/types/search";
+import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
+import { Header } from "../components/header";
+import { SearchBar } from "../components/search-bar";
+import { useSearch } from "../hooks/use-search";
+import { type Vertical, type IntelligenceObject } from "../types/search";
 
 const VERTICALS: { id: Vertical; label: string; icon: typeof Phone; color: string }[] = [
   { id: "contact", label: "Contact", icon: Phone, color: "text-blue-500" },
