@@ -3,13 +3,16 @@
 import {
   Search, Zap, Database, Activity, Sparkles, Star,
   ExternalLink, Clock, Globe, AlertTriangle, TrendingUp, FileText, Building2, Code, Newspaper, Stethoscope,
-  Calendar, DollarSign, MapPin, Phone, Mail, CheckCircle, Scale, GraduationCap, TrendingUp as TrendingUpIcon, Briefcase
+  Calendar, DollarSign, MapPin, Phone, Mail, CheckCircle, Scale, GraduationCap, TrendingUp as TrendingUpIcon, Briefcase,
+  ArrowUpDown, Download, Filter, X
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
 import { Header } from "../components/header";
 import { SearchBar } from "../components/search-bar";
 import { useSearch } from "../hooks/use-search";
 import { type SearchLens, type ScrapedResult, type ProcurementIntelligence, type ProviderIntelligence, type PricingIntelligence, type LegalIntelligence, type MedicalIntelligence, type AcademicIntelligence, type FinancialIntelligence } from "../types/search";
+import { useState, useMemo } from "react";
 
 const LENSES: { id: SearchLens; label: string; icon: typeof Search }[] = [
   { id: "web", label: "Web", icon: Search },
@@ -38,6 +41,85 @@ export default function Home() {
     intelligence, scrapedResults, isLoading, error, suggestions,
     hasSearched, searchTime, performSearch,
   } = useSearch();
+
+  // UI state for filtering and sorting
+  const [sortBy, setSortBy] = useState<'score' | 'rank' | 'source'>('score')
+  const [filterSource, setFilterSource] = useState<string | null>(null)
+  const [showFilters, setShowFilters] = useState(false)
+
+  // Get unique sources
+  const sources = useMemo(() => {
+    const uniqueSources = new Set(scrapedResults.map(r => r.source))
+    return Array.from(uniqueSources)
+  }, [scrapedResults])
+
+  // Filter and sort results
+  const filteredResults = useMemo(() => {
+    let results = [...scrapedResults]
+
+    // Filter by source
+    if (filterSource) {
+      results = results.filter(r => r.source === filterSource)
+    }
+
+    // Sort
+    results.sort((a, b) => {
+      if (sortBy === 'score') return b.score - a.score
+      if (sortBy === 'rank') return a.rank - b.rank
+      if (sortBy === 'source') return a.source.localeCompare(b.source)
+      return 0
+    })
+
+    return results
+  }, [scrapedResults, sortBy, filterSource])
+
+  // Export results
+  const exportResults = (format: 'json' | 'csv') => {
+    // Sanitize query for safe filename
+    const safeQuery = query.replace(/[^a-zA-Z0-9-]/g, '_').substring(0, 50)
+    const timestamp = new Date().toISOString()
+    
+    if (format === 'json') {
+      const data = JSON.stringify({
+        metadata: {
+          query,
+          lens,
+          timestamp,
+          resultCount: filteredResults.length,
+        },
+        results: filteredResults,
+      }, null, 2)
+      const blob = new Blob([data], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `search-results-${safeQuery}-${timestamp}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } else if (format === 'csv') {
+      const headers = ['Title', 'URL', 'Description', 'Source', 'Score', 'Rank']
+      const rows = filteredResults.map(r => [
+        `"${(r.title || '').replace(/"/g, '""')}"`,
+        `"${r.url}"`,
+        `"${(r.description || '').replace(/"/g, '""')}"`,
+        `"${r.source}"`,
+        r.score ?? 0,
+        r.rank ?? 0,
+      ])
+      const csv = [
+        `"Metadata","Query: ${query}","Lens: ${lens}","Timestamp: ${timestamp}","Results: ${filteredResults.length}"`,
+        headers.join(','),
+        ...rows.map(r => r.join(','))
+      ].join('\n')
+      const blob = new Blob([csv], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `search-results-${safeQuery}-${timestamp}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -90,16 +172,90 @@ export default function Home() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <span className="text-sm text-muted-foreground">
-                  {scrapedResults.length} results
+                  {filteredResults.length} results
+                  {filterSource && ` (filtered from ${scrapedResults.length})`}
                 </span>
                 <Badge variant="outline" className="text-xs capitalize">
                   {lens}
                 </Badge>
+                {filterSource && (
+                  <Badge variant="secondary" className="text-xs flex items-center gap-1">
+                    {filterSource}
+                    <button onClick={() => setFilterSource(null)} className="hover:text-foreground">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </Badge>
+                )}
               </div>
-              <span className="text-xs text-muted-foreground">
-                {searchTime.toFixed(0)}ms
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {searchTime.toFixed(0)}ms
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowFilters(!showFilters)}
+                  className="h-7 px-2"
+                >
+                  <Filter className="w-3.5 h-3.5 mr-1" />
+                  Filters
+                </Button>
+              </div>
             </div>
+
+            {/* Filter/Sort Controls */}
+            {showFilters && (
+              <div className="mb-4 p-3 bg-muted/50 rounded-lg border">
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Sort by:</span>
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as 'score' | 'rank' | 'source')}
+                      className="text-xs bg-background border rounded px-2 py-1"
+                    >
+                      <option value="score">Score</option>
+                      <option value="rank">Rank</option>
+                      <option value="source">Source</option>
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Filter by source:</span>
+                    <select
+                      value={filterSource || ''}
+                      onChange={(e) => setFilterSource(e.target.value || null)}
+                      className="text-xs bg-background border rounded px-2 py-1"
+                    >
+                      <option value="">All sources</option>
+                      {sources.map(s => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-2 ml-auto">
+                    <span className="text-xs text-muted-foreground">Export:</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => exportResults('json')}
+                      className="h-7 px-2 text-xs"
+                    >
+                      <Download className="w-3 h-3 mr-1" />
+                      JSON
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => exportResults('csv')}
+                      className="h-7 px-2 text-xs"
+                    >
+                      <Download className="w-3 h-3 mr-1" />
+                      CSV
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {error && (
               <div className="mb-6 p-4 rounded-lg border border-destructive bg-destructive/10 text-destructive">
@@ -171,12 +327,12 @@ export default function Home() {
 
             {/* Search Results */}
             <div className="space-y-4">
-              {scrapedResults.map((result, index) => (
+              {filteredResults.map((result, index) => (
                 <SearchResultCard key={result.url + index} result={result} index={index} />
               ))}
             </div>
 
-            {scrapedResults.length === 0 && !isLoading && (
+            {filteredResults.length === 0 && !isLoading && (
               <div className="text-center py-12">
                 <Globe className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <h3 className="text-lg font-medium">No web results found</h3>

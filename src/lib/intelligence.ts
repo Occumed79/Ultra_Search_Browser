@@ -76,20 +76,41 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
   government: {
     label: 'GOVERNMENT',
     description: 'Find government sources and official documents',
-    keywords: ['government', 'official', 'federal', 'state', 'agency', 'department'],
+    keywords: ['government', 'official', 'federal', 'state', 'agency', 'department', 'county', 'city', 'municipal'],
     synonymMap: {
-      government: ['federal', 'state', 'official', 'agency', 'department', 'authority'],
+      government: ['federal', 'state', 'official', 'agency', 'department', 'authority', 'municipal', 'county', 'city'],
     },
-    expansions: (q) => [
-      `site:.gov ${q}`,
-      `${q} government`,
-      `${q} official`,
-      `${q} agency`,
-    ],
-    siteOperators: ['site:.gov'],
+    expansions: (q) => {
+      // Preserve user-entered site: queries
+      const hasSiteQuery = q.includes('site:')
+      const baseQuery = hasSiteQuery ? q : q
+      
+      const expansions = [
+        `site:.gov ${baseQuery}`,
+        `site:.us ${baseQuery}`,
+        `${baseQuery} government`,
+        `${baseQuery} official`,
+        `${baseQuery} agency`,
+        `${baseQuery} county`,
+        `${baseQuery} city`,
+        `${baseQuery} state`,
+        `${baseQuery} procurement`,
+        `${baseQuery} bid`,
+        `${baseQuery} RFP`,
+        `${baseQuery} solicitation`,
+        'occupational health site:.gov',
+        'occupational medicine site:.gov',
+      ]
+      
+      return expansions
+    },
+    siteOperators: ['site:.gov', 'site:.us'],
     scoringRules: [
       { pattern: /\.gov\b/i, score: 35, name: '.gov domain' },
-      { pattern: /government|official|federal|state agency/i, score: 30, name: 'government source' },
+      { pattern: /\.us\b/i, score: 30, name: '.us domain' },
+      { pattern: /government|official|federal|state agency|county|city|municipal/i, score: 30, name: 'government source' },
+      { pattern: /procurement|bid|RFP|solicitation/i, score: 25, name: 'procurement content' },
+      { pattern: /occupational health|occupational medicine/i, score: 25, name: 'occupational health content' },
     ],
   },
 

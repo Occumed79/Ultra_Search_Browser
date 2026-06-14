@@ -13,73 +13,154 @@ export function extractProcurementIntelligence(
   const lowerText = text.toLowerCase()
   const lowerTitle = title.toLowerCase()
 
-  // Determine opportunity type
+  // Determine opportunity type with more patterns
   let opportunityType: ProcurementIntelligence['opportunity_type'] = 'unknown'
-  if (/rfp|request for proposal/i.test(lowerText) || /rfp|request for proposal/i.test(lowerTitle)) {
-    opportunityType = 'RFP'
-  } else if (/rfq|request for quotation/i.test(lowerText) || /rfq|request for quotation/i.test(lowerTitle)) {
-    opportunityType = 'RFQ'
-  } else if (/rft|request for tender/i.test(lowerText) || /rft|request for tender/i.test(lowerTitle)) {
-    opportunityType = 'RFT'
-  } else if (/solicitation/i.test(lowerText) || /solicitation/i.test(lowerTitle)) {
-    opportunityType = 'solicitation'
-  } else if (/bid|tender/i.test(lowerText) || /bid|tender/i.test(lowerTitle)) {
-    opportunityType = 'bid'
-  } else if (/procurement/i.test(lowerText) || /procurement/i.test(lowerTitle)) {
-    opportunityType = 'procurement'
+  const typePatterns = [
+    { pattern: /rfp|request for proposal|request for proposals/i, type: 'RFP' as const },
+    { pattern: /rfq|request for quotation|request for quote/i, type: 'RFQ' as const },
+    { pattern: /rft|request for tender|request for tenders/i, type: 'RFT' as const },
+    { pattern: /solicitation|solicitations/i, type: 'solicitation' as const },
+    { pattern: /bid|bidding|invitation to bid|itb/i, type: 'bid' as const },
+    { pattern: /tender|tendering/i, type: 'tender' as const },
+    { pattern: /procurement|contract/i, type: 'procurement' as const },
+    { pattern: /quote|quotation/i, type: 'RFQ' as const },
+    { pattern: /proposal|proposals/i, type: 'RFP' as const },
+  ]
+  
+  for (const { pattern, type } of typePatterns) {
+    if (pattern.test(lowerText) || pattern.test(lowerTitle)) {
+      opportunityType = type
+      break
+    }
   }
 
-  // Extract organization (usually county, city, or agency name)
-  const orgMatch = text.match(/(?:County|City|State|Department|Agency|District)\s+of\s+([A-Z][a-zA-Z\s]+)/i) ||
-                    title.match(/([A-Z][a-zA-Z\s]+(?:County|City|State|Department|Agency|District))/i)
-  const organization = orgMatch ? orgMatch[1].trim() : title.split(/\s+/).slice(0, 3).join(' ')
+  // Extract organization with more patterns
+  const orgPatterns = [
+    /(?:County|City|State|Department|Agency|District|Bureau|Office|Authority|Commission)\s+(?:of|for)\s+([A-Z][a-zA-Z\s]+)/i,
+    /([A-Z][a-zA-Z\s]+(?:County|City|State|Department|Agency|District|Bureau|Office|Authority|Commission))/i,
+    /(?:Department|Agency|Office)\s+of\s+([A-Z][a-zA-Z\s]+)/i,
+  ]
+  
+  let organization = title.split(/\s+/).slice(0, 3).join(' ')
+  for (const pattern of orgPatterns) {
+    const match = text.match(pattern) || title.match(pattern)
+    if (match) {
+      organization = match[1].trim()
+      break
+    }
+  }
 
-  // Extract service (occupational health, etc.)
-  const serviceMatch = text.match(/(?:for|providing|offering)\s+([a-zA-Z\s]+(?:services|health|medicine|clinic))/i) ||
-                        title.match(/([a-zA-Z\s]+(?:Health|Medicine|Services))/i)
-  const service = serviceMatch ? serviceMatch[1].trim() : 'occupational health services'
+  // Extract service with more patterns
+  const servicePatterns = [
+    /(?:for|providing|offering|services?|contract for)\s+([a-zA-Z\s]+(?:services?|health|medicine|clinic|care|support|management|consulting))/i,
+    /([a-zA-Z\s]+(?:Health|Medicine|Services|Care|Support|Management|Consulting))/i,
+  ]
+  
+  let service = 'professional services'
+  for (const pattern of servicePatterns) {
+    const match = text.match(pattern) || title.match(pattern)
+    if (match) {
+      service = match[1].trim()
+      break
+    }
+  }
 
-  // Extract due date
-  const dueDateMatch = text.match(/(?:due date|deadline|closing|responses due|submission deadline)[:\s]+([A-Z][a-z]+ \d{1,2},?\s+\d{4})/i) ||
-                       text.match(/(?:due|deadline)[:\s]+(\d{1,2}\/\d{1,2}\/\d{4})/i)
-  const dueDate = dueDateMatch ? dueDateMatch[1] : undefined
+  // Extract due date with more patterns
+  const dueDatePatterns = [
+    /(?:due date|deadline|closing|responses due|submission deadline|response due)[:\s]+([A-Z][a-z]+ \d{1,2},?\s+\d{4})/i,
+    /(?:due|deadline|closing)[:\s]+(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /(?:due|deadline)[:\s]+(\d{4}-\d{2}-\d{2})/i,
+    /(?:due|deadline)[:\s]+(\d{1,2}\s+[A-Z][a-z]+,\s+\d{4})/i,
+  ]
+  
+  let dueDate: string | undefined
+  for (const pattern of dueDatePatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      dueDate = match[1]
+      break
+    }
+  }
 
   // Extract procurement email
   const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)
   const procurementEmail = emailMatch ? emailMatch[0] : undefined
 
-  // Extract procurement phone
-  const phoneMatch = text.match(new RegExp('(?:phone|tel|call)[:\\s]*\\d[\\d\\s]*)?(\\+?1?\\d[\\d\\s]*)', 'i'))
-  const procurementPhone = phoneMatch ? phoneMatch[1] : undefined
+  // Extract procurement phone with more patterns
+  const phonePatterns = [
+    /(?:phone|tel|call|contact|telephone)[:\s]*(\+?1?[\d\s\-\(\)]{10,})/i,
+    /(\+?1?[\d\s\-\(\)]{10,})/,
+  ]
+  
+  let procurementPhone: string | undefined
+  for (const pattern of phonePatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      procurementPhone = match[1].replace(/[\s\-\(\)]/g, '')
+      break
+    }
+  }
 
-  // Extract monetary value
-  const moneyMatch = text.match(/\$[\d,]+(?:\.\d{2})?|\$\d+\s*(?:million|k|K)/i)
-  const monetaryValue = moneyMatch ? moneyMatch[0] : undefined
+  // Extract monetary value with more patterns
+  const moneyPatterns = [
+    /\$[\d,]+(?:\.\d{2})?/i,
+    /\$\d+\s*(?:million|billion|k|K|M|B)/i,
+    /(?:estimated|approx|about|up to)\s*\$[\d,]+/i,
+  ]
+  
+  let monetaryValue: string | undefined
+  for (const pattern of moneyPatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      monetaryValue = match[0]
+      break
+    }
+  }
 
-  // Extract posted date
-  const postedMatch = text.match(/(?:posted|published|date)[:\s]+([A-Z][a-z]+ \d{1,2},?\s+\d{4})/i) ||
-                      text.match(/(?:posted|published)[:\s]+(\d{1,2}\/\d{1,2}\/\d{4})/i)
-  const postedDate = postedMatch ? postedMatch[1] : undefined
+  // Extract posted date with more patterns
+  const postedPatterns = [
+    /(?:posted|published|date|created|issued)[:\s]+([A-Z][a-z]+ \d{1,2},?\s+\d{4})/i,
+    /(?:posted|published|date)[:\s]+(\d{1,2}\/\d{1,2}\/\d{4})/i,
+    /(?:posted|published|date)[:\s]+(\d{4}-\d{2}-\d{2})/i,
+  ]
+  
+  let postedDate: string | undefined
+  for (const pattern of postedPatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      postedDate = match[1]
+      break
+    }
+  }
 
-  // Determine status
+  // Determine status with more patterns
   let status: ProcurementIntelligence['status'] = 'unknown'
-  if (/open|active|current|accepting proposals/i.test(lowerText)) {
-    status = 'open'
-  } else if (/closed|awarded|expired/i.test(lowerText)) {
-    status = 'closed'
+  const statusPatterns = [
+    { pattern: /open|active|current|accepting proposals|accepting bids/i, status: 'open' as const },
+    { pattern: /closed|awarded|expired|complete|withdrawn/i, status: 'closed' as const },
+    { pattern: /pending|under review|evaluation/i, status: 'active' as const },
+  ]
+  
+  for (const { pattern, status: s } of statusPatterns) {
+    if (pattern.test(lowerText)) {
+      status = s
+      break
+    }
   }
 
   // Calculate source confidence based on signals
   const signals = [
     opportunityType !== 'unknown' ? 'procurement language' : '',
     /\.gov/i.test(url) ? '.gov domain' : '',
-    /sam\.gov|bonfire|planetbids|ionwave|bidnet/i.test(url) ? 'procurement portal' : '',
+    /sam\.gov|bonfire|planetbids|ionwave|bidnet|governmentbids|rfpdb/i.test(url) ? 'procurement portal' : '',
     dueDate ? 'includes deadline' : '',
     monetaryValue ? 'monetary value' : '',
     status === 'open' ? 'active opportunity' : '',
+    procurementEmail ? 'contact email' : '',
+    procurementPhone ? 'contact phone' : '',
   ].filter(Boolean)
 
-  const sourceConfidence = Math.min(95, 40 + signals.length * 10)
+  const sourceConfidence = Math.min(95, 35 + signals.length * 8)
 
   return {
     organization,
@@ -107,14 +188,37 @@ export function extractProviderIntelligence(
 ): ProviderIntelligence | undefined {
   const lowerText = text.toLowerCase()
 
-  // Extract provider name
-  const nameMatch = title.match(/([A-Z][a-zA-Z\s]+(?:Clinic|Center|Health|Medicine|Medical|Occupational))/i) ||
-                    text.match(/(?:provider|clinic|facility)[:\s]+([A-Z][a-zA-Z\s]+)/i)
-  const providerName = nameMatch ? nameMatch[1].trim() : title.split(/\s+/).slice(0, 2).join(' ')
+  // Extract provider name with more patterns
+  const namePatterns = [
+    /([A-Z][a-zA-Z\s]+(?:Clinic|Center|Health|Medicine|Medical|Occupational|Wellness|Care))/i,
+    /(?:provider|clinic|facility|practice|hospital)[:\s]+([A-Z][a-zA-Z\s]+)/i,
+    /([A-Z][a-zA-Z\s]+(?:Associates|Group|Partners))/i,
+  ]
+  
+  let providerName = title.split(/\s+/).slice(0, 2).join(' ')
+  for (const pattern of namePatterns) {
+    const match = text.match(pattern) || title.match(pattern)
+    if (match) {
+      providerName = match[1].trim()
+      break
+    }
+  }
 
-  // Extract address
-  const addressMatch = text.match(/(\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+,\s+[A-Z]{2}\s+\d{5})/i)
-  const address = addressMatch ? addressMatch[1] : undefined
+  // Extract address with more patterns
+  const addressPatterns = [
+    /(\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+,\s+[A-Z]{2}\s+\d{5})/i,
+    /(\d+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\s+[A-Z]{2}\s+\d{5})/i,
+    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+,\s+[A-Z]{2}\s+\d{5})/i,
+  ]
+  
+  let address: string | undefined
+  for (const pattern of addressPatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      address = match[1]
+      break
+    }
+  }
 
   // Extract city/state/zip from address
   let city, state, zip
@@ -130,29 +234,62 @@ export function extractProviderIntelligence(
     }
   }
 
-  // Extract provider phone
-  const phoneMatch = text.match(new RegExp('(?:phone|tel|call)[:\\s]*\\d[\\d\\s]*)?(\\+?1?\\d[\\d\\s]*)', 'i'))
-  const providerPhone = phoneMatch ? phoneMatch[1] : undefined
+  // Extract provider phone with more patterns
+  const phonePatterns = [
+    /(?:phone|tel|call|contact|telephone)[:\s]*(\+?1?[\d\s\-\(\)]{10,})/i,
+    /(\+?1?[\d\s\-\(\)]{10,})/,
+  ]
+  
+  let providerPhone: string | undefined
+  for (const pattern of phonePatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      providerPhone = match[1].replace(/[\s\-\(\)]/g, '')
+      break
+    }
+  }
 
-  // Extract services offered
+  // Extract services offered with more patterns
+  const servicePatterns = [
+    { pattern: /occupational health|occupational medicine|occ health/i, service: 'occupational health' },
+    { pattern: /dot physical|cdl physical|department of transportation/i, service: 'DOT physical' },
+    { pattern: /drug test|drug screening|drug screen|substance abuse/i, service: 'drug testing' },
+    { pattern: /pft|spirometry|pulmonary function|lung function/i, service: 'PFT' },
+    { pattern: /audiometry|hearing test|hearing screening/i, service: 'audiometry' },
+    { pattern: /respirator|fit test|respiratory protection/i, service: 'respirator fit test' },
+    { pattern: /physical exam|pre-employment|pre employment/i, service: 'physical exams' },
+    { pattern: /vaccination|immunization|flu shot|tb test/i, service: 'vaccinations' },
+    { pattern: /x-ray|radiology|imaging/i, service: 'x-ray services' },
+    { pattern: /lab|laboratory|blood work/i, service: 'laboratory services' },
+  ]
+  
   const services: string[] = []
-  if (/occupational health|occupational medicine/i.test(lowerText)) services.push('occupational health')
-  if (/dot physical|cdl physical/i.test(lowerText)) services.push('DOT physical')
-  if (/drug test|drug screening/i.test(lowerText)) services.push('drug testing')
-  if (/pft|spirometry|pulmonary function/i.test(lowerText)) services.push('PFT')
-  if (/audiometry|hearing test/i.test(lowerText)) services.push('audiometry')
-  if (/respirator|fit test/i.test(lowerText)) services.push('respirator fit test')
-  if (/physical exam|pre-employment/i.test(lowerText)) services.push('physical exams')
+  for (const { pattern, service } of servicePatterns) {
+    if (pattern.test(lowerText)) {
+      services.push(service)
+    }
+  }
 
-  // Extract credentials
+  // Extract credentials with more patterns
+  const credentialPatterns = [
+    { pattern: /board certified|board-certified/i, credential: 'Board Certified' },
+    { pattern: /licensed|licensure/i, credential: 'Licensed' },
+    { pattern: /accredited|accreditation/i, credential: 'Accredited' },
+    { pattern: /certified|certification/i, credential: 'Certified' },
+    { pattern: /fellow|fellowship/i, credential: 'Fellow' },
+  ]
+  
   const credentials: string[] = []
-  if (/board certified/i.test(lowerText)) credentials.push('Board Certified')
-  if (/licensed/i.test(lowerText)) credentials.push('Licensed')
-  if (/accredited/i.test(lowerText)) credentials.push('Accredited')
+  for (const { pattern, credential } of credentialPatterns) {
+    if (pattern.test(lowerText)) {
+      credentials.push(credential)
+    }
+  }
 
   // Determine payment acceptance
-  const acceptsSelfPay = /self-pay|cash pay|out-of-pocket/i.test(lowerText)
-  const acceptsEmployer = /employer|work comp|workers compensation/i.test(lowerText)
+  const acceptsSelfPay = /self-pay|cash pay|out-of-pocket|private pay/i.test(lowerText)
+  const acceptsEmployer = /employer|work comp|workers compensation|workers' comp/i.test(lowerText)
+  const acceptsInsurance = /insurance|in-network|blue cross|aetna|cigna|united/i.test(lowerText)
 
   // Calculate source confidence
   const signals = [
@@ -160,9 +297,10 @@ export function extractProviderIntelligence(
     providerPhone ? 'contact information' : '',
     services.length > 0 ? 'occupational services' : '',
     credentials.length > 0 ? 'credentials' : '',
+    acceptsInsurance ? 'accepts insurance' : '',
   ].filter(Boolean)
 
-  const sourceConfidence = Math.min(95, 40 + signals.length * 10)
+  const sourceConfidence = Math.min(95, 35 + signals.length * 8)
 
   return {
     provider_name: providerName,
@@ -176,8 +314,8 @@ export function extractProviderIntelligence(
     website_url: url,
     matched_signals: signals,
     credentials: credentials.length > 0 ? credentials : undefined,
-    accepts_self_pay: acceptsSelfPay || undefined,
-    accepts_employer: acceptsEmployer || undefined,
+    accepts_self_pay: acceptsSelfPay,
+    accepts_employer: acceptsEmployer,
   }
 }
 
@@ -191,58 +329,112 @@ export function extractPricingIntelligence(
 ): PricingIntelligence | undefined {
   const lowerText = text.toLowerCase()
 
-  // Extract provider name
-  const nameMatch = title.match(/([A-Z][a-zA-Z\s]+(?:Clinic|Center|Health|Medicine|Medical))/i) ||
-                    text.match(/(?:provider|clinic|facility)[:\s]+([A-Z][a-zA-Z\s]+)/i)
-  const providerName = nameMatch ? nameMatch[1].trim() : title.split(/\s+/).slice(0, 2).join(' ')
+  // Extract provider name with more patterns
+  const namePatterns = [
+    /([A-Z][a-zA-Z\s]+(?:Clinic|Center|Health|Medicine|Medical))/i,
+    /(?:provider|clinic|facility|practice)[:\s]+([A-Z][a-zA-Z\s]+)/i,
+  ]
+  
+  let providerName = title.split(/\s+/).slice(0, 2).join(' ')
+  for (const pattern of namePatterns) {
+    const match = text.match(pattern) || title.match(pattern)
+    if (match) {
+      providerName = match[1].trim()
+      break
+    }
+  }
 
-  // Determine service category
+  // Determine service category with more patterns
+  const servicePatterns = [
+    { pattern: /pft|spirometry|pulmonary function|lung function/i, category: 'PFT' as const },
+    { pattern: /dot physical|cdl physical|department of transportation/i, category: 'DOT' as const },
+    { pattern: /physical exam|pre-employment|pre employment/i, category: 'physical' as const },
+    { pattern: /drug test|drug screening|drug screen|substance abuse/i, category: 'drug test' as const },
+    { pattern: /audiometry|hearing test|hearing screening/i, category: 'audiometry' as const },
+    { pattern: /respirator|fit test|respiratory protection/i, category: 'respirator' as const },
+    { pattern: /vaccination|immunization|flu shot/i, category: 'vaccination' as const },
+    { pattern: /x-ray|radiology|imaging/i, category: 'x-ray' as const },
+    { pattern: /lab|laboratory|blood work/i, category: 'lab' as const },
+  ]
+  
   let serviceCategory: PricingIntelligence['service_category'] = 'unknown'
-  if (/pft|spirometry|pulmonary function/i.test(lowerText)) {
-    serviceCategory = 'PFT'
-  } else if (/dot physical|cdl physical/i.test(lowerText)) {
-    serviceCategory = 'DOT'
-  } else if (/physical exam|pre-employment/i.test(lowerText)) {
-    serviceCategory = 'physical'
-  } else if (/drug test|drug screening/i.test(lowerText)) {
-    serviceCategory = 'drug test'
-  } else if (/audiometry|hearing test/i.test(lowerText)) {
-    serviceCategory = 'audiometry'
-  } else if (/respirator|fit test/i.test(lowerText)) {
-    serviceCategory = 'respirator'
+  for (const { pattern, category } of servicePatterns) {
+    if (pattern.test(lowerText)) {
+      serviceCategory = category
+      break
+    }
   }
 
   const service = serviceCategory !== 'unknown' 
     ? `${serviceCategory} testing` 
     : 'occupational health services'
 
-  // Extract cash price
-  const cashMatch = text.match(/(?:self-pay|cash|out-of-pocket)[:\s]*\$?([\d,]+(?:\.\d{2})?)/i)
-  const priceCash = cashMatch ? `$${cashMatch[1]}` : undefined
+  // Extract cash price with more patterns
+  const cashPatterns = [
+    /(?:self-pay|cash|out-of-pocket|private pay)[:\s]*\$?([\d,]+(?:\.\d{2})?)/i,
+    /\$([\d,]+(?:\.\d{2})?)\s*(?:self-pay|cash|out-of-pocket)/i,
+  ]
+  
+  let priceCash: string | undefined
+  for (const pattern of cashPatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      priceCash = `$${match[1]}`
+      break
+    }
+  }
 
-  // Extract employer price
-  const employerMatch = text.match(/(?:employer|work comp|workers comp)[:\s]*\$?([\d,]+(?:\.\d{2})?)/i)
-  const priceEmployer = employerMatch ? `$${employerMatch[1]}` : undefined
+  // Extract employer price with more patterns
+  const employerPatterns = [
+    /(?:employer|work comp|workers comp|workers' comp)[:\s]*\$?([\d,]+(?:\.\d{2})?)/i,
+    /\$([\d,]+(?:\.\d{2})?)\s*(?:employer|work comp)/i,
+  ]
+  
+  let priceEmployer: string | undefined
+  for (const pattern of employerPatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      priceEmployer = `$${match[1]}`
+      break
+    }
+  }
 
-  // Extract price range
-  const rangeMatch = text.match(/\$([\d,]+)\s*-\s*\$([\d,]+)/i)
-  const priceRange = rangeMatch ? `$${rangeMatch[1]} - $${rangeMatch[2]}` : undefined
+  // Extract price range with more patterns
+  const rangePatterns = [
+    /\$([\d,]+)\s*-\s*\$([\d,]+)/i,
+    /(?:from|between)\s*\$([\d,]+)\s*(?:and|to)\s*\$([\d,]+)/i,
+  ]
+  
+  let priceRange: string | undefined
+  for (const pattern of rangePatterns) {
+    const match = text.match(pattern)
+    if (match) {
+      priceRange = `$${match[1]} - $${match[2]}`
+      break
+    }
+  }
 
-  // Determine payment types
+  // Determine payment types with more patterns
   const paymentTypes: PricingIntelligence['payment_types'] = []
-  if (/self-pay|cash|out-of-pocket/i.test(lowerText)) paymentTypes.push('self-pay', 'cash')
-  if (/employer|work comp|workers compensation/i.test(lowerText)) paymentTypes.push('employer', 'work comp')
-  if (/insurance/i.test(lowerText)) paymentTypes.push('insurance')
+  if (/self-pay|cash|out-of-pocket|private pay/i.test(lowerText)) {
+    paymentTypes.push('self-pay', 'cash')
+  }
+  if (/employer|work comp|workers compensation|workers' comp/i.test(lowerText)) {
+    paymentTypes.push('employer', 'work comp')
+  }
+  if (/insurance|in-network|blue cross|aetna|cigna|united/i.test(lowerText)) {
+    paymentTypes.push('insurance')
+  }
 
   // Calculate source confidence
   const signals = [
     priceCash ? 'self-pay mention' : '',
     priceEmployer ? 'employer payment' : '',
     serviceCategory !== 'unknown' ? 'service category' : '',
-    /fee schedule|price list|rate card/i.test(lowerText) ? 'pricing document' : '',
+    /fee schedule|price list|rate card|pricing/i.test(lowerText) ? 'pricing document' : '',
   ].filter(Boolean)
 
-  const sourceConfidence = Math.min(95, 40 + signals.length * 10)
+  const sourceConfidence = Math.min(95, 35 + signals.length * 8)
 
   return {
     provider_name: providerName,
@@ -445,32 +637,31 @@ export function extractAcademicIntelligence(
   const journal = journalMatch ? journalMatch[1].trim() : undefined
 
   // Extract publication date
-  const dateMatch = text.match(/(?:Published|Publication Date)\s*[:\s]+([A-Z][a-z]+ \d{1,2},?\s+\d{4})/i) ||
-                    text.match(/(\d{1,2}\/\d{1,2}\/\d{4})/)
-  const publicationDate = dateMatch ? dateMatch[1] : undefined
+  const pubDateMatch = text.match(/(?:Published|Date|Publication)[:\s]+([A-Z][a-z]+ \d{1,2},?\s+\d{4})/i)
+  const publicationDate = pubDateMatch ? pubDateMatch[1] : undefined
 
   // Extract DOI
-  const doiMatch = text.match(/doi:\s*(10\.\d+\/[^\s]+)/i) || url.match(/doi\.org\/(10\.\d+\/[^\s]+)/i)
-  const doi = doiMatch ? (doiMatch[1] || doiMatch[0].replace('doi:', '').replace('doi.org/', '')) : undefined
+  const doiMatch = text.match(/doi[:\s]+(10\.\d+\/[^\s]+)/i) || url.match(/doi\.org\/(10\.\d+\/[^\s]+)/)
+  const doi = doiMatch ? doiMatch[1] : undefined
 
   // Extract citation count
-  const citationMatch = text.match(/(?:citations?|cited by)\s*[:\s]+(\d+)/i)
+  const citationMatch = text.match(/(?:citations|cited by)[:\s]+(\d+)/i)
   const citationCount = citationMatch ? parseInt(citationMatch[1]) : undefined
 
   // Extract abstract
-  const abstractMatch = text.match(/(?:Abstract)\s*[:\s]+([^.]+\.)/i)
+  const abstractMatch = text.match(/(?:Abstract|Summary)[:\s]+([^.]+\.)/i)
   const abstract = abstractMatch ? abstractMatch[1] : undefined
 
   // Calculate source confidence
   const signals = [
-    doi ? 'DOI' : '',
-    journal ? 'journal' : '',
-    authors ? 'authors' : '',
-    academicType !== 'unknown' ? 'academic type' : '',
-    /\.edu\b/i.test(url) ? 'academic source' : '',
+    academicType !== 'unknown' ? 'academic type detected' : '',
+    doi ? 'DOI present' : '',
+    authors ? 'authors listed' : '',
+    journal ? 'journal specified' : '',
+    publicationDate ? 'publication date' : '',
   ].filter(Boolean)
 
-  const sourceConfidence = Math.min(95, 40 + signals.length * 10)
+  const sourceConfidence = Math.min(95, 35 + signals.length * 8)
 
   return {
     paper_title: paperTitle,

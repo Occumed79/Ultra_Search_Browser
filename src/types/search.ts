@@ -91,7 +91,7 @@ export interface PricingIntelligence {
   document_url: string;
   matched_signals: string[];
   payment_types?: ("self-pay" | "cash" | "employer" | "insurance" | "work comp")[];
-  service_category?: "PFT" | "DOT" | "physical" | "drug test" | "audiometry" | "respirator" | "unknown";
+  service_category?: "PFT" | "DOT" | "physical" | "drug test" | "audiometry" | "respirator" | "vaccination" | "x-ray" | "lab" | "unknown";
 }
 
 export interface LegalIntelligence {

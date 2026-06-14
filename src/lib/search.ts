@@ -15,6 +15,7 @@ import { rerankResults } from './semantic-search'
 import { fetchAndExtractFromURL, type ExtractionResult } from './document-extraction'
 import { createVectorStoreAdapter, type VectorStoreAdapter, type SearchDocument } from './vector-store'
 import { generateEmbedding, isEmbeddingsReady, initializeEmbeddings } from './embeddings'
+import { searchCache, scrapeCache } from './cache'
 import type { ScrapedResult } from '../types/search'
 
 // Re-export intelligence types for consumers
@@ -37,6 +38,47 @@ function extractDomain(url: string): string {
   } catch {
     return ''
   }
+}
+
+/**
+ * Score boost for procurement/PDF/government lenses
+ * Boosts .gov, .us portals, PDFs, and procurement terms
+ * Penalizes junk directories
+ */
+function scoreResultForLens(result: ScrapedResult, lens: SearchLens): number {
+  let boost = 0
+  const domain = result.domain.toLowerCase()
+  const url = result.url.toLowerCase()
+  const title = result.title.toLowerCase()
+  const description = (result.description || '').toLowerCase()
+
+  // Government/PDF/Procurement lens boosts
+  if (['government', 'procurement', 'pdf'].includes(lens)) {
+    // Strong boost for .gov domains
+    if (domain.endsWith('.gov')) boost += 50
+    // Boost for .us county/city/state portals
+    if (domain.endsWith('.us') || domain.includes('.gov.') || domain.includes('county') || domain.includes('city') || domain.includes('state')) boost += 30
+    // Boost for PDF files
+    if (url.endsWith('.pdf')) boost += 40
+    // Boost for procurement terms in title/description
+    const procurementTerms = ['rfp', 'rfq', 'ifb', 'bid', 'solicitation', 'proposal', 'due date', 'addendum', 'tender', 'procurement']
+    const hasProcurementTerm = procurementTerms.some(term => title.includes(term) || description.includes(term))
+    if (hasProcurementTerm) boost += 25
+  }
+
+  // Occupational health specific boosts for procurement/pricing/provider lenses
+  if (['procurement', 'pricing', 'provider'].includes(lens)) {
+    const healthTerms = ['occupational health', 'occupational medicine', 'employee health', 'dot physical', 'pft', 'pulmonary function', 'drug screen', 'fit test', 'audiogram']
+    const hasHealthTerm = healthTerms.some(term => title.includes(term) || description.includes(term))
+    if (hasHealthTerm) boost += 20
+  }
+
+  // Penalize junk directories
+  const junkPatterns = ['directory', 'listing', 'aggregator', 'portal', 'marketplace']
+  const isJunk = junkPatterns.some(pattern => domain.includes(pattern) && !domain.includes('.gov'))
+  if (isJunk) boost -= 20
+
+  return boost
 }
 
 // --- Scraping-based search (no API keys) ---
@@ -177,7 +219,8 @@ export async function scrapeWebsite(url: string): Promise<string> {
 }
 
 export async function searchAllEngines(
-  queries: string[]
+  queries: string[],
+  lens: SearchLens = 'web'
 ): Promise<{ text: string; sources: string[]; rawTexts: string[]; results: ScrapedResult[] }> {
   const texts: string[] = []
   const sources: string[] = []
@@ -229,6 +272,15 @@ export async function searchAllEngines(
   }
 
   // Rank results by source diversity and deduplicate
+  allResults.forEach((r, i) => { r.rank = i + 1 })
+
+  // Apply lens-specific scoring boosts
+  allResults.forEach(r => {
+    r.score += scoreResultForLens(r, lens)
+  })
+
+  // Re-sort by boosted scores
+  allResults.sort((a, b) => b.score - a.score)
   allResults.forEach((r, i) => { r.rank = i + 1 })
 
   return { text: texts.join(' '), sources, rawTexts, results: allResults }
@@ -319,6 +371,14 @@ export async function searchIntelligence(
   query: string,
   forcedLens?: SearchLens
 ): Promise<{ intelligence: IntelligenceObject; results: ScrapedResult[] }> {
+  // Check cache first (cache key includes query + lens to prevent wrong lens results)
+  const cacheKey = `${query}:${forcedLens || 'default'}`
+  const cached = searchCache.get(cacheKey)
+  if (cached) {
+    console.log('Cache hit for search:', cacheKey)
+    return cached
+  }
+
   const expanded = expandQuery(query, forcedLens)
   const lens = expanded.lens
 
@@ -335,39 +395,92 @@ export async function searchIntelligence(
           console.log(`Crawler ${d.source}: ${d.status} (${d.resultsCount} results, ${d.latency}ms)${d.error ? ` - ${d.error}` : ''}`)
         })
         
-        // Enrich with intelligence objects
-        const enrichedResults = await Promise.all(
-          procurementResults.map(async (result) => {
-            try {
-              const content = await scrapeWebsite(result.url)
-              if (content.length > 100) {
-                const intelligence = extractIntelligence(content, result.url, result.title, lens)
-                if (intelligence) {
-                  return { ...result, intelligence }
-                }
-              }
-            } catch {
-              // If scraping fails, return result without intelligence
-            }
-            return result
-          })
-        )
-        
-        const sources = procurementOpportunities.map(opp => opp.source)
-        const rawTexts = procurementOpportunities.map(opp => opp.title + ' ' + opp.description)
-        const text = rawTexts.join(' ')
-        
-        const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-        return { intelligence, results: enrichedResults }
+        return { procurementResults, crawlerDiagnostics }
       })()
 
       // Timeout after 15 seconds for entire procurement phase
-      const timeoutPromise = new Promise<{ intelligence: IntelligenceObject; results: ScrapedResult[] }>((_, reject) =>
+      const timeoutPromise = new Promise<{ procurementResults: ScrapedResult[]; crawlerDiagnostics: any }>((_, reject) =>
         setTimeout(() => reject(new Error('Procurement crawler phase timeout')), 15000)
       )
 
-      const procurementResult = await Promise.race([procurementPromise, timeoutPromise])
-      return procurementResult
+      const { procurementResults, crawlerDiagnostics } = await Promise.race([procurementPromise, timeoutPromise])
+      
+      // Also run normal search with procurement-focused expansions in parallel
+      const procurementExpansions = [
+        query,
+        `${query} RFP`,
+        `${query} RFQ`,
+        `${query} bid`,
+        `${query} solicitation`,
+        `${query} site:.gov`,
+        `${query} site:.us`,
+        `${query} PDF`,
+        'occupational health RFP',
+        'occupational medicine bid',
+        'occupational health services solicitation',
+        'DOT physical pricing',
+        'pulmonary function test pricing',
+      ]
+      
+      const { text, sources, rawTexts, results: searchResults } = await searchAllEngines(procurementExpansions, lens)
+      
+      // Merge and dedupe crawler + search results
+      const seenUrls = new Set<string>()
+      const mergedResults: ScrapedResult[] = []
+      
+      for (const result of [...procurementResults, ...searchResults]) {
+        if (!seenUrls.has(result.url)) {
+          seenUrls.add(result.url)
+          mergedResults.push(result)
+        }
+      }
+      
+      // Enrich with intelligence objects
+      const enrichedResults = await Promise.all(
+        mergedResults.slice(0, 30).map(async (result) => {
+          let content = ''
+          let extractionSource = 'scrape'
+          
+          // Try PDF extraction for PDF URLs
+          if (result.url.toLowerCase().endsWith('.pdf')) {
+            try {
+              const extractionResult: ExtractionResult = await fetchAndExtractFromURL(result.url, 8000)
+              if (extractionResult.success && extractionResult.document) {
+                content = extractionResult.document.text
+                extractionSource = 'pdf'
+              }
+            } catch {
+              // Fall back to regular scraping
+            }
+          }
+          
+          // Regular scraping fallback
+          if (!content) {
+            try {
+              content = await scrapeWebsite(result.url)
+              extractionSource = 'scrape'
+            } catch {
+              // If scraping fails, return result without intelligence
+            }
+          }
+          
+          if (content.length > 100) {
+            const intelligence = extractIntelligence(content, result.url, result.title, lens)
+            if (intelligence) {
+              return { ...result, intelligence, extractionSource }
+            }
+          }
+          
+          return result
+        })
+      )
+      
+      const mergedSources = [...new Set([...procurementResults.map(r => r.source), ...sources])]
+      const mergedRawTexts = [...procurementResults.map(r => r.title + ' ' + (r.description || '')), ...rawTexts]
+      const mergedText = mergedRawTexts.join(' ')
+      
+      const intelligence = buildIntelligenceObject(query, expanded, mergedSources, mergedRawTexts)
+      return { intelligence, results: enrichedResults }
     } catch (err) {
       console.warn('Procurement crawlers failed or timed out, falling back to general search:', err)
       // Fall through to general search
@@ -380,7 +493,7 @@ export async function searchIntelligence(
     ...expanded.withOperators.slice(0, 3),
   ]
 
-  const { text, sources, rawTexts, results } = await searchAllEngines(allQueries)
+  const { text, sources, rawTexts, results } = await searchAllEngines(allQueries, lens)
 
   // Semantic reranking for better relevance (with error handling)
   let semanticallyOrderedResults = results
@@ -405,26 +518,72 @@ export async function searchIntelligence(
     semanticallyOrderedResults.map(async (result) => {
       let content = ''
       let extractionSource = 'scrape'
+      let extractionAttempted = false
+      let extractionSucceeded = false
+      let extractionType = 'none'
+      let extractionError: string | undefined = undefined
       
-      // Try PDF extraction for PDF, government, and procurement lenses
-      if (['pdf', 'government', 'procurement'].includes(lens) && result.url.toLowerCase().endsWith('.pdf')) {
+      const isPdf = result.url.toLowerCase().endsWith('.pdf') || result.url.toLowerCase().includes('.pdf')
+      const isDocx = result.url.toLowerCase().endsWith('.docx')
+      const titleOrSnippet = (result.title + ' ' + (result.description || '')).toLowerCase()
+      const suggestsPdf = /pdf|rfp|bid|solicitation|proposal|tender|procurement/i.test(titleOrSnippet)
+      
+      // Try PDF/DOCX extraction for PDF, government, and procurement lenses, or if URL/title suggests PDF
+      if (
+        ['pdf', 'government', 'procurement'].includes(lens) ||
+        isPdf ||
+        (suggestsPdf && ['pdf', 'government', 'procurement'].includes(lens))
+      ) {
+        extractionAttempted = true
+        extractionType = isPdf ? 'pdf' : isDocx ? 'docx' : 'html'
+        
         try {
-          const extractionResult: ExtractionResult = await fetchAndExtractFromURL(result.url, 8000)
-          if (extractionResult.success && extractionResult.document) {
-            content = extractionResult.document.text
-            extractionSource = 'pdf'
+          if (isPdf) {
+            const extractionResult: ExtractionResult = await fetchAndExtractFromURL(result.url, 8000)
+            if (extractionResult.success && extractionResult.document) {
+              content = extractionResult.document.text
+              extractionSource = 'pdf'
+              extractionSucceeded = true
+            } else {
+              extractionError = extractionResult.error || 'PDF extraction failed'
+            }
+          } else if (isDocx) {
+            const extractionResult: ExtractionResult = await fetchAndExtractFromURL(result.url, 10000)
+            if (extractionResult.success && extractionResult.document) {
+              content = extractionResult.document.text
+              extractionSource = 'docx'
+              extractionSucceeded = true
+            } else {
+              extractionError = extractionResult.error || 'DOCX extraction failed'
+            }
           }
-        } catch {
+        } catch (err) {
+          extractionError = err instanceof Error ? err.message : 'Extraction error'
           // Fall back to regular scraping
         }
       }
       
       // Regular scraping fallback or for other lenses
-      if (!content && ['procurement', 'provider', 'pricing'].includes(lens)) {
+      if (!content && ['procurement', 'provider', 'pricing', 'legal', 'medical', 'academic', 'financial'].includes(lens)) {
+        extractionAttempted = true
+        extractionType = 'html'
         try {
-          content = await scrapeWebsite(result.url)
-          extractionSource = 'scrape'
-        } catch {
+          // Check scrape cache
+          const scrapeCacheKey = result.url
+          const cachedContent = scrapeCache.get(scrapeCacheKey)
+          if (cachedContent) {
+            content = cachedContent
+            extractionSource = 'scrape-cached'
+            extractionSucceeded = true
+          } else {
+            content = await scrapeWebsite(result.url)
+            extractionSource = 'scrape'
+            extractionSucceeded = true
+            // Cache the scraped content
+            scrapeCache.set(scrapeCacheKey, content)
+          }
+        } catch (err) {
+          extractionError = err instanceof Error ? err.message : 'Scraping error'
           // If scraping fails, return result without intelligence
         }
       }
@@ -432,20 +591,46 @@ export async function searchIntelligence(
       if (content.length > 100) {
         const intelligence = extractIntelligence(content, result.url, result.title, lens)
         if (intelligence) {
-          return { ...result, intelligence, extractionSource }
+          return { 
+            ...result, 
+            intelligence, 
+            extractionSource,
+            extractionDiagnostics: {
+              extractionAttempted,
+              extractionSucceeded,
+              extractionType,
+              extractionError,
+              extractedTextLength: content.length,
+            }
+          }
         }
       }
       
-      return result
+      return {
+        ...result,
+        extractionDiagnostics: {
+          extractionAttempted,
+          extractionSucceeded,
+          extractionType,
+          extractionError,
+          extractedTextLength: content.length || 0,
+        }
+      }
     })
   )
 
   if (text.trim().length < 100) {
     const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts, 'Limited results from search engines')
-    return { intelligence, results: enrichedResults }
+    const result = { intelligence, results: enrichedResults }
+    // Cache the result
+    searchCache.set(cacheKey, result)
+    return result
   }
 
   const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-  return { intelligence, results: enrichedResults }
+  const result = { intelligence, results: enrichedResults }
+  // Cache the result
+  searchCache.set(cacheKey, result)
+  return result
 }
 
