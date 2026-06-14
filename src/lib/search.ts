@@ -10,6 +10,8 @@ import {
   LENS_CONFIGS,
 } from './intelligence'
 import { extractIntelligence } from './entity-extraction'
+import { crawlAllProcurementSources, procurementToScrapedResult } from './procurement-crawlers'
+import { rerankResults } from './semantic-search'
 import type { ScrapedResult } from '../types/search'
 
 // Re-export intelligence types for consumers
@@ -239,6 +241,42 @@ export async function searchIntelligence(
   const expanded = expandQuery(query, forcedLens)
   const lens = expanded.lens
 
+  // Use specialized procurement crawlers for procurement lens
+  if (lens === 'procurement') {
+    try {
+      const procurementOpportunities = await crawlAllProcurementSources(query)
+      const procurementResults = procurementOpportunities.map(procurementToScrapedResult)
+      
+      // Enrich with intelligence objects
+      const enrichedResults = await Promise.all(
+        procurementResults.map(async (result) => {
+          try {
+            const content = await scrapeWebsite(result.url)
+            if (content.length > 100) {
+              const intelligence = extractIntelligence(content, result.url, result.title, lens)
+              if (intelligence) {
+                return { ...result, intelligence }
+              }
+            }
+          } catch {
+            // If scraping fails, return result without intelligence
+          }
+          return result
+        })
+      )
+      
+      const sources = procurementOpportunities.map(opp => opp.source)
+      const rawTexts = procurementOpportunities.map(opp => opp.title + ' ' + opp.description)
+      const text = rawTexts.join(' ')
+      
+      const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
+      return { intelligence, results: enrichedResults }
+    } catch (err) {
+      console.warn('Procurement crawlers failed, falling back to general search:', err)
+      // Fall through to general search
+    }
+  }
+
   const allQueries = [
     query,
     ...expanded.expansions.slice(0, 6),
@@ -247,9 +285,21 @@ export async function searchIntelligence(
 
   const { text, sources, rawTexts, results } = await searchAllEngines(allQueries)
 
+  // Semantic reranking for better relevance
+  const reranked = rerankResults(
+    query,
+    results.map(r => ({ id: r.url, text: r.title + ' ' + r.description, url: r.url, title: r.title, source: r.source })),
+    results.length
+  )
+  
+  // Reorder results based on semantic scores
+  const semanticallyOrderedResults = reranked
+    .map(r => results[r.originalIndex])
+    .map((result, index) => ({ ...result, rank: index + 1 }))
+
   // Enrich results with intelligence objects for relevant lenses
   const enrichedResults = await Promise.all(
-    results.map(async (result) => {
+    semanticallyOrderedResults.map(async (result) => {
       if (['procurement', 'provider', 'pricing'].includes(lens)) {
         try {
           const content = await scrapeWebsite(result.url)
