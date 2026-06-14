@@ -2,6 +2,10 @@
 // SERVER-SIDE ONLY: This module must only be imported in server-side code (API routes, server components)
 // Do not import this in client components or it will bundle heavy dependencies.
 
+// Shared embedding dimension across all embedding methods
+// Matches Xenova/all-MiniLM-L6-v2 output dimension
+export const EMBEDDING_DIMENSION = 384
+
 let embeddingPipeline: any = null
 let isInitializing = false
 
@@ -102,13 +106,14 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 /**
  * Generate hash-based pseudo-embedding (fallback)
  * This is a lightweight alternative that doesn't require external models
+ * Outputs EMBEDDING_DIMENSION (384) to match Xenova/all-MiniLM-L6-v2
  */
 function generateHashEmbedding(text: string): number[] {
-  const embedding = new Float32Array(128)
+  const embedding = new Float32Array(EMBEDDING_DIMENSION)
   const normalizedText = text.toLowerCase().replace(/\s+/g, ' ')
   
   // Simple hash-based embedding generation
-  for (let i = 0; i < 128; i++) {
+  for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
     let hash = 0
     for (let j = 0; j < normalizedText.length; j++) {
       const char = normalizedText.charCodeAt(j)
@@ -121,7 +126,7 @@ function generateHashEmbedding(text: string): number[] {
   // Normalize the vector
   const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0))
   if (magnitude > 0) {
-    for (let i = 0; i < 128; i++) {
+    for (let i = 0; i < EMBEDDING_DIMENSION; i++) {
       embedding[i] /= magnitude
     }
   }

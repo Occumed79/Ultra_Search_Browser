@@ -318,28 +318,17 @@ async function indexDocumentsInVectorStore(results: ScrapedResult[], lens: Searc
   const store = await getVectorStore()
   if (!store) return
   
-  // Initialize embeddings if not already done
-  if (!isEmbeddingsReady()) {
-    try {
-      await initializeEmbeddings()
-    } catch (err) {
-      console.warn('Failed to initialize embeddings, indexing without embeddings:', err)
-    }
-  }
-  
   const documents: SearchDocument[] = []
   
   for (const result of results) {
     const text = result.title + ' ' + (result.description || '')
     let embedding: number[] | undefined = undefined
     
-    // Generate embedding if embeddings are available
-    if (isEmbeddingsReady()) {
-      try {
-        embedding = await generateEmbedding(text)
-      } catch (err) {
-        console.warn('Failed to generate embedding for document:', err)
-      }
+    // Always generate embedding (uses hash fallback if local embeddings disabled)
+    try {
+      embedding = await generateEmbedding(text)
+    } catch (err) {
+      console.warn('Failed to generate embedding for document:', err)
     }
     
     documents.push({
@@ -369,7 +358,19 @@ async function indexDocumentsInVectorStore(results: ScrapedResult[], lens: Searc
 export async function searchIntelligence(
   query: string,
   forcedLens?: SearchLens
-): Promise<{ intelligence: IntelligenceObject; results: ScrapedResult[] }> {
+): Promise<{ 
+  intelligence: IntelligenceObject; 
+  results: ScrapedResult[]; 
+  pgvectorDiagnostics: {
+    enabled: boolean
+    databaseConfigured: boolean
+    indexingAttempted: boolean
+    indexedCount: number
+    vectorSearchAttempted: boolean
+    vectorMatches: number
+    error?: string
+  }
+}> {
   // Check cache first (cache key includes query + lens to prevent wrong lens results)
   const cacheKey = `${query}:${forcedLens || 'default'}`
   const cached = searchCache.get(cacheKey)
@@ -442,7 +443,58 @@ export async function searchIntelligence(
     )
     
     const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-    return { intelligence, results: enrichedResults }
+    
+    // Index top results in pgvector (non-blocking, fail-open)
+    let pgvectorDiagnostics = {
+      enabled: false,
+      databaseConfigured: false,
+      indexingAttempted: false,
+      indexedCount: 0,
+      vectorSearchAttempted: false,
+      vectorMatches: 0,
+      error: undefined as string | undefined,
+    }
+
+    const databaseUrl = process.env.DATABASE_URL
+    if (databaseUrl) {
+      pgvectorDiagnostics.databaseConfigured = true
+      pgvectorDiagnostics.enabled = true
+      
+      try {
+        // Index top 20 results
+        const topResults = enrichedResults.slice(0, 20)
+        await indexDocumentsInVectorStore(topResults, lens)
+        pgvectorDiagnostics.indexingAttempted = true
+        pgvectorDiagnostics.indexedCount = topResults.length
+      } catch (err) {
+        pgvectorDiagnostics.error = err instanceof Error ? err.message : String(err)
+        console.warn('pgvector indexing failed:', err)
+      }
+
+      // Try vector search for similar documents
+      try {
+        const store = await getVectorStore()
+        if (store) {
+          const queryEmbedding = await generateEmbedding(query)
+          const vectorMatches = await store.searchByVector(queryEmbedding, 10)
+          pgvectorDiagnostics.vectorSearchAttempted = true
+          pgvectorDiagnostics.vectorMatches = vectorMatches.length
+          
+          // Boost current results that match vector search results
+          const matchedUrls = new Set(vectorMatches.map(m => m.metadata.url))
+          enrichedResults.forEach(result => {
+            if (matchedUrls.has(result.url)) {
+              // Boost rank by moving up slightly (simple approach)
+              result.rank = Math.max(1, (result.rank || 1) - 1)
+            }
+          })
+        }
+      } catch (err) {
+        console.warn('pgvector vector search failed:', err)
+      }
+    }
+    
+    return { intelligence, results: enrichedResults, pgvectorDiagnostics }
   }
 
   const allQueries = [
@@ -577,16 +629,66 @@ export async function searchIntelligence(
     })
   )
 
+  // Index top results in pgvector (non-blocking, fail-open)
+  let pgvectorDiagnostics = {
+    enabled: false,
+    databaseConfigured: false,
+    indexingAttempted: false,
+    indexedCount: 0,
+    vectorSearchAttempted: false,
+    vectorMatches: 0,
+    error: undefined as string | undefined,
+  }
+
+  const databaseUrl = process.env.DATABASE_URL
+  if (databaseUrl) {
+    pgvectorDiagnostics.databaseConfigured = true
+    pgvectorDiagnostics.enabled = true
+    
+    try {
+      // Index top 20 results
+      const topResults = enrichedResults.slice(0, 20)
+      await indexDocumentsInVectorStore(topResults, lens)
+      pgvectorDiagnostics.indexingAttempted = true
+      pgvectorDiagnostics.indexedCount = topResults.length
+    } catch (err) {
+      pgvectorDiagnostics.error = err instanceof Error ? err.message : String(err)
+      console.warn('pgvector indexing failed:', err)
+    }
+
+    // Try vector search for similar documents
+    try {
+      const store = await getVectorStore()
+      if (store) {
+        const queryEmbedding = await generateEmbedding(query)
+        const vectorMatches = await store.searchByVector(queryEmbedding, 10)
+        pgvectorDiagnostics.vectorSearchAttempted = true
+        pgvectorDiagnostics.vectorMatches = vectorMatches.length
+        
+        // Boost current results that match vector search results
+        const matchedUrls = new Set(vectorMatches.map(m => m.metadata.url))
+        enrichedResults.forEach(result => {
+          if (matchedUrls.has(result.url)) {
+            // Boost rank by moving up slightly (simple approach)
+            result.rank = Math.max(1, (result.rank || 1) - 1)
+          }
+        })
+      }
+    } catch (err) {
+      console.warn('pgvector vector search failed:', err)
+    }
+  }
+
   if (text.trim().length < 100) {
     const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts, 'Limited results from search engines')
-    const result = { intelligence, results: enrichedResults }
+    const result = { intelligence, results: enrichedResults, pgvectorDiagnostics }
     // Cache the result
     searchCache.set(cacheKey, result)
     return result
   }
 
   const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-  const result = { intelligence, results: enrichedResults }
+  const result = { intelligence, results: enrichedResults, pgvectorDiagnostics }
   // Cache the result
   searchCache.set(cacheKey, result)
   return result

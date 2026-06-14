@@ -3,6 +3,7 @@
 // Verifies pgvector extension, documents table, and vector operations
 
 import pg from 'pg'
+import { EMBEDDING_DIMENSION } from '../src/lib/embeddings'
 
 const { Client } = pg
 
@@ -57,7 +58,7 @@ async function checkPgvector(): Promise<void> {
         CREATE TABLE documents (
           id TEXT PRIMARY KEY,
           text TEXT NOT NULL,
-          embedding vector(1536),
+          embedding vector(${EMBEDDING_DIMENSION}),
           metadata JSONB,
           url TEXT,
           title TEXT,
@@ -82,14 +83,14 @@ async function checkPgvector(): Promise<void> {
       console.log('✓ embedding column exists\n')
     } else {
       console.log('Adding embedding column...')
-      await client.query('ALTER TABLE documents ADD COLUMN embedding vector(1536)')
+      await client.query(`ALTER TABLE documents ADD COLUMN embedding vector(${EMBEDDING_DIMENSION})`)
       console.log('✓ embedding column added\n')
     }
 
     // Insert test vector
     console.log('Inserting test vector...')
     const testId = 'test-vector-' + Date.now()
-    const testVector = Array.from({ length: 1536 }, () => Math.random())
+    const testVector = Array.from({ length: EMBEDDING_DIMENSION }, () => Math.random())
     // Format vector as string for pgvector
     const vectorString = `[${testVector.map(v => v.toFixed(6)).join(',')}]`
     await client.query(

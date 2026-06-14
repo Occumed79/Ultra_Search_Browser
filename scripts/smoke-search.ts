@@ -23,6 +23,15 @@ interface TestResult {
     extractionError?: string
     extractedTextLength?: number
   }>
+  pgvectorDiagnostics: {
+    enabled: boolean
+    databaseConfigured: boolean
+    indexingAttempted: boolean
+    indexedCount: number
+    vectorSearchAttempted: boolean
+    vectorMatches: number
+    error?: string
+  }
   errors: string[]
 }
 
@@ -46,7 +55,7 @@ async function runSmokeTest(): Promise<void> {
     const errors: string[] = []
 
     try {
-      const { intelligence, results: searchResults } = await searchIntelligence(test.query, test.lens as any)
+      const { intelligence, results: searchResults, pgvectorDiagnostics } = await searchIntelligence(test.query, test.lens as any)
       const responseTime = Date.now() - startTime
 
       // Check if URLs are real
@@ -121,6 +130,7 @@ async function runSmokeTest(): Promise<void> {
         intelligenceObjectsPopulated,
         fallbackWebSearchUsed,
         extractionDiagnostics,
+        pgvectorDiagnostics,
         errors,
       })
 
@@ -147,6 +157,15 @@ async function runSmokeTest(): Promise<void> {
         intelligenceObjectsPopulated: false,
         fallbackWebSearchUsed: false,
         extractionDiagnostics: [],
+        pgvectorDiagnostics: {
+          enabled: false,
+          databaseConfigured: false,
+          indexingAttempted: false,
+          indexedCount: 0,
+          vectorSearchAttempted: false,
+          vectorMatches: 0,
+          error: undefined,
+        },
         errors,
       })
 
@@ -172,6 +191,12 @@ async function runSmokeTest(): Promise<void> {
     console.log(`  Fallback web search: ${r.fallbackWebSearchUsed}`)
     console.log(`  PDF extraction: ${r.pdfExtractionHappened}`)
     console.log(`  Intelligence: ${r.intelligenceObjectsPopulated}`)
+    console.log(`  pgvector enabled: ${r.pgvectorDiagnostics.enabled}`)
+    console.log(`  pgvector database configured: ${r.pgvectorDiagnostics.databaseConfigured}`)
+    console.log(`  pgvector indexing attempted: ${r.pgvectorDiagnostics.indexingAttempted}`)
+    console.log(`  pgvector indexed count: ${r.pgvectorDiagnostics.indexedCount}`)
+    console.log(`  pgvector vector search attempted: ${r.pgvectorDiagnostics.vectorSearchAttempted}`)
+    console.log(`  pgvector vector matches: ${r.pgvectorDiagnostics.vectorMatches}`)
     
     if (r.topResults.length > 0) {
       console.log(`  Top 5 results:`)

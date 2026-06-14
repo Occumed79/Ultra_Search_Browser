@@ -1,5 +1,7 @@
 // ─── VECTOR STORE INTERFACE ───
 
+import { EMBEDDING_DIMENSION } from './embeddings'
+
 export interface SearchDocument {
   id: string
   text: string
@@ -149,7 +151,7 @@ export class PgVectorStoreAdapter implements VectorStoreAdapter {
         CREATE TABLE IF NOT EXISTS ${this.tableName} (
           id TEXT PRIMARY KEY,
           text TEXT NOT NULL,
-          embedding vector(1536),
+          embedding vector(${EMBEDDING_DIMENSION}),
           url TEXT,
           title TEXT,
           source TEXT,

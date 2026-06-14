@@ -26,7 +26,7 @@ export const FEATURE_CAPABILITIES: FeatureCapability[] = [
     description: 'Hash-based TF-IDF vector approximation for semantic similarity',
     status: 'experimental',
     runtimeEnabled: true,
-    notes: 'In-memory cosine similarity on 128-dim hash-based embeddings. Not production-grade embeddings.',
+    notes: 'In-memory cosine similarity on 384-dim hash-based embeddings. Not production-grade embeddings.',
   },
   {
     id: 'pgvector_retrieval',
@@ -34,7 +34,7 @@ export const FEATURE_CAPABILITIES: FeatureCapability[] = [
     description: 'PostgreSQL pgvector extension for persistent vector storage and similarity search',
     status: 'active',
     runtimeEnabled: true,
-    notes: 'Implemented with pg library. Requires DATABASE_URL and PostgreSQL with pgvector extension. Automatic schema initialization on first use.',
+    notes: 'Active when DATABASE_URL is configured. Requires PostgreSQL with pgvector extension. Automatic schema initialization on first use. Uses 384-dim hash-based embeddings by default.',
   },
   {
     id: 'embedding_model',
