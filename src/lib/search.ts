@@ -19,6 +19,7 @@ import { calculateCombinedSpamScore, applySpamPenalty } from './anti-spam'
 import { getDomainPreference, applyDomainPreferences, initializeDomainMemory } from './domain-memory'
 import { searchSearXNG, checkSearXNGAvailable } from './searxng'
 import { searchMarginalia, checkMarginaliaAvailable } from './marginalia'
+import { searchSmallWeb, initializeSmallWeb } from './small-web'
 import type { ScrapedResult } from '../types/search'
 
 // Re-export intelligence types for consumers
@@ -249,6 +250,16 @@ export async function searchAllEngines(
     engines.push({ name: 'Marginalia', fn: searchMarginalia })
   }
 
+  // Initialize small web if DATABASE_URL is configured
+  const databaseUrl = process.env.DATABASE_URL
+  if (databaseUrl) {
+    try {
+      await initializeSmallWeb()
+    } catch (err) {
+      console.warn('Failed to initialize small web:', err)
+    }
+  }
+
   for (const query of queries) {
     for (const engine of engines) {
       try {
@@ -266,6 +277,33 @@ export async function searchAllEngines(
         }
       } catch (err) {
         console.warn(`${engine.name} failed for "${query}":`, err)
+      }
+    }
+
+    // Try small web enrichment if database is configured
+    if (databaseUrl) {
+      try {
+        const category = lens === 'procurement' ? 'procurement' : lens === 'government' ? 'government' : 'general'
+        const smallWebResults = await searchSmallWeb(query, category, 5)
+        if (smallWebResults.length > 0) {
+          sources.push(`Small Web (${query.slice(0, 40)})`)
+          for (const entry of smallWebResults) {
+            if (entry.url && !seenUrls.has(entry.url) && entry.title) {
+              seenUrls.add(entry.url)
+              allResults.push({
+                url: entry.url,
+                title: entry.title,
+                description: entry.description,
+                domain: new URL(entry.url).hostname,
+                source: 'small-web',
+                rank: allResults.length + 1,
+                score: 1,
+              })
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Small web search failed:', err)
       }
     }
   }
