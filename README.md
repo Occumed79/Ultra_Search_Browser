@@ -26,11 +26,16 @@ A Kagi-style broad search browser with multi-engine aggregation, query intellige
 - **Vector Storage**: Local in-memory adapter and PostgreSQL pgvector adapter for semantic search
 - **Procurement Search**: Web search with procurement-focused query expansion (RFP, RFQ, bid, solicitation, site:.gov, site:.us, PDF) and ranking boosts for government domains and procurement terms
 - **Government/PDF Ranking Boosts**: Automatic ranking boosts for .gov domains (+50), .us domains (+30), PDF files (+40), and procurement terms (+25)
+- **Anti-Spam Heuristics**: Rule-based spam detection to downrank ads, trackers, affiliate links, and AI slop
 
 ### Experimental (Requires explicit opt-in via environment variables)
 - **Local Embedding Model**: @xenova/transformers with Xenova/all-MiniLM-L6-v2 (requires `ENABLE_LOCAL_EMBEDDINGS=true`, 60s timeout, falls back to hash-based embeddings)
 - **OCR (Optical Character Recognition)**: Text extraction from images using Tesseract.js (requires `ENABLE_OCR=true`, 30s timeout, disabled by default due to performance impact)
 - **Local Pseudo-Vector Reranking**: Hash-based TF-IDF vector approximation for semantic similarity (in-memory, not production-grade embeddings)
+- **Domain Memory (Personalized Results)**: User control to raise, lower, pin, or block domains (requires DATABASE_URL)
+- **SearXNG Integration**: Self-hosted metasearch backbone (requires SEARXNG_URL environment variable)
+- **Marginalia API Integration**: Niche non-commercial content booster (automatically detected when available)
+- **Small Web Enrichment**: Curated RSS/Atom/blog index (requires DATABASE_URL and manual feed configuration)
 
 *See Settings → Advanced Features for current capability status and runtime notes.*
 

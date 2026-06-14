@@ -15,6 +15,10 @@ import { fetchAndExtractFromURL, type ExtractionResult } from './document-extrac
 import { createVectorStoreAdapter, type VectorStoreAdapter, type SearchDocument } from './vector-store'
 import { generateEmbedding, isEmbeddingsReady, initializeEmbeddings } from './embeddings'
 import { searchCache, scrapeCache } from './cache'
+import { calculateCombinedSpamScore, applySpamPenalty } from './anti-spam'
+import { getDomainPreference, applyDomainPreferences, initializeDomainMemory } from './domain-memory'
+import { searchSearXNG, checkSearXNGAvailable } from './searxng'
+import { searchMarginalia, checkMarginaliaAvailable } from './marginalia'
 import type { ScrapedResult } from '../types/search'
 
 // Re-export intelligence types for consumers
@@ -232,6 +236,18 @@ export async function searchAllEngines(
     { name: 'Bing', fn: searchBingHTML },
     { name: 'Google', fn: searchGoogleScrape },
   ]
+
+  // Add SearXNG if available
+  const searxngAvailable = await checkSearXNGAvailable()
+  if (searxngAvailable) {
+    engines.push({ name: 'SearXNG', fn: searchSearXNG })
+  }
+
+  // Add Marginalia for non-commercial queries
+  const marginaliaAvailable = await checkMarginaliaAvailable()
+  if (marginaliaAvailable) {
+    engines.push({ name: 'Marginalia', fn: searchMarginalia })
+  }
 
   for (const query of queries) {
     for (const engine of engines) {
@@ -628,6 +644,15 @@ export async function searchIntelligence(
       }
     })
   )
+
+  // Apply anti-spam scoring to results
+  enrichedResults.forEach(result => {
+    const spamScore = calculateCombinedSpamScore(result.url)
+    if (spamScore.score > 0) {
+      result.spamScore = spamScore.score
+      result.spamReasons = spamScore.reasons
+    }
+  })
 
   // Index top results in pgvector (non-blocking, fail-open)
   let pgvectorDiagnostics = {

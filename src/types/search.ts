@@ -46,6 +46,8 @@ export interface ScrapedResult {
   score: number;
   resultType?: "web" | "pdf" | "government" | "procurement" | "pricing" | "technical" | "news" | "legal" | "medical" | "academic" | "financial";
   intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence | LegalIntelligence | MedicalIntelligence | AcademicIntelligence | FinancialIntelligence;
+  spamScore?: number;
+  spamReasons?: string[];
 }
 
 // ─── Intelligence Objects (Structured Data) ───

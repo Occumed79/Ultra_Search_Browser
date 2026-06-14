@@ -100,6 +100,46 @@ export const FEATURE_CAPABILITIES: FeatureCapability[] = [
     runtimeEnabled: true,
     notes: 'Boosts .gov domains by +50, .us domains by +30, PDF files by +40, procurement terms by +25. Penalizes junk directories.',
   },
+  {
+    id: 'anti_spam_heuristics',
+    label: 'Anti-Spam Heuristics',
+    description: 'Rule-based spam detection to downrank ads, trackers, affiliate links, and AI slop',
+    status: 'active',
+    runtimeEnabled: true,
+    notes: 'Detects tracker domains, affiliate patterns, spammy TLDs, excessive tracking parameters, and keyword stuffing. Applies exponential penalty to result scores.',
+  },
+  {
+    id: 'domain_memory',
+    label: 'Domain Memory (Personalized Results)',
+    description: 'User control to raise, lower, pin, or block domains',
+    status: 'experimental',
+    runtimeEnabled: true,
+    notes: 'Database-backed domain preferences per user. Blocked domains are filtered out, pinned domains get 10x boost, raised domains get 2x boost, lowered domains get 50% penalty. Requires DATABASE_URL.',
+  },
+  {
+    id: 'searxng_integration',
+    label: 'SearXNG Integration',
+    description: 'Self-hosted metasearch backbone for privacy-preserving multi-source search',
+    status: 'experimental',
+    runtimeEnabled: true,
+    notes: 'Automatically adds SearXNG as a search source when SEARXNG_URL is configured. Supports DuckDuckGo, Bing, Google, Brave engines through SearXNG.',
+  },
+  {
+    id: 'marginalia_integration',
+    label: 'Marginalia API Integration',
+    description: 'Niche non-commercial content booster focused on quality over commercial results',
+    status: 'experimental',
+    runtimeEnabled: true,
+    notes: 'Automatically adds Marginalia as a search source when available. Prioritizes non-commercial, authentic content. Rate-limited public API.',
+  },
+  {
+    id: 'small_web_enrichment',
+    label: 'Small Web Enrichment',
+    description: 'Curated RSS/Atom/blog index for non-commercial content',
+    status: 'experimental',
+    runtimeEnabled: true,
+    notes: 'RSS/Atom feed parser with PostgreSQL storage. Full-text search on feed entries. Requires DATABASE_URL and manual feed source configuration.',
+  },
 ]
 
 export function getFeatureCapability(id: string): FeatureCapability | undefined {
