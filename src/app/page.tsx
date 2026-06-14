@@ -3,7 +3,7 @@
 import {
   Search, Zap, Database, Activity, Sparkles, Star,
   ExternalLink, Clock, Globe, AlertTriangle, TrendingUp, FileText, Building2, Code, Newspaper, Stethoscope,
-  Calendar, DollarSign, MapPin, Phone, Mail, CheckCircle
+  Calendar, DollarSign, MapPin, Phone, Mail, CheckCircle, Scale, GraduationCap, TrendingUp as TrendingUpIcon, Briefcase
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Header } from "../components/header";
@@ -20,6 +20,10 @@ const LENSES: { id: SearchLens; label: string; icon: typeof Search }[] = [
   { id: "provider", label: "Provider", icon: Stethoscope },
   { id: "technical", label: "Technical", icon: Code },
   { id: "news", label: "News", icon: Newspaper },
+  { id: "legal", label: "Legal", icon: Scale },
+  { id: "medical", label: "Medical", icon: Stethoscope },
+  { id: "academic", label: "Academic", icon: GraduationCap },
+  { id: "financial", label: "Financial", icon: Briefcase },
 ];
 
 const SOURCE_COLORS: Record<string, string> = {

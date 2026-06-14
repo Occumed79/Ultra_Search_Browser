@@ -1,5 +1,5 @@
 // ─── Search Lenses ───
-export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing" | "provider" | "technical" | "news";
+export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing" | "provider" | "technical" | "news" | "legal" | "medical" | "academic" | "financial";
 
 export type SearchSource = "google" | "bing" | "duckduckgo" | "brave" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
 
@@ -44,8 +44,8 @@ export interface ScrapedResult {
   source: string;
   rank: number;
   score: number;
-  resultType?: "web" | "pdf" | "government" | "procurement" | "pricing" | "technical" | "news";
-  intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence;
+  resultType?: "web" | "pdf" | "government" | "procurement" | "pricing" | "technical" | "news" | "legal" | "medical" | "academic" | "financial";
+  intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence | LegalIntelligence | MedicalIntelligence | AcademicIntelligence | FinancialIntelligence;
 }
 
 // ─── Intelligence Objects (Structured Data) ───
@@ -92,6 +92,61 @@ export interface PricingIntelligence {
   matched_signals: string[];
   payment_types?: ("self-pay" | "cash" | "employer" | "insurance" | "work comp")[];
   service_category?: "PFT" | "DOT" | "physical" | "drug test" | "audiometry" | "respirator" | "unknown";
+}
+
+export interface LegalIntelligence {
+  case_name?: string;
+  court?: string;
+  jurisdiction?: string;
+  citation?: string;
+  decision_date?: string;
+  statute_name?: string;
+  regulation_number?: string;
+  source_confidence: number;
+  document_url: string;
+  matched_signals: string[];
+  legal_type?: "case law" | "statute" | "regulation" | "compliance" | "unknown";
+}
+
+export interface MedicalIntelligence {
+  condition?: string;
+  treatment?: string;
+  diagnosis?: string;
+  study_type?: string;
+  clinical_trial_id?: string;
+  publication_date?: string;
+  source_confidence: number;
+  document_url: string;
+  matched_signals: string[];
+  medical_type?: "research" | "clinical" | "treatment" | "diagnosis" | "unknown";
+}
+
+export interface AcademicIntelligence {
+  paper_title?: string;
+  authors?: string[];
+  journal?: string;
+  publication_date?: string;
+  doi?: string;
+  citation_count?: number;
+  abstract?: string;
+  source_confidence: number;
+  document_url: string;
+  matched_signals: string[];
+  academic_type?: "journal" | "conference" | "thesis" | "preprint" | "unknown";
+}
+
+export interface FinancialIntelligence {
+  company_name?: string;
+  ticker?: string;
+  report_type?: string;
+  reporting_period?: string;
+  revenue?: string;
+  profit?: string;
+  eps?: string;
+  source_confidence: number;
+  document_url: string;
+  matched_signals: string[];
+  financial_type?: "earnings" | "report" | "market" | "economic" | "unknown";
 }
 
 export interface SearchFilters {
