@@ -20,21 +20,6 @@ const LENSES: { id: SearchLens; label: string }[] = [
   { id: "financial", label: "Financial" },
 ];
 
-const FEATURE_CARDS = [
-  {
-    title: "Multi-engine search",
-    text: "DuckDuckGo, Bing, Google, and optional backbones in one ranked stream.",
-  },
-  {
-    title: "Query intelligence",
-    text: "Lens-aware expansion for RFPs, providers, pricing, PDFs, and technical searches.",
-  },
-  {
-    title: "Signal scoring",
-    text: "Boosts useful sources, government portals, documents, and structured matches.",
-  },
-];
-
 function sourceClass(source: string) {
   const normalized = source.toLowerCase();
   if (normalized.includes("google")) return "source-pill source-google";
@@ -287,17 +272,6 @@ export default function Home() {
             </section>
           )}
         </section>
-
-        {!hasSearched && (
-          <section className="feature-grid">
-            {FEATURE_CARDS.map((feature) => (
-              <article key={feature.title} className="feature-card liquid-glass">
-                <h2>{feature.title}</h2>
-                <p>{feature.text}</p>
-              </article>
-            ))}
-          </section>
-        )}
       </section>
     </main>
   );
