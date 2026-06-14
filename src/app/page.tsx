@@ -5,6 +5,8 @@ import { useMemo, useState, type FormEvent } from "react";
 import { useSearch } from "../hooks/use-search";
 import type { SearchLens, ScrapedResult } from "../types/search";
 
+const OCCUMED_LOGO_SRC = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQQAAACOCAYAAADXVHYAAAADc0lEQVR42u3cvW7TUACG4S9tKiTEwAICAAAmhgGrj2UjFOjGZmM0lzWLtxPbZK0Gz8EuxHu2UucmJrD9KIgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAtWq3LhZgpb3rZ2bD9n/7u2AzLzfRhSpgxMN16nPzC/NNfMYbW/1dnTpmdO7+t1c8r+MIQK8Z3jpr1fPG83zR6wC2s3eS0o4fON1XL2CLwSxWfnNOXcCOmPhjU6Gr0wDeUzZq6O0JQG8pG7X0cWO2BPxWvmv9hYAOa/V2cvaEfgU+f3w6XInYL60+ny5E7AfWn2+3AkAZgrZqKGPGwFgo5CBGvq4EQBZqKGPGwGQhRr6uBEAQRr6uBEAJRr6uBEAYRr6uBEAgRr6uBEAQRr6uBEAARr6uBEAABr6uBEAwBq6nn4XAIDlbDTc6Oq6AOBwNhpu1E4AMMIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgGXKO+zFlcXkgw2Wsu7cUuVbZcx8EcC/r5iJN/7l0wBapbbuae05ERhzfOezf70z4HYCLH/7I5Zz4MpHM31Zp9fB7+sBxLtB9oof58gNq4mAEXFjDH9cCAN9qgkz3ivYBGPbJcY0fA2CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADMDnCdeVmNpbdXAAAAAElFTkSuQmCC";
+
 const LENSES: { id: SearchLens; label: string }[] = [
   { id: "web", label: "Web" },
   { id: "pdf", label: "PDF" },
@@ -18,6 +20,12 @@ const LENSES: { id: SearchLens; label: string }[] = [
   { id: "medical", label: "Medical" },
   { id: "academic", label: "Academic" },
   { id: "financial", label: "Financial" },
+];
+
+const FEATURE_CARDS = [
+  "Multi-engine aggregation",
+  "Lens-aware query expansion",
+  "Signal-scored results",
 ];
 
 function sourceClass(source: string) {
@@ -76,13 +84,10 @@ export default function Home() {
   const [sortBy, setSortBy] = useState<"score" | "rank" | "source">("score");
   const [filterSource, setFilterSource] = useState<string>("");
 
-  const sources = useMemo(() => {
-    return Array.from(new Set(scrapedResults.map((result) => result.source))).sort();
-  }, [scrapedResults]);
+  const sources = useMemo(() => Array.from(new Set(scrapedResults.map((result) => result.source))).sort(), [scrapedResults]);
 
   const filteredResults = useMemo(() => {
     const results = scrapedResults.filter((result) => !filterSource || result.source === filterSource);
-
     return [...results].sort((a, b) => {
       if (sortBy === "rank") return a.rank - b.rank;
       if (sortBy === "source") return a.source.localeCompare(b.source);
@@ -101,15 +106,7 @@ export default function Home() {
     const timestamp = new Date().toISOString();
 
     if (format === "json") {
-      const data = JSON.stringify(
-        {
-          metadata: { query, lens, timestamp, resultCount: filteredResults.length },
-          intelligence,
-          results: filteredResults,
-        },
-        null,
-        2,
-      );
+      const data = JSON.stringify({ metadata: { query, lens, timestamp, resultCount: filteredResults.length }, intelligence, results: filteredResults }, null, 2);
       const blob = new Blob([data], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
@@ -141,135 +138,93 @@ export default function Home() {
 
   return (
     <main className="ultra-page">
+      <div className="animated-field" aria-hidden="true" />
+      <div className="light-ribbon ribbon-one" aria-hidden="true" />
+      <div className="light-ribbon ribbon-two" aria-hidden="true" />
       <div className="ambient ambient-one" aria-hidden="true" />
       <div className="ambient ambient-two" aria-hidden="true" />
-      <div className="ambient-sweep" aria-hidden="true" />
+      <div className="floating-bubble bubble-one" aria-hidden="true" />
+      <div className="floating-bubble bubble-two" aria-hidden="true" />
+      <div className="floating-bubble bubble-three" aria-hidden="true" />
 
       <section className="app-shell">
-        <header className="topbar liquid-glass">
-          <a className="brand" href="/" aria-label="Ultra Search home">
-            <span className="brand-icon"><Search aria-hidden="true" /></span>
-            <span>Ultra Search</span>
+        <header className="floating-header">
+          <a className="logo-dock" href="/" aria-label="Ultra Search home">
+            <span className="logo-halo" />
+            <img src={OCCUMED_LOGO_SRC} alt="Occu-Med" />
           </a>
 
-          <nav className="top-nav" aria-label="App navigation">
-            <a href="/history">History</a>
-            <a href="/bookmarks">Bookmarks</a>
-            <a href="/settings">Settings</a>
+          <nav className="floating-actions" aria-label="App navigation">
+            <a className="glass-button" href="/history">History</a>
+            <a className="glass-button" href="/bookmarks">Bookmarks</a>
+            <a className="glass-button" href="/settings">Settings</a>
           </nav>
         </header>
 
-        <section className="search-workspace liquid-glass">
-          <div className="workspace-heading">
-            <p className="status-pill"><span /> Search browser</p>
-            <h1>What are you looking for?</h1>
-            <p>Search the web, RFPs, providers, pricing, PDFs, technical docs, and more.</p>
+        <section className="search-stage liquid-glass">
+          <div className="lens-cluster" aria-label="Search lenses">
+            <div className="lens-cluster-label">Lens</div>
+            <div className="lens-cluster-grid">
+              {LENSES.map((item) => (
+                <button key={item.id} type="button" onClick={() => setLens(item.id)} className={lens === item.id ? "lens-dot active" : "lens-dot"}>
+                  {item.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <form className="search-bar" onSubmit={submitSearch}>
             <Search className="search-icon" aria-hidden="true" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search anything..."
-              aria-label="Search query"
-              autoFocus
-            />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search anything..." aria-label="Search query" autoFocus />
             <kbd><Command aria-hidden="true" />K</kbd>
-            <button type="submit" disabled={isLoading || !query.trim()}>
-              {isLoading ? <Loader2 className="spin" aria-hidden="true" /> : "Search"}
-            </button>
+            <button type="submit" disabled={isLoading || !query.trim()}>{isLoading ? <Loader2 className="spin" aria-hidden="true" /> : "Search"}</button>
           </form>
-
-          <div className="lens-row" aria-label="Search lenses">
-            {LENSES.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setLens(item.id)}
-                className={lens === item.id ? "lens-pill active" : "lens-pill"}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
 
           {suggestions.length > 0 && query && !hasSearched && (
             <div className="suggestions">
-              {suggestions.slice(0, 4).map((suggestion) => (
-                <button type="button" key={suggestion.text} onClick={() => setQuery(suggestion.text)}>
-                  {suggestion.text}
-                </button>
-              ))}
+              {suggestions.slice(0, 4).map((suggestion) => <button type="button" key={suggestion.text} onClick={() => setQuery(suggestion.text)}>{suggestion.text}</button>)}
             </div>
           )}
 
-          {hasSearched && (
-            <section className="results-zone inline-results">
+          {hasSearched ? (
+            <section className="results-zone">
               <div className="results-toolbar">
-                <div>
-                  <strong>{filteredResults.length}</strong> results
-                  <span>{searchTime.toFixed(0)}ms · {lens}</span>
-                </div>
-
+                <div><strong>{filteredResults.length}</strong> results<span>{searchTime.toFixed(0)}ms · {lens}</span></div>
                 <div className="toolbar-controls">
                   <select value={filterSource} onChange={(event) => setFilterSource(event.target.value)}>
                     <option value="">All sources</option>
                     {sources.map((source) => <option value={source} key={source}>{source}</option>)}
                   </select>
-
                   <select value={sortBy} onChange={(event) => setSortBy(event.target.value as "score" | "rank" | "source")}>
                     <option value="score">Sort: Score</option>
                     <option value="rank">Sort: Rank</option>
                     <option value="source">Sort: Source</option>
                   </select>
-
                   <button type="button" onClick={() => exportResults("json")}>JSON</button>
                   <button type="button" onClick={() => exportResults("csv")}>CSV</button>
                 </div>
               </div>
 
-              {error && (
-                <div className="error-panel">
-                  <strong>Search failed</strong>
-                  <span>{error}</span>
-                </div>
-              )}
+              {error && <div className="error-panel"><strong>Search failed</strong><span>{error}</span></div>}
 
               {intelligence && (
                 <article className="intel-panel">
-                  <div className="intel-heading">
-                    <h2>Search intelligence</h2>
-                    <span>{intelligence.confidence}% confidence</span>
-                  </div>
+                  <div className="intel-heading"><h2>Search intelligence</h2><span>{intelligence.confidence}% confidence</span></div>
                   <p>{intelligence.summary || `Results for “${intelligence.query}” using the ${intelligence.lens} lens.`}</p>
-
                   {intelligence.queryExpansions.length > 0 && (
                     <div className="intel-chips">
-                      {intelligence.queryExpansions.slice(0, 8).map((expansion) => (
-                        <button type="button" key={expansion} onClick={() => setQuery(expansion)}>
-                          {expansion}
-                        </button>
-                      ))}
+                      {intelligence.queryExpansions.slice(0, 8).map((expansion) => <button type="button" key={expansion} onClick={() => setQuery(expansion)}>{expansion}</button>)}
                     </div>
                   )}
                 </article>
               )}
 
-              <div className="results-list">
-                {filteredResults.map((result, index) => (
-                  <ResultCard key={`${result.url}-${index}`} result={result} index={index} />
-                ))}
-              </div>
+              <div className="results-list">{filteredResults.map((result, index) => <ResultCard key={`${result.url}-${index}`} result={result} index={index} />)}</div>
 
-              {!isLoading && filteredResults.length === 0 && !error && (
-                <div className="empty-panel">
-                  <BookOpen aria-hidden="true" />
-                  <h2>No results came back yet.</h2>
-                  <p>Try a broader query or switch lenses.</p>
-                </div>
-              )}
+              {!isLoading && filteredResults.length === 0 && !error && <div className="empty-panel"><BookOpen aria-hidden="true" /><h2>No results came back yet.</h2><p>Try a broader query or switch lenses.</p></div>}
             </section>
+          ) : (
+            <div className="micro-features" aria-label="Capabilities">{FEATURE_CARDS.map((feature) => <span key={feature}>{feature}</span>)}</div>
           )}
         </section>
       </section>
