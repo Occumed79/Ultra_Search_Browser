@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
+import "./palette-overrides.css";
 
 export const metadata: Metadata = {
   title: "Ultra Search Browser | Kagi-Style Search",
@@ -12,7 +13,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: [{ media: "(prefers-color-scheme: dark)", color: "#0a0a0f" }],
+  themeColor: [{ media: "(prefers-color-scheme: dark)", color: "#1d2b3a" }],
 };
 
 export default function RootLayout({
@@ -23,7 +24,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning className="dark">
       <body
-        className={`${GeistSans.variable} ${GeistMono.variable} font-sans antialiased bg-[#0a0a0f]`}
+        className={`${GeistSans.variable} ${GeistMono.variable} font-sans antialiased bg-[#1d2b3a]`}
       >
         <ThemeProvider
           attribute="class"
