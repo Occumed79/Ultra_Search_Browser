@@ -1,4 +1,4 @@
-export type SearchLens = 'web' | 'pdf' | 'government' | 'procurement' | 'pricing' | 'technical' | 'news'
+export type SearchLens = 'web' | 'pdf' | 'government' | 'procurement' | 'pricing' | 'provider' | 'technical' | 'news'
 
 export interface Signal {
   name: string
@@ -96,32 +96,69 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
   procurement: {
     label: 'PROCUREMENT INTEL',
     description: 'Find RFPs, bids, solicitations, and government contracts',
-    keywords: ['RFP', 'bid', 'solicitation', 'procurement', 'tender', 'contract', 'proposal', 'solicitation'],
+    keywords: ['RFP', 'bid', 'solicitation', 'procurement', 'tender', 'contract', 'proposal', 'RFQ', 'RFT'],
     synonymMap: {
-      RFP: ['request for proposal', 'solicitation', 'bid', 'tender', 'procurement', 'RFQ', 'RFT'],
-      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment'],
-      services: ['contract', 'agreement', 'engagement', 'arrangement'],
+      RFP: ['request for proposal', 'solicitation', 'bid', 'tender', 'procurement', 'RFQ', 'RFT', 'request for qualifications'],
+      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment', 'employer clinic'],
+      services: ['contract', 'agreement', 'engagement', 'arrangement', 'professional services'],
+      open: ['active', 'current', 'accepting proposals', 'bid opportunity', 'vendor opportunity'],
     },
-    expansions: (q) => [
-      `${q} RFP`,
-      `${q} solicitation`,
-      `${q} bid`,
-      `${q} procurement`,
-      `${q} contract opportunity`,
-      `site:.gov ${q}`,
-      `site:sam.gov ${q}`,
-      `filetype:pdf ${q}`,
-      `${q} due date`,
-      `${q} proposal`,
-    ],
-    siteOperators: ['site:.gov', 'site:sam.gov', 'site:bonfirehub.com', 'site:planetbids.com'],
+    expansions: (q) => {
+      const baseExpansions = [
+        `${q} RFP`,
+        `${q} solicitation`,
+        `${q} bid`,
+        `${q} procurement`,
+        `${q} contract opportunity`,
+        `${q} vendor opportunity`,
+        `${q} professional services agreement`,
+        `${q} competitive sealed proposal`,
+      ];
+      
+      const siteExpansions = [
+        `site:.gov ${q}`,
+        `site:sam.gov ${q}`,
+        `site:ionwave.net ${q}`,
+        `site:bonfirehub.com ${q}`,
+        `site:bidnetdirect.com ${q}`,
+        `site:planetbids.com ${q}`,
+      ];
+      
+      const pdfExpansions = [
+        `filetype:pdf ${q}`,
+        `${q} filetype:pdf`,
+      ];
+      
+      const active2026Expansions = [
+        `${q} 2026 open`,
+        `${q} 2026 active`,
+        `${q} 2026 solicitation currently open`,
+        `${q} bid opportunity 2026`,
+        `${q} due date 2026`,
+        `${q} responses due 2026`,
+        `${q} closing date 2026`,
+      ];
+      
+      const hiddenGoldmine = [
+        `${q} notice inviting bids`,
+        `${q} request for qualifications`,
+        `${q} procurement opportunity`,
+        `${q} current opportunities`,
+      ];
+      
+      return [...baseExpansions, ...siteExpansions, ...pdfExpansions, ...active2026Expansions, ...hiddenGoldmine];
+    },
+    siteOperators: ['site:.gov', 'site:sam.gov', 'site:ionwave.net', 'site:bonfirehub.com', 'site:planetbids.com', 'site:bidnetdirect.com'],
     scoringRules: [
       { pattern: /\.gov\b/i, score: 35, name: '.gov domain' },
-      { pattern: /RFP|solicitation|bid|tender|procurement/i, score: 40, name: 'procurement language' },
-      { pattern: /due date|deadline|closing date/i, score: 20, name: 'includes deadline' },
+      { pattern: /RFP|solicitation|bid|tender|procurement|RFQ|RFT/i, score: 40, name: 'procurement language' },
+      { pattern: /due date|deadline|closing date|responses due|submission deadline/i, score: 25, name: 'includes deadline' },
+      { pattern: /open|active|current|accepting proposals|bid opportunity/i, score: 30, name: 'active opportunity' },
       { pattern: /filetype:pdf|\.pdf/i, score: 40, name: 'PDF document' },
       { pattern: /\$[\d,]+(?:\.\d{2})?|\$\d+ million|\$\d+K/i, score: 15, name: 'monetary value' },
       { pattern: /SAM\.gov|bonfire|planetbids|ionwave|bidnet/i, score: 30, name: 'procurement portal' },
+      { pattern: /notice inviting bids|request for qualifications|competitive sealed proposal/i, score: 35, name: 'hidden goldmine terms' },
+      { pattern: /2026/i, score: 20, name: '2026 active' },
     ],
   },
 
@@ -175,28 +212,111 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
   pricing: {
     label: 'PRICING INTEL',
     description: 'Extract fee schedules, rates, and cost structures',
-    keywords: ['price', 'cost', 'fee', 'rate', 'schedule', 'pricing', 'charge'],
+    keywords: ['price', 'cost', 'fee', 'rate', 'schedule', 'pricing', 'charge', 'cash pay', 'self pay'],
     synonymMap: {
-      pricing: ['fee schedule', 'cost', 'rates', 'charges', 'fees', 'price list', 'rate card'],
-      PDF: ['document', 'fee schedule', 'price list', 'rate sheet'],
-      occupational: ['worksite', 'industrial', 'employee', 'corporate'],
+      pricing: ['fee schedule', 'cost', 'rates', 'charges', 'fees', 'price list', 'rate card', 'chargemaster'],
+      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment', 'employer clinic'],
+      'PFT': ['spirometry', 'pulmonary function test', 'breathing test', 'lung function'],
+      'DOT': ['department of transportation', 'DOT physical', 'DOT exam', 'CDL physical'],
+      physical: ['exam', 'screening', 'medical exam', 'health screening', 'pre-employment physical'],
+      PDF: ['document', 'fee schedule', 'price list', 'rate sheet', 'transparency file'],
+      occupational: ['worksite', 'industrial', 'employee', 'corporate', 'employer'],
     },
-    expansions: (q) => [
-      `${q} fee schedule`,
-      `${q} pricing`,
-      `filetype:pdf ${q}`,
-      `${q} cost`,
-      `${q} rates`,
-      `${q} price list`,
-      `${q} fee structure`,
-      `${q} self-pay pricing`,
-    ],
+    expansions: (q) => {
+      const baseExpansions = [
+        `${q} fee schedule`,
+        `${q} pricing`,
+        `${q} cost`,
+        `${q} rates`,
+        `${q} price list`,
+        `${q} fee structure`,
+        `${q} chargemaster`,
+      ];
+      
+      const pdfExpansions = [
+        `filetype:pdf ${q}`,
+        `${q} filetype:pdf`,
+        `${q} transparency file`,
+      ];
+      
+      const paymentTypeExpansions = [
+        `${q} self-pay pricing`,
+        `${q} cash pay`,
+        `${q} out-of-pocket cost`,
+        `${q} employer account`,
+        `${q} work comp`,
+        `${q} workers compensation`,
+      ];
+      
+      const providerExpansions = [
+        `${q} clinic`,
+        `${q} provider`,
+        `${q} urgent care`,
+        `${q} occupational medicine`,
+      ];
+      
+      return [...baseExpansions, ...pdfExpansions, ...paymentTypeExpansions, ...providerExpansions];
+    },
     siteOperators: ['filetype:pdf'],
     scoringRules: [
-      { pattern: /fee schedule|price list|rate card|fee structure/i, score: 40, name: 'pricing document' },
+      { pattern: /fee schedule|price list|rate card|fee structure|chargemaster/i, score: 40, name: 'pricing document' },
       { pattern: /filetype:pdf|\.pdf/i, score: 40, name: 'PDF document' },
       { pattern: /\$[\d,]+(?:\.\d{2})?|\$\d+\s*(million|k|K)?/i, score: 25, name: 'price values' },
-      { pattern: /self-pay|cash price|out-of-pocket/i, score: 20, name: 'self-pay mention' },
+      { pattern: /self-pay|cash price|out-of-pocket|cash pay/i, score: 30, name: 'self-pay mention' },
+      { pattern: /employer account|work comp|workers compensation/i, score: 25, name: 'employer payment' },
+      { pattern: /spirometry|pulmonary function|PFT/i, score: 20, name: 'PFT pricing' },
+      { pattern: /DOT physical|CDL physical|department of transportation/i, score: 20, name: 'DOT pricing' },
+    ],
+  },
+
+  provider: {
+    label: 'PROVIDER INTEL',
+    description: 'Find occupational health clinics, providers, and services',
+    keywords: ['clinic', 'provider', 'doctor', 'physician', 'healthcare', 'medical', 'practice', 'occupational health', 'occupational medicine'],
+    synonymMap: {
+      clinic: ['medical center', 'health center', 'practice', 'facility', 'office', 'urgent care'],
+      provider: ['doctor', 'physician', 'practitioner', 'specialist', 'clinician', 'medical group'],
+      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment', 'employer clinic'],
+      services: ['exams', 'screenings', 'physicals', 'testing', 'drug testing', 'DOT physical', 'PFT'],
+    },
+    expansions: (q) => {
+      const baseExpansions = [
+        `${q} clinic`,
+        `${q} provider directory`,
+        `${q} medical practice`,
+        `${q} healthcare provider`,
+        `${q} physician`,
+        `${q} services offered`,
+        `${q} locations`,
+      ];
+      
+      const serviceExpansions = [
+        `${q} occupational health services`,
+        `${q} DOT physical`,
+        `${q} drug testing`,
+        `${q} pre-employment physical`,
+        `${q} pulmonary function test`,
+        `${q} audiometry`,
+        `${q} respirator fit test`,
+      ];
+      
+      const locationExpansions = [
+        `${q} near me`,
+        `${q} locations`,
+        `${q} directory`,
+        `${q} clinic locations`,
+      ];
+      
+      return [...baseExpansions, ...serviceExpansions, ...locationExpansions];
+    },
+    siteOperators: [],
+    scoringRules: [
+      { pattern: /clinic|medical center|health center|practice|facility/i, score: 30, name: 'provider entity' },
+      { pattern: /physician|doctor|provider|clinician|medical group/i, score: 25, name: 'provider keywords' },
+      { pattern: /board certified|licensed|accredited/i, score: 20, name: 'credentials' },
+      { pattern: /location|address|suite|floor/i, score: 15, name: 'physical address' },
+      { pattern: /occupational health|occupational medicine|worksite clinic/i, score: 35, name: 'occupational health provider' },
+      { pattern: /DOT physical|drug testing|pre-employment|PFT/i, score: 30, name: 'occupational services' },
     ],
   },
 
@@ -212,6 +332,7 @@ export function classifyLens(query: string): SearchLens {
     government: 0,
     procurement: 0,
     pricing: 0,
+    provider: 0,
     technical: 0,
     news: 0,
   }
@@ -228,6 +349,7 @@ export function classifyLens(query: string): SearchLens {
   // Special weighting
   if (/\b(rfp|rfq|tender|solicitation|procurement|bid)\b/i.test(q)) scores.procurement += 5
   if (/\b(price|cost|fee|rate|pricing|schedule)\b/i.test(q)) scores.pricing += 5
+  if (/\b(clinic|provider|doctor|physician|occupational health|occupational medicine)\b/i.test(q)) scores.provider += 5
   if (/\b(pdf|document|file|report|guide|manual)\b/i.test(q)) scores.pdf += 3
   if (/\b(government|official|federal|state|agency)\b/i.test(q)) scores.government += 4
   if (/\b(api|documentation|code|developer|github|programming)\b/i.test(q)) scores.technical += 4
@@ -315,21 +437,71 @@ export function scoreSignals(text: string, url?: string): Signal[] {
     signals.push({ name: '.org domain', score: 15, description: 'Non-profit organization' })
   }
 
-  // Content signals
-  if (/RFP|request for proposal|solicitation|bid|tender|procurement/i.test(text)) {
+  // Procurement portal signals
+  if (/sam\.gov|bonfire|planetbids|ionwave|bidnet/i.test(url || '')) {
+    signals.push({ name: 'procurement portal', score: 30, description: 'Official procurement platform' })
+  }
+
+  // Content signals - Procurement
+  if (/RFP|solicitation|bid|tender|procurement|RFQ|RFT/i.test(text)) {
     signals.push({ name: 'procurement language', score: 40, description: 'Contains procurement terminology' })
   }
-  if (/fee schedule|price list|rate card|pricing/i.test(text)) {
+  if (/filetype:pdf|\.pdf/i.test(text)) {
+    signals.push({ name: 'PDF document', score: 40, description: 'PDF RFP document' })
+  }
+  if (/due date|deadline|closing date|responses due|submission deadline/i.test(text)) {
+    signals.push({ name: 'includes deadline', score: 25, description: 'Contains deadline information' })
+  }
+  if (/open|active|current|accepting proposals|bid opportunity/i.test(text)) {
+    signals.push({ name: 'active opportunity', score: 30, description: 'Currently accepting bids' })
+  }
+  if (/notice inviting bids|request for qualifications|competitive sealed proposal/i.test(text)) {
+    signals.push({ name: 'hidden goldmine terms', score: 35, description: 'Alternative procurement terminology' })
+  }
+  if (/2026/i.test(text)) {
+    signals.push({ name: '2026 active', score: 20, description: 'Current year opportunity' })
+  }
+
+  // Content signals - Pricing
+  if (/fee schedule|price list|rate card|fee structure|chargemaster/i.test(text)) {
     signals.push({ name: 'pricing document', score: 40, description: 'Explicit pricing terminology' })
   }
-  if (/due date|deadline|closing date|submission date/i.test(text)) {
-    signals.push({ name: 'time-sensitive', score: 20, description: 'Includes deadline information' })
+  if (/\$[\d,]+(?:\.\d{2})?|\$\d+\s*(million|k|K)?/i.test(text)) {
+    signals.push({ name: 'monetary values', score: 25, description: 'Contains dollar amounts' })
   }
-  if (/\$[\d,]+(?:\.\d{2})?/i.test(text)) {
-    signals.push({ name: 'monetary values', score: 15, description: 'Contains dollar amounts' })
+  if (/self-pay|cash price|out-of-pocket|cash pay/i.test(text)) {
+    signals.push({ name: 'self-pay mention', score: 30, description: 'Self-pay pricing available' })
+  }
+  if (/employer account|work comp|workers compensation/i.test(text)) {
+    signals.push({ name: 'employer payment', score: 25, description: 'Employer billing options' })
+  }
+
+  // Content signals - Occupational Health
+  if (/occupational health|occupational medicine|worksite clinic|employee health/i.test(text)) {
+    signals.push({ name: 'occupational health match', score: 25, description: 'Exact service match' })
+  }
+  if (/DOT physical|CDL physical|department of transportation/i.test(text)) {
+    signals.push({ name: 'DOT physical', score: 20, description: 'DOT exam services' })
+  }
+  if (/spirometry|pulmonary function|PFT/i.test(text)) {
+    signals.push({ name: 'PFT pricing', score: 20, description: 'Pulmonary function testing' })
+  }
+  if (/drug testing|pre-employment physical|audiometry|respirator fit test/i.test(text)) {
+    signals.push({ name: 'occupational services', score: 25, description: 'Specific occupational health services' })
+  }
+
+  // Content signals - Provider
+  if (/clinic|medical center|health center|practice|facility/i.test(text)) {
+    signals.push({ name: 'provider entity', score: 30, description: 'Healthcare facility' })
+  }
+  if (/physician|doctor|provider|clinician|medical group/i.test(text)) {
+    signals.push({ name: 'provider keywords', score: 25, description: 'Medical provider' })
   }
   if (/board certified|licensed|accredited/i.test(text)) {
     signals.push({ name: 'credentials', score: 20, description: 'Professional credentials mentioned' })
+  }
+  if (/location|address|suite|floor/i.test(text)) {
+    signals.push({ name: 'physical address', score: 15, description: 'Contains location information' })
   }
 
   // Negative signals
@@ -337,7 +509,13 @@ export function scoreSignals(text: string, url?: string): Signal[] {
     signals.push({ name: 'suspicious content', score: -40, description: 'Potential spam or fraud indicators' })
   }
   if (/archive\.org|wayback|cached/i.test(url || '')) {
-    signals.push({ name: 'archived page', score: -15, description: 'Potentially outdated content' })
+    signals.push({ name: 'archived page', score: -25, description: 'Potentially outdated content' })
+  }
+  if (/directory|list|index|catalog/i.test(url || '')) {
+    signals.push({ name: 'junk directory', score: -20, description: 'Generic directory page' })
+  }
+  if (/404|not found|error|unavailable/i.test(text)) {
+    signals.push({ name: 'page error', score: -30, description: 'Page access issues' })
   }
 
   return signals

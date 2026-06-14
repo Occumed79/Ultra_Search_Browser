@@ -2,13 +2,14 @@
 
 import {
   Search, Zap, Database, Activity, Sparkles, Star,
-  ExternalLink, Clock, Globe, AlertTriangle, TrendingUp, FileText, Building2, Code, Newspaper
+  ExternalLink, Clock, Globe, AlertTriangle, TrendingUp, FileText, Building2, Code, Newspaper, Stethoscope,
+  Calendar, DollarSign, MapPin, Phone, Mail, CheckCircle
 } from "lucide-react";
 import { Badge } from "../components/ui/badge";
 import { Header } from "../components/header";
 import { SearchBar } from "../components/search-bar";
 import { useSearch } from "../hooks/use-search";
-import { type SearchLens, type ScrapedResult } from "../types/search";
+import { type SearchLens, type ScrapedResult, type ProcurementIntelligence, type ProviderIntelligence, type PricingIntelligence } from "../types/search";
 
 const LENSES: { id: SearchLens; label: string; icon: typeof Search }[] = [
   { id: "web", label: "Web", icon: Search },
@@ -16,6 +17,7 @@ const LENSES: { id: SearchLens; label: string; icon: typeof Search }[] = [
   { id: "government", label: "Government", icon: Building2 },
   { id: "procurement", label: "Procurement", icon: Database },
   { id: "pricing", label: "Pricing", icon: Zap },
+  { id: "provider", label: "Provider", icon: Stethoscope },
   { id: "technical", label: "Technical", icon: Code },
   { id: "news", label: "News", icon: Newspaper },
 ];
@@ -261,6 +263,21 @@ function SearchResultCard({ result, index }: { result: ScrapedResult; index: num
             </p>
           )}
 
+          {/* Intelligence Object Display */}
+          {result.intelligence && (
+            <div className="mt-3 p-2 bg-muted/50 rounded-lg border">
+              {isProcurementIntelligence(result.intelligence) && (
+                <ProcurementCard intelligence={result.intelligence} />
+              )}
+              {isProviderIntelligence(result.intelligence) && (
+                <ProviderCard intelligence={result.intelligence} />
+              )}
+              {isPricingIntelligence(result.intelligence) && (
+                <PricingCard intelligence={result.intelligence} />
+              )}
+            </div>
+          )}
+
           {/* Visit button */}
           <div className="flex items-center gap-2 mt-2">
             <a
@@ -278,4 +295,139 @@ function SearchResultCard({ result, index }: { result: ScrapedResult; index: num
       </div>
     </div>
   );
+}
+
+// Type guards
+function isProcurementIntelligence(obj: any): obj is ProcurementIntelligence {
+  return obj && 'opportunity_type' in obj && 'organization' in obj
+}
+
+function isProviderIntelligence(obj: any): obj is ProviderIntelligence {
+  return obj && 'provider_name' in obj && 'services_offered' in obj
+}
+
+function isPricingIntelligence(obj: any): obj is PricingIntelligence {
+  return obj && 'service' in obj && 'price_cash' in obj
+}
+
+// Intelligence Card Components
+function ProcurementCard({ intelligence }: { intelligence: ProcurementIntelligence }) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className="text-xs">
+          {intelligence.opportunity_type}
+        </Badge>
+        {intelligence.status && (
+          <Badge variant={intelligence.status === 'open' ? 'default' : 'secondary'} className="text-xs">
+            {intelligence.status}
+          </Badge>
+        )}
+      </div>
+      <div className="text-sm font-medium">{intelligence.organization}</div>
+      <div className="text-xs text-muted-foreground">{intelligence.service}</div>
+      {intelligence.due_date && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Calendar className="h-3 w-3" />
+          Due: {intelligence.due_date}
+        </div>
+      )}
+      {intelligence.monetary_value && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <DollarSign className="h-3 w-3" />
+          {intelligence.monetary_value}
+        </div>
+      )}
+      {intelligence.procurement_email && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Mail className="h-3 w-3" />
+          {intelligence.procurement_email}
+        </div>
+      )}
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <CheckCircle className="h-3 w-3" />
+        Confidence: {intelligence.source_confidence}%
+      </div>
+    </div>
+  )
+}
+
+function ProviderCard({ intelligence }: { intelligence: ProviderIntelligence }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium">{intelligence.provider_name}</div>
+      {intelligence.address && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <MapPin className="h-3 w-3" />
+          {intelligence.address}
+        </div>
+      )}
+      {intelligence.provider_phone && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <Phone className="h-3 w-3" />
+          {intelligence.provider_phone}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {intelligence.services_offered.map((service, i) => (
+          <Badge key={i} variant="secondary" className="text-xs">
+            {service}
+          </Badge>
+        ))}
+      </div>
+      {intelligence.credentials && intelligence.credentials.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {intelligence.credentials.map((cred, i) => (
+            <Badge key={i} variant="outline" className="text-xs">
+              {cred}
+            </Badge>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <CheckCircle className="h-3 w-3" />
+        Confidence: {intelligence.source_confidence}%
+      </div>
+    </div>
+  )
+}
+
+function PricingCard({ intelligence }: { intelligence: PricingIntelligence }) {
+  return (
+    <div className="space-y-2">
+      <div className="text-sm font-medium">{intelligence.provider_name}</div>
+      <div className="text-xs text-muted-foreground">{intelligence.service}</div>
+      {intelligence.price_cash && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <DollarSign className="h-3 w-3" />
+          Cash: {intelligence.price_cash}
+        </div>
+      )}
+      {intelligence.price_employer && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <DollarSign className="h-3 w-3" />
+          Employer: {intelligence.price_employer}
+        </div>
+      )}
+      {intelligence.price_range && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <DollarSign className="h-3 w-3" />
+          Range: {intelligence.price_range}
+        </div>
+      )}
+      {intelligence.payment_types && intelligence.payment_types.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {intelligence.payment_types.map((type, i) => (
+            <Badge key={i} variant="secondary" className="text-xs">
+              {type}
+            </Badge>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+        <CheckCircle className="h-3 w-3" />
+        Confidence: {intelligence.source_confidence}%
+      </div>
+    </div>
+  )
 }

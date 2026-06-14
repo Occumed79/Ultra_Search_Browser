@@ -9,6 +9,7 @@ import {
   buildIntelligenceObject,
   LENS_CONFIGS,
 } from './intelligence'
+import { extractIntelligence } from './entity-extraction'
 import type { ScrapedResult } from '../types/search'
 
 // Re-export intelligence types for consumers
@@ -246,12 +247,32 @@ export async function searchIntelligence(
 
   const { text, sources, rawTexts, results } = await searchAllEngines(allQueries)
 
+  // Enrich results with intelligence objects for relevant lenses
+  const enrichedResults = await Promise.all(
+    results.map(async (result) => {
+      if (['procurement', 'provider', 'pricing'].includes(lens)) {
+        try {
+          const content = await scrapeWebsite(result.url)
+          if (content.length > 100) {
+            const intelligence = extractIntelligence(content, result.url, result.title, lens)
+            if (intelligence) {
+              return { ...result, intelligence }
+            }
+          }
+        } catch {
+          // If scraping fails, return result without intelligence
+        }
+      }
+      return result
+    })
+  )
+
   if (text.trim().length < 100) {
     const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts, 'Limited results from search engines')
-    return { intelligence, results }
+    return { intelligence, results: enrichedResults }
   }
 
   const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-  return { intelligence, results }
+  return { intelligence, results: enrichedResults }
 }
 

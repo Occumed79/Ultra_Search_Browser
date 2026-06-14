@@ -1,5 +1,5 @@
 // ─── Search Lenses ───
-export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing" | "technical" | "news";
+export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing" | "provider" | "technical" | "news";
 
 export type SearchSource = "google" | "bing" | "duckduckgo" | "brave" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
 
@@ -45,6 +45,53 @@ export interface ScrapedResult {
   rank: number;
   score: number;
   resultType?: "web" | "pdf" | "government" | "procurement" | "pricing" | "technical" | "news";
+  intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence;
+}
+
+// ─── Intelligence Objects (Structured Data) ───
+
+export interface ProcurementIntelligence {
+  organization: string;
+  opportunity_type: "RFP" | "RFQ" | "RFT" | "solicitation" | "bid" | "tender" | "procurement" | "unknown";
+  service: string;
+  due_date?: string;
+  procurement_email?: string;
+  procurement_phone?: string;
+  source_confidence: number;
+  document_url: string;
+  matched_signals: string[];
+  monetary_value?: string;
+  posted_date?: string;
+  status?: "open" | "active" | "closed" | "awarded" | "unknown";
+}
+
+export interface ProviderIntelligence {
+  provider_name: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  provider_phone?: string;
+  services_offered: string[];
+  source_confidence: number;
+  website_url: string;
+  matched_signals: string[];
+  credentials?: string[];
+  accepts_self_pay?: boolean;
+  accepts_employer?: boolean;
+}
+
+export interface PricingIntelligence {
+  provider_name: string;
+  service: string;
+  price_cash?: string;
+  price_employer?: string;
+  price_range?: string;
+  source_confidence: number;
+  document_url: string;
+  matched_signals: string[];
+  payment_types?: ("self-pay" | "cash" | "employer" | "insurance" | "work comp")[];
+  service_category?: "PFT" | "DOT" | "physical" | "drug test" | "audiometry" | "respirator" | "unknown";
 }
 
 export interface SearchFilters {
