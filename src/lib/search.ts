@@ -16,11 +16,18 @@ import { createVectorStoreAdapter, type VectorStoreAdapter, type SearchDocument 
 import { generateEmbedding, isEmbeddingsReady, initializeEmbeddings } from './embeddings'
 import { searchCache, scrapeCache } from './cache'
 import { calculateCombinedSpamScore, applySpamPenalty } from './anti-spam'
-import { getDomainPreference, applyDomainPreferences, initializeDomainMemory } from './domain-memory'
+import { getDomainPreference, applyDomainPreferences, initializeDomainMemory, getDomainPreferences } from './domain-memory'
 import { searchSearXNG, checkSearXNGAvailable } from './searxng'
 import { searchMarginalia, checkMarginaliaAvailable } from './marginalia'
 import { searchSmallWeb, initializeSmallWeb } from './small-web'
 import type { ScrapedResult } from '../types/search'
+
+// New imports for verticals, parsers, memory, and storage
+import { parseBangs } from './bangs'
+import { parseSearchOperators } from './search-operators'
+import { keywordSearchStoredResults, vectorSearchStoredResults, dedupeByUrl } from './memory-retrieval'
+import { insertSearchRun, insertSearchResult, insertPricingFinding } from './search-storage'
+import { extractPricingFindings } from './verticals/pricing/extract'
 
 // Re-export intelligence types for consumers
 export type { IntelligenceObject, ExpandedQuery, SearchLens }
@@ -28,7 +35,7 @@ export type { ScrapedResult }
 
 
 export function extractWebsites(text: string, domainHint?: string): string[] {
-  const urlRegex = /https?:\/\/(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[a-zA-Z0-9-._~:/?#[\]@!$&'()*+,;=]*)?/g
+  const urlRegex = /https?:\/\/(?:www\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[a-zA-Z0-9-._~:\/\?#[\]@!$&'()*+,;=]*)?/g
   const urls = [...text.matchAll(urlRegex)].map(m => m[0]).filter((v, i, a) => a.indexOf(v) === i)
   if (domainHint) {
     return urls.filter(u => u.toLowerCase().includes(domainHint.toLowerCase()))
@@ -348,12 +355,12 @@ async function getVectorStore(): Promise<VectorStoreAdapter | null> {
   if (vectorStore !== null) {
     return vectorStore
   }
-  
+
   const databaseUrl = process.env.DATABASE_URL
   if (!databaseUrl) {
     return null
   }
-  
+
   try {
     const pgvectorAdapter = createVectorStoreAdapter('pgvector', databaseUrl)
     if ('initialize' in pgvectorAdapter) {
@@ -371,20 +378,20 @@ async function getVectorStore(): Promise<VectorStoreAdapter | null> {
 async function indexDocumentsInVectorStore(results: ScrapedResult[], lens: SearchLens): Promise<void> {
   const store = await getVectorStore()
   if (!store) return
-  
+
   const documents: SearchDocument[] = []
-  
+
   for (const result of results) {
-    const text = result.title + ' ' + (result.description || '')
+    const text = result.title + ' ' + (result.description || '') + ' ' + (result as any).extracted_text || ''
     let embedding: number[] | undefined = undefined
-    
+
     // Always generate embedding (uses hash fallback if local embeddings disabled)
     try {
       embedding = await generateEmbedding(text)
     } catch (err) {
       console.warn('Failed to generate embedding for document:', err)
     }
-    
+
     documents.push({
       id: result.url,
       text,
@@ -398,7 +405,7 @@ async function indexDocumentsInVectorStore(results: ScrapedResult[], lens: Searc
       },
     })
   }
-  
+
   try {
     await store.addDocuments(documents)
     console.log(`Indexed ${documents.length} documents in vector store (${documents.filter(d => d.embedding).length} with embeddings)`)
@@ -407,14 +414,14 @@ async function indexDocumentsInVectorStore(results: ScrapedResult[], lens: Searc
   }
 }
 
-// ─── INTELLIGENCE-POWERED SEARCH ───
+// ─── INTELLIGENCE-POWERED SEARCH (Wired with memory + persistence + pricing extraction) ───
 
 export async function searchIntelligence(
   query: string,
   forcedLens?: SearchLens
-): Promise<{ 
-  intelligence: IntelligenceObject; 
-  results: ScrapedResult[]; 
+): Promise<{
+  intelligence: IntelligenceObject;
+  results: ScrapedResult[];
   pgvectorDiagnostics: {
     enabled: boolean
     databaseConfigured: boolean
@@ -425,6 +432,8 @@ export async function searchIntelligence(
     error?: string
   }
 }> {
+  const startTime = Date.now()
+
   // Check cache first (cache key includes query + lens to prevent wrong lens results)
   const cacheKey = `${query}:${forcedLens || 'default'}`
   const cached = searchCache.get(cacheKey)
@@ -433,151 +442,50 @@ export async function searchIntelligence(
     return cached
   }
 
-  const expanded = expandQuery(query, forcedLens)
-  const lens = expanded.lens
+  // Parse bangs and operators early
+  const bangInfo = parseBangs(query)
+  const opInfo = parseSearchOperators(bangInfo.cleanQuery || query)
+  const normalizedQuery = opInfo.cleanQuery || bangInfo.cleanQuery || query
 
-  // Procurement lens uses web search with procurement-focused expansions
-  if (lens === 'procurement') {
-    const procurementExpansions = [
-      query,
-      `${query} RFP`,
-      `${query} RFQ`,
-      `${query} bid`,
-      `${query} solicitation`,
-      `${query} site:.gov`,
-      `${query} site:.us`,
-      `${query} PDF`,
-      'occupational health RFP',
-      'occupational medicine bid',
-      'occupational health services solicitation',
-      'DOT physical pricing',
-      'pulmonary function test pricing',
-    ]
-    
-    const { text, sources, rawTexts, results: searchResults } = await searchAllEngines(procurementExpansions, lens)
-    
-    // Enrich with intelligence objects
-    const enrichedResults = await Promise.all(
-      searchResults.slice(0, 30).map(async (result) => {
-        let content = ''
-        let extractionSource = 'scrape'
-        
-        // Try PDF extraction for PDF URLs
-        if (result.url.toLowerCase().endsWith('.pdf')) {
-          try {
-            const extractionResult: ExtractionResult = await fetchAndExtractFromURL(result.url, 8000)
-            if (extractionResult.success && extractionResult.document) {
-              content = extractionResult.document.text
-              extractionSource = 'pdf'
-            }
-          } catch {
-            // Fall back to regular scraping
-          }
-        }
-        
-        // Regular scraping fallback
-        if (!content) {
-          try {
-            content = await scrapeWebsite(result.url)
-            extractionSource = 'scrape'
-          } catch {
-            // If scraping fails, return result without intelligence
-          }
-        }
-        
-        if (content.length > 100) {
-          const intelligence = extractIntelligence(content, result.url, result.title, lens)
-          if (intelligence) {
-            return { ...result, intelligence, extractionSource }
-          }
-        }
-        
-        return result
-      })
-    )
-    
-    const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-    
-    // Index top results in pgvector (non-blocking, fail-open)
-    let pgvectorDiagnostics = {
-      enabled: false,
-      databaseConfigured: false,
-      indexingAttempted: false,
-      indexedCount: 0,
-      vectorSearchAttempted: false,
-      vectorMatches: 0,
-      error: undefined as string | undefined,
-    }
+  const expanded = expandQuery(normalizedQuery, forcedLens as any)
+  // Determine lens: bangs force > forcedLens param > expansion
+  const lens: SearchLens = (bangInfo.forcedVertical as SearchLens) || (forcedLens as SearchLens) || expanded.lens
 
-    const databaseUrl = process.env.DATABASE_URL
-    if (databaseUrl) {
-      pgvectorDiagnostics.databaseConfigured = true
-      pgvectorDiagnostics.enabled = true
-      
-      try {
-        // Index top 20 results
-        const topResults = enrichedResults.slice(0, 20)
-        await indexDocumentsInVectorStore(topResults, lens)
-        pgvectorDiagnostics.indexingAttempted = true
-        pgvectorDiagnostics.indexedCount = topResults.length
-      } catch (err) {
-        pgvectorDiagnostics.error = err instanceof Error ? err.message : String(err)
-        console.warn('pgvector indexing failed:', err)
-      }
+  // Build list of queries to run against live engines
+  const allQueries = [normalizedQuery, ...expanded.expansions.slice(0, 6), ...expanded.withOperators.slice(0, 3)]
 
-      // Try vector search for similar documents
-      try {
-        const store = await getVectorStore()
-        if (store) {
-          const queryEmbedding = await generateEmbedding(query)
-          const vectorMatches = await store.searchByVector(queryEmbedding, 10)
-          pgvectorDiagnostics.vectorSearchAttempted = true
-          pgvectorDiagnostics.vectorMatches = vectorMatches.length
-          
-          // Boost current results that match vector search results
-          const matchedUrls = new Set(vectorMatches.map(m => m.metadata.url))
-          enrichedResults.forEach(result => {
-            if (matchedUrls.has(result.url)) {
-              // Boost rank by moving up slightly (simple approach)
-              result.rank = Math.max(1, (result.rank || 1) - 1)
-            }
-          })
-        }
-      } catch (err) {
-        console.warn('pgvector vector search failed:', err)
-      }
-    }
-    
-    return { intelligence, results: enrichedResults, pgvectorDiagnostics }
-  }
+  // Run live search, memory keyword, and memory vector in parallel (fail-open)
+  const livePromise = searchAllEngines(allQueries, lens)
+  const memKeywordPromise = keywordSearchStoredResults(normalizedQuery, lens, opInfo, 20)
+  const memVectorPromise = vectorSearchStoredResults(normalizedQuery, lens, 10)
 
-  const allQueries = [
-    query,
-    ...expanded.expansions.slice(0, 6),
-    ...expanded.withOperators.slice(0, 3),
-  ]
+  const [liveRes, memKeyword, memVector] = await Promise.allSettled([livePromise, memKeywordPromise, memVectorPromise])
 
-  const { text, sources, rawTexts, results } = await searchAllEngines(allQueries, lens)
+  const liveData = liveRes.status === 'fulfilled' ? (liveRes.value as any) : { text: '', sources: [], rawTexts: [], results: [] }
+  const memoryKeywordResults: ScrapedResult[] = memKeyword.status === 'fulfilled' ? memKeyword.value as ScrapedResult[] : []
+  const memoryVectorResults: ScrapedResult[] = memVector.status === 'fulfilled' ? memVector.value as ScrapedResult[] : []
+
+  // Start with live results ordering and enrich as before
+  const { text, sources, rawTexts, results: liveResults } = liveData
 
   // Semantic reranking for better relevance (with error handling)
-  let semanticallyOrderedResults = results
+  let semanticallyOrderedResults = liveResults
   try {
     const reranked = rerankResults(
-      query,
-      results.map(r => ({ id: r.url, text: r.title + ' ' + r.description, url: r.url, title: r.title, source: r.source })),
-      results.length
+      normalizedQuery,
+      liveResults.map(r => ({ id: r.url, text: r.title + ' ' + r.description, url: r.url, title: r.title, source: r.source })),
+      liveResults.length
     )
-    
-    // Reorder results based on semantic scores
+
     semanticallyOrderedResults = reranked
-      .map(r => results[r.originalIndex])
+      .map(r => liveResults[r.originalIndex])
       .map((result, index) => ({ ...result, rank: index + 1 }))
   } catch (err) {
     console.warn('Semantic reranking failed, using original results order:', err)
-    semanticallyOrderedResults = results.map((result, index) => ({ ...result, rank: index + 1 }))
+    semanticallyOrderedResults = liveResults.map((result, index) => ({ ...result, rank: index + 1 }))
   }
 
-  // Enrich results with intelligence objects for relevant lenses
+  // Enrich results with intelligence objects for relevant lenses (reusing existing extraction logic)
   const enrichedResults = await Promise.all(
     semanticallyOrderedResults.map(async (result) => {
       let content = ''
@@ -586,12 +494,12 @@ export async function searchIntelligence(
       let extractionSucceeded = false
       let extractionType = 'none'
       let extractionError: string | undefined = undefined
-      
+
       const isPdf = result.url.toLowerCase().endsWith('.pdf') || result.url.toLowerCase().includes('.pdf')
       const isDocx = result.url.toLowerCase().endsWith('.docx')
       const titleOrSnippet = (result.title + ' ' + (result.description || '')).toLowerCase()
       const suggestsPdf = /pdf|rfp|bid|solicitation|proposal|tender|procurement/i.test(titleOrSnippet)
-      
+
       // Try PDF/DOCX extraction for PDF, government, and procurement lenses, or if URL/title suggests PDF
       if (
         ['pdf', 'government', 'procurement'].includes(lens) ||
@@ -600,7 +508,7 @@ export async function searchIntelligence(
       ) {
         extractionAttempted = true
         extractionType = isPdf ? 'pdf' : isDocx ? 'docx' : 'html'
-        
+
         try {
           if (isPdf) {
             const extractionResult: ExtractionResult = await fetchAndExtractFromURL(result.url, 8000)
@@ -626,13 +534,12 @@ export async function searchIntelligence(
           // Fall back to regular scraping
         }
       }
-      
+
       // Regular scraping fallback or for other lenses
       if (!content && ['procurement', 'provider', 'pricing', 'legal', 'medical', 'academic', 'financial'].includes(lens)) {
         extractionAttempted = true
         extractionType = 'html'
         try {
-          // Check scrape cache
           const scrapeCacheKey = result.url
           const cachedContent = scrapeCache.get(scrapeCacheKey)
           if (cachedContent) {
@@ -643,7 +550,6 @@ export async function searchIntelligence(
             content = await scrapeWebsite(result.url)
             extractionSource = 'scrape'
             extractionSucceeded = true
-            // Cache the scraped content
             scrapeCache.set(scrapeCacheKey, content)
           }
         } catch (err) {
@@ -651,14 +557,15 @@ export async function searchIntelligence(
           // If scraping fails, return result without intelligence
         }
       }
-      
+
       if (content.length > 100) {
         const intelligence = extractIntelligence(content, result.url, result.title, lens)
         if (intelligence) {
-          return { 
-            ...result, 
-            intelligence, 
+          return {
+            ...result,
+            intelligence,
             extractionSource,
+            extracted_text: content,
             extractionDiagnostics: {
               extractionAttempted,
               extractionSucceeded,
@@ -669,9 +576,10 @@ export async function searchIntelligence(
           }
         }
       }
-      
+
       return {
         ...result,
+        extracted_text: content,
         extractionDiagnostics: {
           extractionAttempted,
           extractionSucceeded,
@@ -683,8 +591,29 @@ export async function searchIntelligence(
     })
   )
 
+  // Merge memory results before anti-spam and final ordering
+  let mergedResults = [...enrichedResults]
+  if (memoryKeywordResults && memoryKeywordResults.length) mergedResults = mergedResults.concat(memoryKeywordResults)
+  if (memoryVectorResults && memoryVectorResults.length) mergedResults = mergedResults.concat(memoryVectorResults)
+
+  // Deduplicate by normalized URL
+  mergedResults = dedupeByUrl(mergedResults)
+
+  // Apply lens-specific scoring boosts and domain preferences
+  mergedResults.forEach(r => { r.score = (r.score || 0) + scoreResultForLens(r, lens) })
+
+  // Apply domain preferences for default user
+  try {
+    const prefs = await getDomainPreferences('default').catch(() => [])
+    const applied = applyDomainPreferences(mergedResults.map(r => ({ url: r.url, score: r.score, rank: r.rank })), prefs)
+    mergedResults = applied.results as any
+  } catch (err) {
+    // if domain prefs fail, continue
+    console.warn('Domain preferences apply failed:', err)
+  }
+
   // Apply anti-spam scoring to results
-  enrichedResults.forEach(result => {
+  mergedResults.forEach(result => {
     const spamScore = calculateCombinedSpamScore(result.url)
     if (spamScore.score > 0) {
       result.spamScore = spamScore.score
@@ -692,7 +621,11 @@ export async function searchIntelligence(
     }
   })
 
-  // Index top results in pgvector (non-blocking, fail-open)
+  // Re-rank by score
+  mergedResults.sort((a, b) => (b.score || 0) - (a.score || 0))
+  mergedResults.forEach((r, i) => { r.rank = i + 1 })
+
+  // Diagnostics for pgvector handled by existing logic later; we'll still attempt indexing
   let pgvectorDiagnostics = {
     enabled: false,
     databaseConfigured: false,
@@ -707,10 +640,8 @@ export async function searchIntelligence(
   if (databaseUrl) {
     pgvectorDiagnostics.databaseConfigured = true
     pgvectorDiagnostics.enabled = true
-    
     try {
-      // Index top 20 results
-      const topResults = enrichedResults.slice(0, 20)
+      const topResults = mergedResults.slice(0, 20)
       await indexDocumentsInVectorStore(topResults, lens)
       pgvectorDiagnostics.indexingAttempted = true
       pgvectorDiagnostics.indexedCount = topResults.length
@@ -719,20 +650,16 @@ export async function searchIntelligence(
       console.warn('pgvector indexing failed:', err)
     }
 
-    // Try vector search for similar documents
     try {
       const store = await getVectorStore()
       if (store) {
-        const queryEmbedding = await generateEmbedding(query)
-        const vectorMatches = await store.searchByVector(queryEmbedding, 10)
         pgvectorDiagnostics.vectorSearchAttempted = true
+        const queryEmbedding = await generateEmbedding(normalizedQuery)
+        const vectorMatches = await store.searchByVector(queryEmbedding, 10)
         pgvectorDiagnostics.vectorMatches = vectorMatches.length
-        
-        // Boost current results that match vector search results
         const matchedUrls = new Set(vectorMatches.map(m => m.metadata.url))
-        enrichedResults.forEach(result => {
+        mergedResults.forEach(result => {
           if (matchedUrls.has(result.url)) {
-            // Boost rank by moving up slightly (simple approach)
             result.rank = Math.max(1, (result.rank || 1) - 1)
           }
         })
@@ -742,18 +669,82 @@ export async function searchIntelligence(
     }
   }
 
-  if (text.trim().length < 100) {
-    const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts, 'Limited results from search engines')
-    const result = { intelligence, results: enrichedResults, pgvectorDiagnostics }
-    // Cache the result
-    searchCache.set(cacheKey, result)
-    return result
+  // Persist search run and results (fail-open)
+  let searchRunId: string | null = null
+  try {
+    const runtime_ms = Date.now() - startTime
+    if (databaseUrl) {
+      searchRunId = await insertSearchRun({
+        vertical: lens,
+        query: query,
+        normalized_query: normalizedQuery,
+        lens,
+        result_count: mergedResults.length,
+        runtime_ms,
+        sources,
+        operators: { bangs: bangInfo.flags, parsed: opInfo },
+      })
+
+      // Save results
+      for (const r of mergedResults) {
+        try {
+          const resultId = await insertSearchResult({
+            search_run_id: searchRunId || undefined,
+            url: r.url,
+            normalized_url: undefined,
+            domain: r.domain,
+            title: r.title,
+            snippet: r.description,
+            source_engine: r.source,
+            rank: r.rank,
+            score: r.score,
+            final_score: r.score,
+            extraction_status: (r as any).extractionDiagnostics ? 'extracted' : 'none',
+            extracted_text: (r as any).extracted_text || null,
+            metadata: { intelligence: (r as any).intelligence || null }
+          })
+
+          // If pricing vertical, attempt extraction and save findings
+          if (lens === 'pricing' && resultId) {
+            try {
+              const textForExtraction = (r as any).extracted_text || r.description || ''
+              const findings = extractPricingFindings(textForExtraction, r.url, r.title)
+              for (const f of findings) {
+                await insertPricingFinding({
+                  search_result_id: resultId,
+                  provider_name: f.provider_name,
+                  service_name: f.service_name,
+                  price: f.price ?? null,
+                  price_text: f.price_text || null,
+                  currency: f.currency || 'USD',
+                  location: f.location || null,
+                  phone: f.phone || null,
+                  email: f.email || null,
+                  evidence_text: f.evidence_text || null,
+                  source_url: r.url,
+                  confidence: f.confidence ?? 0.5,
+                })
+              }
+            } catch (err) {
+              console.warn('Pricing extraction/save failed for', r.url, err)
+            }
+          }
+        } catch (err) {
+          // continue saving others
+          console.warn('Failed to insert search result for', r.url, err)
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to persist search run/results:', err)
   }
 
+  // Build intelligence object
   const intelligence = buildIntelligenceObject(query, expanded, sources, rawTexts)
-  const result = { intelligence, results: enrichedResults, pgvectorDiagnostics }
-  // Cache the result
-  searchCache.set(cacheKey, result)
-  return result
-}
 
+  const resultObj = { intelligence, results: mergedResults, pgvectorDiagnostics }
+  // Cache the result
+  searchCache.set(cacheKey, resultObj)
+
+  return resultObj
+}
