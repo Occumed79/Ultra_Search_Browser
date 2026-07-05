@@ -38,6 +38,12 @@ export function ResultActions({ url, resultId, domain }: ResultActionsProps) {
   }
 
   async function setDomain(action: string) {
+    // Confirm destructive action for block
+    if (action === 'block') {
+      const ok = window.confirm('Block all results from this domain? This will hide them from your future searches.')
+      if (!ok) return
+    }
+
     setLoading(true)
     try {
       const res = await fetch('/api/domain-preferences', {
