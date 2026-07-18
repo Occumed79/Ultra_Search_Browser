@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { initializeSchema } from '../../../lib/search-storage'
-import { insertBookmark } from '../../../lib/search-storage'
+import { initializeSchema, insertBookmark } from '../../../lib/search-storage'
 import { query } from '../../../lib/db'
 
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     await initializeSchema()
-    const databaseUrl = process.env.DATABASE_URL
-    if (!databaseUrl) {
+    if (!process.env.DATABASE_URL) {
       return NextResponse.json({ error: 'No database configured' }, { status: 501 })
     }
 
-    const res = await query(`SELECT id, title, url, description, created_at FROM bookmarks ORDER BY created_at DESC LIMIT 500`)
-    return NextResponse.json({ bookmarks: res.rows || [] })
-  } catch (err) {
-    console.error('Failed to fetch bookmarks:', err)
+    const res = await query(
+      'SELECT id, title, url, description, created_at FROM bookmarks ORDER BY created_at DESC LIMIT 500'
+    )
+    return NextResponse.json({ bookmarks: res?.rows ?? [] })
+  } catch (error) {
+    console.error('Failed to fetch bookmarks:', error)
     return NextResponse.json({ error: 'Failed to fetch bookmarks' }, { status: 500 })
   }
 }
@@ -22,19 +22,40 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await initializeSchema()
-    const databaseUrl = process.env.DATABASE_URL
-    const body = await request.json()
-    const { title, url, description } = body
-    if (!url) return NextResponse.json({ error: 'url is required' }, { status: 400 })
-
-    if (!databaseUrl) {
+    if (!process.env.DATABASE_URL) {
       return NextResponse.json({ error: 'No database configured' }, { status: 501 })
     }
 
-    const id = await insertBookmark({ id: crypto.randomUUID(), user_id: 'default', url, title: title || null, description: description || null })
-    return NextResponse.json({ bookmark: { id } })
-  } catch (err) {
-    console.error('Failed to create bookmark:', err)
+    const body = (await request.json()) as {
+      title?: string
+      url?: string
+      description?: string
+    }
+    const url = body.url?.trim()
+    if (!url) {
+      return NextResponse.json({ error: 'url is required' }, { status: 400 })
+    }
+
+    const bookmark = {
+      id: crypto.randomUUID(),
+      user_id: 'default',
+      url,
+      title: body.title?.trim() || url,
+      description: body.description?.trim() || undefined,
+    }
+    const id = await insertBookmark(bookmark)
+
+    return NextResponse.json({
+      bookmark: {
+        id,
+        title: bookmark.title,
+        url: bookmark.url,
+        description: bookmark.description,
+        created_at: new Date().toISOString(),
+      },
+    })
+  } catch (error) {
+    console.error('Failed to create bookmark:', error)
     return NextResponse.json({ error: 'Failed to create bookmark' }, { status: 500 })
   }
 }
@@ -42,8 +63,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     await initializeSchema()
-    const databaseUrl = process.env.DATABASE_URL
-    if (!databaseUrl) {
+    if (!process.env.DATABASE_URL) {
       return NextResponse.json({ error: 'No database configured' }, { status: 501 })
     }
 
@@ -54,14 +74,14 @@ export async function DELETE(request: NextRequest) {
     }
 
     if (id) {
-      await query(`DELETE FROM bookmarks WHERE id = $1`, [id])
+      await query('DELETE FROM bookmarks WHERE id = $1', [id])
     } else {
-      await query(`DELETE FROM bookmarks WHERE url = $1`, [url])
+      await query('DELETE FROM bookmarks WHERE url = $1', [url])
     }
 
     return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('Failed to delete bookmark:', err)
+  } catch (error) {
+    console.error('Failed to delete bookmark:', error)
     return NextResponse.json({ error: 'Failed to delete bookmark' }, { status: 500 })
   }
 }

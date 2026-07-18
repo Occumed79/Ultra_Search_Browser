@@ -382,7 +382,7 @@ async function indexDocumentsInVectorStore(results: ScrapedResult[], lens: Searc
   const documents: SearchDocument[] = []
 
   for (const result of results) {
-    const text = result.title + ' ' + (result.description || '') + ' ' + (result as any).extracted_text || ''
+    const text = [result.title, result.description || '', (result as any).extracted_text || ''].join(' ').trim()
     let embedding: number[] | undefined = undefined
 
     // Always generate embedding (uses hash fallback if local embeddings disabled)
@@ -461,7 +461,9 @@ export async function searchIntelligence(
 
   const [liveRes, memKeyword, memVector] = await Promise.allSettled([livePromise, memKeywordPromise, memVectorPromise])
 
-  const liveData = liveRes.status === 'fulfilled' ? (liveRes.value as any) : { text: '', sources: [], rawTexts: [], results: [] }
+  const liveData: Awaited<ReturnType<typeof searchAllEngines>> = liveRes.status === 'fulfilled'
+    ? liveRes.value
+    : { text: '', sources: [], rawTexts: [], results: [] }
   const memoryKeywordResults: ScrapedResult[] = memKeyword.status === 'fulfilled' ? memKeyword.value as ScrapedResult[] : []
   const memoryVectorResults: ScrapedResult[] = memVector.status === 'fulfilled' ? memVector.value as ScrapedResult[] : []
 
@@ -592,7 +594,7 @@ export async function searchIntelligence(
   )
 
   // Merge memory results before anti-spam and final ordering
-  let mergedResults = [...enrichedResults]
+  let mergedResults: ScrapedResult[] = [...enrichedResults]
   if (memoryKeywordResults && memoryKeywordResults.length) mergedResults = mergedResults.concat(memoryKeywordResults)
   if (memoryVectorResults && memoryVectorResults.length) mergedResults = mergedResults.concat(memoryVectorResults)
 
@@ -714,13 +716,13 @@ export async function searchIntelligence(
                   search_result_id: resultId,
                   provider_name: f.provider_name,
                   service_name: f.service_name,
-                  price: f.price ?? null,
-                  price_text: f.price_text || null,
+                  price: f.price ?? undefined,
+                  price_text: f.price_text || undefined,
                   currency: f.currency || 'USD',
-                  location: f.location || null,
-                  phone: f.phone || null,
-                  email: f.email || null,
-                  evidence_text: f.evidence_text || null,
+                  location: f.location || undefined,
+                  phone: f.phone || undefined,
+                  email: f.email || undefined,
+                  evidence_text: f.evidence_text || undefined,
                   source_url: r.url,
                   confidence: f.confidence ?? 0.5,
                 })

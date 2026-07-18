@@ -1,4 +1,4 @@
-import type { SearchVerticalConfig } from '../verticals';
+import type { SearchVerticalConfig } from '../index';
 
 export const PRICING_VERTICAL: SearchVerticalConfig = {
   id: 'pricing',
