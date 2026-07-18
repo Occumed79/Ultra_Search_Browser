@@ -63,20 +63,39 @@ export function useSearch(): UseSearchReturn {
         body: JSON.stringify({ query: searchQuery, lens: searchLens }),
       })
 
+      const payload = await response.json().catch(() => null) as {
+        error?: string
+        detail?: string
+        query?: string
+        lens?: SearchLens
+        summary?: string
+        expandedQueries?: string[]
+        signals?: Array<{ name: string; score: number; description: string }>
+        results?: ScrapedResult[]
+        sources?: string[]
+        timestamp?: string
+        confidence?: number
+      } | null
+
       if (!response.ok) {
-        throw new Error(`Search failed: ${response.statusText}`)
+        const message = payload?.detail || payload?.error || response.statusText || `HTTP ${response.status}`
+        throw new Error(`Search failed: ${message}`)
       }
 
-      const data = (await response.json()) as {
-        query: string
-        lens: SearchLens
-        summary?: string
-        expandedQueries: string[]
-        signals: Array<{ name: string; score: number; description: string }>
-        results: ScrapedResult[]
-        sources: string[]
-        timestamp: string
-        confidence: number
+      if (!payload?.query || !payload.lens || !payload.timestamp) {
+        throw new Error('Search failed: the server returned an incomplete response')
+      }
+
+      const data = {
+        query: payload.query,
+        lens: payload.lens,
+        summary: payload.summary,
+        expandedQueries: payload.expandedQueries ?? [],
+        signals: payload.signals ?? [],
+        results: payload.results ?? [],
+        sources: payload.sources ?? [],
+        timestamp: payload.timestamp,
+        confidence: payload.confidence ?? 0,
       }
 
       setIntelligence({
@@ -89,11 +108,11 @@ export function useSearch(): UseSearchReturn {
         queryExpansions: data.expandedQueries,
         timestamp: data.timestamp,
       })
-      setScrapedResults(data.results || [])
+      setScrapedResults(data.results)
       setHasSearched(true)
       setSearchTime(performance.now() - startTime)
 
-      if (data.expandedQueries?.length) {
+      if (data.expandedQueries.length) {
         setSuggestions(
           data.expandedQueries.map((text, index) => ({
             text,
@@ -113,7 +132,7 @@ export function useSearch(): UseSearchReturn {
           normalized_query: data.query,
           lens: data.lens,
           vertical: data.lens,
-          result_count: data.results?.length ?? 0,
+          result_count: data.results.length,
           timestamp: new Date().toISOString(),
         }
         const nextHistory = [nextEntry, ...(Array.isArray(history) ? history : [])]
