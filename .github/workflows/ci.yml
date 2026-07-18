@@ -34,6 +34,13 @@ jobs:
         run: |
           if [ -f scripts/apply-production-fixes.mjs ] && grep -q "existing imports remain at top" src/app/page.tsx; then
             node scripts/apply-production-fixes.mjs
+            python - <<'PY'
+          from pathlib import Path
+          path = Path('src/app/page.tsx')
+          source = path.read_text()
+          source = source.replace(".join('\n')", ".join('\\n')")
+          path.write_text(source)
+          PY
           else
             echo "Production readiness repairs already applied."
           fi
