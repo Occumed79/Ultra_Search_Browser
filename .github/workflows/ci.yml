@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -32,8 +33,9 @@ jobs:
       - name: Apply production readiness repairs
         shell: bash
         run: |
-          if [ -f scripts/apply-production-fixes.mjs ] && grep -q "existing imports remain at top" src/app/page.tsx; then
-            node scripts/apply-production-fixes.mjs
+          if grep -q "existing imports remain at top" src/app/page.tsx; then
+            git show ed4e8bdf39adccd09813913c355890c0f950a788:scripts/apply-production-fixes.mjs > /tmp/apply-production-fixes.mjs
+            node /tmp/apply-production-fixes.mjs
             python - <<'PY'
           from pathlib import Path
 
@@ -59,7 +61,7 @@ jobs:
           search_path.write_text(search_source)
           PY
           else
-            echo "Production readiness repairs already applied."
+            echo "Production readiness repairs already committed."
           fi
 
       - name: Type-check
@@ -91,13 +93,10 @@ jobs:
         shell: bash
         run: |
           rm -f typecheck.log
-          if [ -f scripts/apply-production-fixes.mjs ]; then
-            git rm scripts/apply-production-fixes.mjs
-          fi
           if ! git diff --quiet; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add src/app/api/bookmarks/route.ts src/app/api/history/route.ts src/app/bookmarks/page.tsx src/app/page.tsx src/lib/search.ts src/lib/verticals/pricing/config.ts scripts/apply-production-fixes.mjs || true
+            git add -A
             git commit -m "Fix strict TypeScript errors and restore search UI"
             git push origin HEAD:${{ github.head_ref }}
           else
