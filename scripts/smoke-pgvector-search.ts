@@ -1,154 +1,179 @@
 #!/usr/bin/env tsx
 // ─── SMOKE TEST FOR PGVECTOR SEARCH INTEGRATION ───
-// Tests that pgvector actually participates in live search
+// Proves that live search indexes documents, persisted vectors can be retrieved,
+// and a second live search exercises vector-backed ranking.
 
-import { searchIntelligence } from '../src/lib/search'
 import pg from 'pg'
+import { searchIntelligence } from '../src/lib/search'
+import { generateEmbedding } from '../src/lib/embeddings'
+import { PgVectorStoreAdapter } from '../src/lib/vector-store'
 
 const { Client } = pg
+
+function assertCheck(condition: unknown, message: string): asserts condition {
+  if (!condition) {
+    throw new Error(message)
+  }
+}
 
 async function smokePgvectorSearch(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL
   if (!databaseUrl) {
-    console.log('❌ DATABASE_URL environment variable not set')
-    console.log('Set DATABASE_URL to run pgvector smoke test')
-    process.exit(1)
+    console.error('❌ DATABASE_URL environment variable not set')
+    console.error('Set DATABASE_URL to run pgvector smoke test')
+    process.exitCode = 1
+    return
   }
+
+  const client = new Client({ connectionString: databaseUrl })
+  const adapter = new PgVectorStoreAdapter(databaseUrl)
+  const firstQuery = 'occupational health services RFP'
 
   console.log('=== PGVECTOR SEARCH SMOKE TEST START ===\n')
 
-  const testQuery = 'occupational health services RFP'
-  console.log(`Running test search: "${testQuery}"`)
-
   try {
-    // Run real search through searchIntelligence
-    const { intelligence, results, pgvectorDiagnostics } = await searchIntelligence(testQuery, 'procurement')
-    
-    console.log('\n=== SEARCH RESULTS ===')
-    console.log(`Result count: ${results.length}`)
-    console.log(`Top 3 results:`)
-    results.slice(0, 3).forEach((r, i) => {
-      console.log(`  ${i + 1}. ${r.title}`)
-      console.log(`     URL: ${r.url}`)
-    })
-
-    console.log('\n=== PGVECTOR DIAGNOSTICS ===')
-    console.log(`Enabled: ${pgvectorDiagnostics?.enabled}`)
-    console.log(`Database configured: ${pgvectorDiagnostics?.databaseConfigured}`)
-    console.log(`Indexing attempted: ${pgvectorDiagnostics?.indexingAttempted}`)
-    console.log(`Indexed count: ${pgvectorDiagnostics?.indexedCount}`)
-    console.log(`Vector search attempted: ${pgvectorDiagnostics?.vectorSearchAttempted}`)
-    console.log(`Vector matches: ${pgvectorDiagnostics?.vectorMatches}`)
-    if (pgvectorDiagnostics?.error) {
-      console.log(`Error: ${pgvectorDiagnostics.error}`)
-    }
-
-    // Verify database state
-    console.log('\n=== DATABASE VERIFICATION ===')
-    const client = new Client({ connectionString: databaseUrl })
     await client.connect()
+    await adapter.initialize()
 
-    // Check if documents were inserted
-    const countResult = await client.query('SELECT COUNT(*) as count FROM documents')
-    const count = parseInt(countResult.rows[0].count)
-    console.log(`Total documents in database: ${count}`)
-
-    // Check for recent documents from this test
-    const recentResult = await client.query(`
-      SELECT id, title, url 
-      FROM documents 
-      ORDER BY id DESC 
-      LIMIT 5
-    `)
-    console.log(`Recent documents (last 5 minutes): ${recentResult.rows.length}`)
-    recentResult.rows.forEach(r => {
-      console.log(`  - ${r.title || r.id} (${r.url})`)
-    })
-
-    // Test vector similarity search
-    console.log('\n=== VECTOR SIMILARITY TEST ===')
-    const { generateEmbedding } = await import('../src/lib/embeddings')
-    const queryEmbedding = await generateEmbedding(testQuery)
-    const vectorString = `[${queryEmbedding.map(v => v.toFixed(6)).join(',')}]`
-    
-    const similarityResult = await client.query(
-      `
-      SELECT id, title, url, 1 - (embedding <=> $1) as similarity
-      FROM documents
-      ORDER BY embedding <=> $1
-      LIMIT 5
-      `,
-      [vectorString]
+    const beforeResult = await client.query(
+      'SELECT COUNT(*)::int AS count FROM documents WHERE embedding IS NOT NULL'
     )
-    
-    console.log(`Similarity search results: ${similarityResult.rows.length}`)
-    similarityResult.rows.forEach((r, i) => {
-      console.log(`  ${i + 1}. ${r.title || r.id} (similarity: ${r.similarity.toFixed(4)})`)
+    const beforeCount = Number(beforeResult.rows[0]?.count || 0)
+    console.log(`Documents with embeddings before search: ${beforeCount}`)
+
+    console.log(`\nRunning first live search: "${firstQuery}"`)
+    const firstSearch = await searchIntelligence(firstQuery, 'procurement')
+
+    console.log('\n=== FIRST SEARCH ===')
+    console.log(`Result count: ${firstSearch.results.length}`)
+    console.log(`Indexing attempted: ${firstSearch.pgvectorDiagnostics?.indexingAttempted}`)
+    console.log(`Indexed count reported: ${firstSearch.pgvectorDiagnostics?.indexedCount}`)
+    console.log(`Vector matches reported: ${firstSearch.pgvectorDiagnostics?.vectorMatches}`)
+
+    firstSearch.results.slice(0, 3).forEach((result, index) => {
+      console.log(`  ${index + 1}. ${result.title}`)
+      console.log(`     ${result.url}`)
     })
 
-    await client.end()
+    assertCheck(firstSearch.results.length > 0, 'First live search returned no results')
+    assertCheck(firstSearch.pgvectorDiagnostics?.enabled, 'pgvector is not enabled')
+    assertCheck(firstSearch.pgvectorDiagnostics?.databaseConfigured, 'Database is not configured')
+    assertCheck(firstSearch.pgvectorDiagnostics?.indexingAttempted, 'Live search did not attempt indexing')
+    assertCheck(
+      (firstSearch.pgvectorDiagnostics?.indexedCount || 0) > 0,
+      'Live search reported zero indexed documents'
+    )
 
-    // Pass/fail criteria
-    console.log('\n=== VALIDATION ===')
-    let passed = true
-    
-    if (!pgvectorDiagnostics?.enabled) {
-      console.log('❌ pgvector not enabled')
-      passed = false
-    } else {
-      console.log('✓ pgvector enabled')
-    }
-    
-    if (!pgvectorDiagnostics?.databaseConfigured) {
-      console.log('❌ database not configured')
-      passed = false
-    } else {
-      console.log('✓ database configured')
-    }
-    
-    if (!pgvectorDiagnostics?.indexingAttempted) {
-      console.log('❌ indexing not attempted')
-      passed = false
-    } else {
-      console.log('✓ indexing attempted')
-    }
-    
-    if (pgvectorDiagnostics?.indexedCount === 0) {
-      console.log('❌ no documents indexed')
-      passed = false
-    } else {
-      console.log(`✓ ${pgvectorDiagnostics.indexedCount} documents indexed`)
-    }
-    
-    if (!pgvectorDiagnostics?.vectorSearchAttempted) {
-      console.log('❌ vector search not attempted')
-      passed = false
-    } else {
-      console.log('✓ vector search attempted')
-    }
-    
-    // Vector matches are optional (may be 0 for fresh database)
-    if (similarityResult.rows.length > 0) {
-      console.log('✓ vector similarity search returned results')
-    } else {
-      console.log('⚠ vector similarity search returned no results (expected for fresh database)')
-    }
+    const candidateUrls = firstSearch.results
+      .slice(0, 20)
+      .map(result => result.url)
+      .filter(Boolean)
 
-    console.log('\n=== SMOKE TEST END ===')
-    if (passed) {
-      console.log('✓ ALL CHECKS PASSED')
-      process.exit(0)
-    } else {
-      console.log('❌ SOME CHECKS FAILED')
-      process.exit(1)
-    }
-  } catch (err) {
-    console.error('❌ SMOKE TEST FAILED:', err)
-    process.exit(1)
+    const persistedResult = await client.query(
+      `SELECT id, text, url, title, source, lens
+       FROM documents
+       WHERE id = ANY($1::text[])
+         AND embedding IS NOT NULL
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [candidateUrls]
+    )
+
+    console.log('\n=== PERSISTENCE VERIFICATION ===')
+    console.log(`Live-search documents actually persisted: ${persistedResult.rows.length}`)
+    assertCheck(
+      persistedResult.rows.length > 0,
+      'Indexing was reported, but none of the live-search documents exist in pgvector'
+    )
+
+    const knownDocument = persistedResult.rows[0]
+    console.log(`Known persisted document: ${knownDocument.title || knownDocument.id}`)
+    console.log(`Known persisted URL: ${knownDocument.url || knownDocument.id}`)
+
+    // Query with the exact persisted document text. The known row should be the
+    // nearest result with cosine similarity approximately 1.0.
+    const knownEmbedding = await generateEmbedding(knownDocument.text)
+    const directMatches = await adapter.searchByVector(knownEmbedding, 5)
+    const exactMatch = directMatches.find(match => match.id === knownDocument.id)
+
+    console.log('\n=== DIRECT VECTOR RETRIEVAL ===')
+    console.log(`Vector matches after indexing: ${directMatches.length}`)
+    directMatches.forEach((match, index) => {
+      console.log(
+        `  ${index + 1}. ${match.metadata.title || match.id} ` +
+        `(similarity: ${(match.similarity ?? 0).toFixed(6)})`
+      )
+    })
+
+    assertCheck(directMatches.length > 0, 'Vector retrieval returned zero rows after indexing')
+    assertCheck(exactMatch, 'Known indexed document was not returned by vector retrieval')
+    assertCheck(
+      (exactMatch.similarity ?? 0) > 0.99,
+      `Known indexed document similarity was unexpectedly low: ${exactMatch.similarity}`
+    )
+
+    // Run a second live search after the database has accumulated documents.
+    // This exercises the same memory-vector and pgvector paths used by /api/search.
+    const secondQuery = String(knownDocument.title || knownDocument.text)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 180)
+
+    assertCheck(secondQuery.length > 0, 'Could not construct second search query')
+    console.log(`\nRunning second live search: "${secondQuery}"`)
+    const secondSearch = await searchIntelligence(secondQuery, 'procurement')
+
+    const memoryVectorResults = secondSearch.results.filter(
+      result => result.source === 'memory-vector'
+    )
+    const rankingInfluenced =
+      memoryVectorResults.some(result => (result.score || 0) > 0) ||
+      (secondSearch.pgvectorDiagnostics?.vectorMatches || 0) > 0
+
+    console.log('\n=== SECOND SEARCH / LIVE RANKING ===')
+    console.log(`Result count: ${secondSearch.results.length}`)
+    console.log(`Vector search attempted: ${secondSearch.pgvectorDiagnostics?.vectorSearchAttempted}`)
+    console.log(`Vector matches: ${secondSearch.pgvectorDiagnostics?.vectorMatches}`)
+    console.log(`Memory-vector results merged: ${memoryVectorResults.length}`)
+    console.log(`Vector-backed ranking path exercised: ${rankingInfluenced}`)
+
+    assertCheck(
+      secondSearch.pgvectorDiagnostics?.vectorSearchAttempted,
+      'Second live search did not attempt pgvector retrieval'
+    )
+    assertCheck(
+      (secondSearch.pgvectorDiagnostics?.vectorMatches || 0) > 0,
+      'Second live search returned zero pgvector matches after indexing'
+    )
+    assertCheck(rankingInfluenced, 'pgvector did not influence the live ranking path')
+
+    const afterResult = await client.query(
+      'SELECT COUNT(*)::int AS count FROM documents WHERE embedding IS NOT NULL'
+    )
+    const afterCount = Number(afterResult.rows[0]?.count || 0)
+
+    console.log('\n=== FINAL VALIDATION ===')
+    console.log(`Documents with embeddings after search: ${afterCount}`)
+    console.log(`Indexed/persisted during test: ${Math.max(0, afterCount - beforeCount)}`)
+    console.log(`Vector matches after indexing: ${directMatches.length}`)
+    console.log('✓ Live indexing persisted real documents')
+    console.log('✓ Vector retrieval returned the known indexed document')
+    console.log('✓ Second live search returned pgvector matches')
+    console.log('✓ pgvector participates in live result ranking')
+    console.log('\n=== PGVECTOR SEARCH SMOKE TEST PASSED ===')
+  } catch (error) {
+    console.error('\n❌ PGVECTOR SEARCH SMOKE TEST FAILED')
+    console.error(error)
+    process.exitCode = 1
+  } finally {
+    await Promise.allSettled([
+      client.end(),
+      adapter.close(),
+    ])
   }
 }
 
-smokePgvectorSearch().catch(e => {
-  console.error('Smoke test failed:', e)
-  process.exit(1)
+smokePgvectorSearch().catch(error => {
+  console.error('Smoke test failed:', error)
+  process.exitCode = 1
 })
