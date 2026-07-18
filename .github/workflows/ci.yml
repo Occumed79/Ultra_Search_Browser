@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -15,11 +15,8 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Check out source branch
+      - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          fetch-depth: 0
 
       - name: Use Node.js 22
         uses: actions/setup-node@v4
@@ -30,75 +27,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Apply production readiness repairs
-        shell: bash
-        run: |
-          if grep -q "existing imports remain at top" src/app/page.tsx; then
-            git show ed4e8bdf39adccd09813913c355890c0f950a788:scripts/apply-production-fixes.mjs > /tmp/apply-production-fixes.mjs
-            node /tmp/apply-production-fixes.mjs
-            python - <<'PY'
-          from pathlib import Path
-
-          page_path = Path('src/app/page.tsx')
-          page_source = page_path.read_text()
-          page_source = page_source.replace(".join('\n')", ".join('\\n')")
-          page_path.write_text(page_source)
-
-          bookmarks_path = Path('src/app/api/bookmarks/route.ts')
-          bookmarks_source = bookmarks_path.read_text()
-          bookmarks_source = bookmarks_source.replace(
-              "description: body.description?.trim() || null,",
-              "description: body.description?.trim() || undefined,",
-          )
-          bookmarks_path.write_text(bookmarks_source)
-
-          search_path = Path('src/lib/search.ts')
-          search_source = search_path.read_text()
-          search_source = search_source.replace(
-              "let mergedResults = [...enrichedResults]",
-              "let mergedResults: ScrapedResult[] = [...enrichedResults]",
-          )
-          search_path.write_text(search_source)
-          PY
-          else
-            echo "Production readiness repairs already committed."
-          fi
-
       - name: Type-check
-        id: typecheck
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run typecheck 2>&1 | tee typecheck.log
-
-      - name: Upload typecheck diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: typecheck-diagnostics
-          path: typecheck.log
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Fail on TypeScript errors
-        if: steps.typecheck.outcome == 'failure'
-        run: exit 1
+        run: npm run typecheck
 
       - name: Production build
         run: npm run build
-
-      - name: Commit verified repairs to PR branch
-        if: github.event_name == 'pull_request' && github.head_ref == 'finish/production-readiness'
-        shell: bash
-        run: |
-          rm -f typecheck.log
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Fix strict TypeScript errors and restore search UI"
-            git push origin HEAD:${{ github.head_ref }}
-          else
-            echo "No generated repairs to commit."
-          fi
