@@ -1,120 +1,168 @@
-"use client"
+'use client'
 
 import { useEffect, useState } from 'react'
 
+interface BookmarkRecord {
+  id: string
+  title: string
+  url: string
+  description?: string | null
+  created_at?: string
+}
+
+function readLocalBookmarks(): BookmarkRecord[] {
+  try {
+    const stored = localStorage.getItem('bookmarks')
+    const value: unknown = stored ? JSON.parse(stored) : []
+    return Array.isArray(value) ? (value as BookmarkRecord[]) : []
+  } catch {
+    return []
+  }
+}
+
 export default function BookmarksPage() {
-  const [bookmarks, setBookmarks] = useState<any[] | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [bookmarks, setBookmarks] = useState<BookmarkRecord[] | null>(null)
+  const [loading, setLoading] = useState(true)
   const [title, setTitle] = useState('')
   const [url, setUrl] = useState('')
 
   useEffect(() => {
     let mounted = true
-    setLoading(true)
-    fetch('/api/bookmarks')
-      .then(async (res) => {
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}))
-          if (res.status === 501) {
-            const ls = localStorage.getItem('bookmarks')
-            const parsed = ls ? JSON.parse(ls) : []
-            if (mounted) setBookmarks(parsed)
-            return
-          }
-          throw new Error((payload && payload.error) || 'Failed')
-        }
-        return res.json()
-      })
-      .then((data) => {
-        if (!data) return
-        if (data.bookmarks) setBookmarks(data.bookmarks)
-      })
-      .catch((err) => {
-        console.warn('Bookmarks fetch failed, falling back to localStorage:', err)
-        const ls = localStorage.getItem('bookmarks')
-        const parsed = ls ? JSON.parse(ls) : []
-        setBookmarks(parsed)
-      })
-      .finally(() => { if (mounted) setLoading(false) })
 
-    return () => { mounted = false }
+    fetch('/api/bookmarks')
+      .then(async response => {
+        if (response.status === 501) return { bookmarks: readLocalBookmarks() }
+        if (!response.ok) throw new Error('Failed to load bookmarks')
+        return (await response.json()) as { bookmarks?: BookmarkRecord[] }
+      })
+      .then(data => {
+        if (mounted) setBookmarks(data.bookmarks ?? [])
+      })
+      .catch(error => {
+        console.warn('Bookmarks fetch failed; using local storage:', error)
+        if (mounted) setBookmarks(readLocalBookmarks())
+      })
+      .finally(() => {
+        if (mounted) setLoading(false)
+      })
+
+    return () => {
+      mounted = false
+    }
   }, [])
 
-  const saveLocalBookmark = (b) => {
-    const cur = localStorage.getItem('bookmarks')
-    const arr = cur ? JSON.parse(cur) : []
-    arr.unshift(b)
-    localStorage.setItem('bookmarks', JSON.stringify(arr))
-    setBookmarks(arr)
+  function saveLocalBookmark(bookmark: BookmarkRecord) {
+    const next = [bookmark, ...readLocalBookmarks().filter(item => item.url !== bookmark.url)]
+    localStorage.setItem('bookmarks', JSON.stringify(next))
+    setBookmarks(next)
   }
 
-  const handleAdd = async () => {
-    if (!url) return
-    // Try server first
+  async function handleAdd() {
+    const normalizedUrl = url.trim()
+    if (!normalizedUrl) return
+
+    const fallback: BookmarkRecord = {
+      id: 'local-' + Date.now(),
+      title: title.trim() || normalizedUrl,
+      url: normalizedUrl,
+      created_at: new Date().toISOString(),
+    }
+
     try {
-      const res = await fetch('/api/bookmarks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, url }) })
-      if (res.ok) {
-        const data = await res.json()
+      const response = await fetch('/api/bookmarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: fallback.title, url: normalizedUrl }),
+      })
+      if (response.ok) {
+        const data = (await response.json()) as { bookmark?: BookmarkRecord }
         if (data.bookmark) {
-          setBookmarks(prev => [data.bookmark, ...(prev || [])])
-          setTitle(''); setUrl('')
+          setBookmarks(previous => [data.bookmark as BookmarkRecord, ...(previous ?? [])])
+          setTitle('')
+          setUrl('')
           return
         }
       }
-    } catch (err) {
-      console.warn('Server bookmark failed, saving locally', err)
+    } catch (error) {
+      console.warn('Server bookmark failed; saving locally:', error)
     }
-    const b = { id: Date.now().toString(), title: title || url, url, created_at: new Date().toISOString() }
-    saveLocalBookmark(b)
-    setTitle(''); setUrl('')
+
+    saveLocalBookmark(fallback)
+    setTitle('')
+    setUrl('')
   }
 
-  const handleDelete = async (b) => {
-    // Try server delete
+  async function handleDelete(bookmark: BookmarkRecord) {
     try {
-      if (b.id && !String(b.id).startsWith('local')) {
-        const res = await fetch(`/api/bookmarks?id=${b.id}`, { method: 'DELETE' })
-        if (res.ok) {
-          setBookmarks(prev => (prev || []).filter(x => x.id !== b.id))
+      if (!bookmark.id.startsWith('local-')) {
+        const response = await fetch('/api/bookmarks?id=' + encodeURIComponent(bookmark.id), {
+          method: 'DELETE',
+        })
+        if (response.ok) {
+          setBookmarks(previous => (previous ?? []).filter(item => item.id !== bookmark.id))
           return
         }
       }
-    } catch (err) {
-      console.warn('Server delete failed, falling back to local', err)
+    } catch (error) {
+      console.warn('Server delete failed; removing local copy:', error)
     }
-    // Local delete
-    const arr = (bookmarks || []).filter(x => x.id !== b.id)
-    localStorage.setItem('bookmarks', JSON.stringify(arr))
-    setBookmarks(arr)
+
+    const next = (bookmarks ?? []).filter(item => item.id !== bookmark.id)
+    localStorage.setItem('bookmarks', JSON.stringify(next))
+    setBookmarks(next)
   }
 
-  if (loading && bookmarks === null) return <div className="p-6">Loading...</div>
+  if (loading && bookmarks === null) {
+    return <div className="p-6">Loading...</div>
+  }
 
   return (
-    <div className="p-6 max-w-3xl">
-      <h1 className="text-2xl font-semibold mb-4">Bookmarks</h1>
-      <div className="mb-4 flex gap-2">
-        <input className="flex-1 bg-transparent border border-white/10 px-3 py-2 rounded" placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
-        <input className="flex-1 bg-transparent border border-white/10 px-3 py-2 rounded" placeholder="https://..." value={url} onChange={(e) => setUrl(e.target.value)} />
-        <button className="glass-button" onClick={handleAdd}>Add</button>
+    <main className="mx-auto max-w-3xl p-6">
+      <h1 className="mb-4 text-2xl font-semibold">Bookmarks</h1>
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+        <input
+          className="flex-1 rounded border border-white/10 bg-transparent px-3 py-2"
+          placeholder="Title"
+          value={title}
+          onChange={event => setTitle(event.target.value)}
+        />
+        <input
+          className="flex-1 rounded border border-white/10 bg-transparent px-3 py-2"
+          placeholder="https://..."
+          value={url}
+          onChange={event => setUrl(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') void handleAdd()
+          }}
+        />
+        <button className="glass-button" onClick={() => void handleAdd()}>Add</button>
       </div>
 
-      {(!bookmarks || bookmarks.length === 0) ? (
+      {!bookmarks?.length ? (
         <div className="text-sm text-muted-foreground">No bookmarks yet.</div>
       ) : (
         <div className="space-y-3">
-          {bookmarks.map(b => (
-            <div key={b.id || b.url} className="p-3 rounded-lg bg-[#0f1724] border border-[#233242] flex items-center justify-between">
-              <a href={b.url} target="_blank" rel="noreferrer" className="text-sm font-medium hover:underline">{b.title || b.url}</a>
-              <div className="flex items-center gap-2">
-                <button className="glass-button" onClick={() => { window.open(b.url, '_blank') }}>Open</button>
-                <button className="glass-button" onClick={() => handleDelete(b)}>Delete</button>
+          {bookmarks.map(bookmark => (
+            <div
+              key={bookmark.id || bookmark.url}
+              className="flex items-center justify-between rounded-lg border border-[#233242] bg-[#0f1724] p-3"
+            >
+              <a
+                href={bookmark.url}
+                target="_blank"
+                rel="noreferrer"
+                className="min-w-0 truncate text-sm font-medium hover:underline"
+              >
+                {bookmark.title || bookmark.url}
+              </a>
+              <div className="ml-3 flex items-center gap-2">
+                <button className="glass-button" onClick={() => window.open(bookmark.url, '_blank')}>Open</button>
+                <button className="glass-button" onClick={() => void handleDelete(bookmark)}>Delete</button>
               </div>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </main>
   )
 }

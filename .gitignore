@@ -21,6 +21,9 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Misc
 dist/
 build/

@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit --incremental false",
+    "smoke": "npx --yes tsx scripts/smoke-search.ts",
+    "check:pgvector": "npx --yes tsx scripts/check-pgvector.ts",
+    "smoke:pgvector": "npx --yes tsx scripts/smoke-pgvector-search.ts",
+    "verify": "npm run typecheck && npm run build"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.1.0",

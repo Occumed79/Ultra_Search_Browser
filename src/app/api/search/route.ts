@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { searchIntelligence, type SearchLens, type ScrapedResult } from "../../../lib/search";
+import { searchIntelligence, type SearchLens } from "../../../lib/search";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Query is required" }, { status: 400 });
     }
 
-    const { intelligence, results } = await searchIntelligence(query, lens);
+    const { intelligence, results, pgvectorDiagnostics } = await searchIntelligence(query, lens);
 
     return NextResponse.json({
       query: intelligence.query,
@@ -22,6 +22,7 @@ export async function POST(request: NextRequest) {
       sources: intelligence.sources,
       timestamp: intelligence.timestamp,
       confidence: intelligence.confidence,
+      pgvectorDiagnostics,
     });
   } catch (error) {
     console.error("Search error:", error);
