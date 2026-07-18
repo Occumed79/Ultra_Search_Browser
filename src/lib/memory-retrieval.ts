@@ -187,7 +187,9 @@ export async function vectorSearchStoredResults(
       domain: d.metadata.url ? new URL(d.metadata.url).hostname : (d.metadata.domain || ''),
       source: 'memory-vector',
       rank: i + 1,
-      score: (d as any).similarity ?? 1,
+      // Similarity is normalized to a bounded score so vector memory can influence
+      // ordering without overpowering fresh government/PDF/procurement boosts.
+      score: Math.max(0, Math.min(1, d.similarity ?? 0)) * 10,
     }))
     return out
   } catch (err) {
