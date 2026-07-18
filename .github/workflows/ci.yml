@@ -36,10 +36,27 @@ jobs:
             node scripts/apply-production-fixes.mjs
             python - <<'PY'
           from pathlib import Path
-          path = Path('src/app/page.tsx')
-          source = path.read_text()
-          source = source.replace(".join('\n')", ".join('\\n')")
-          path.write_text(source)
+
+          page_path = Path('src/app/page.tsx')
+          page_source = page_path.read_text()
+          page_source = page_source.replace(".join('\n')", ".join('\\n')")
+          page_path.write_text(page_source)
+
+          bookmarks_path = Path('src/app/api/bookmarks/route.ts')
+          bookmarks_source = bookmarks_path.read_text()
+          bookmarks_source = bookmarks_source.replace(
+              "description: body.description?.trim() || null,",
+              "description: body.description?.trim() || undefined,",
+          )
+          bookmarks_path.write_text(bookmarks_source)
+
+          search_path = Path('src/lib/search.ts')
+          search_source = search_path.read_text()
+          search_source = search_source.replace(
+              "let mergedResults = [...enrichedResults]",
+              "let mergedResults: ScrapedResult[] = [...enrichedResults]",
+          )
+          search_path.write_text(search_source)
           PY
           else
             echo "Production readiness repairs already applied."
