@@ -6,6 +6,7 @@ export interface SearchDocument {
   id: string
   text: string
   embedding?: number[]
+  similarity?: number
   metadata: {
     url?: string
     title?: string
@@ -90,7 +91,7 @@ export class LocalVectorStoreAdapter implements VectorStoreAdapter {
     return scored
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, topK)
-      .map(s => s.doc)
+      .map(s => ({ ...s.doc, similarity: s.similarity }))
   }
   
   async deleteDocument(id: string): Promise<void> {
@@ -129,7 +130,7 @@ export class LocalVectorStoreAdapter implements VectorStoreAdapter {
 // SERVER-SIDE ONLY: This module must only be imported in server-side code (API routes, server components)
 // Do not import this in client components or it will bundle heavy dependencies.
 
-import { Pool, PoolClient } from 'pg'
+import { Pool } from 'pg'
 
 export class PgVectorStoreAdapter implements VectorStoreAdapter {
   private pool: Pool
@@ -161,7 +162,8 @@ export class PgVectorStoreAdapter implements VectorStoreAdapter {
         )
       `)
       
-      // Create index for vector similarity search
+      // Keep an IVFFlat index for larger collections. Small/fresh collections use
+      // exact search below because an index created while empty can return no rows.
       await client.query(`
         CREATE INDEX IF NOT EXISTS ${this.tableName}_embedding_idx 
         ON ${this.tableName} 
@@ -226,11 +228,11 @@ export class PgVectorStoreAdapter implements VectorStoreAdapter {
         text: row.text,
         embedding: row.embedding ? row.embedding.slice(1, -1).split(',').map(Number) : undefined,
         metadata: {
+          ...(row.metadata || {}),
           url: row.url,
           title: row.title,
           source: row.source,
           lens: row.lens,
-          ...row.metadata,
         },
       }))
     } finally {
@@ -242,15 +244,34 @@ export class PgVectorStoreAdapter implements VectorStoreAdapter {
     if (!vector || vector.length === 0) {
       return []
     }
+    if (vector.length !== EMBEDDING_DIMENSION) {
+      throw new Error(`Expected ${EMBEDDING_DIMENSION}-dimension vector, received ${vector.length}`)
+    }
     
     const client = await this.pool.connect()
     try {
+      const countResult = await client.query(
+        `SELECT COUNT(*)::int AS count FROM ${this.tableName} WHERE embedding IS NOT NULL`
+      )
+      const documentCount = Number(countResult.rows[0]?.count || 0)
+      if (documentCount === 0) {
+        return []
+      }
+
+      // pgvector recommends exact search for small datasets. Adding + 0 prevents
+      // Postgres from choosing a sparse IVFFlat index that was created while empty.
+      // Once the collection is large enough, the indexed path is used.
+      const exactSearch = documentCount < 1000
+      const orderExpression = exactSearch
+        ? '(embedding <=> $1::vector) + 0'
+        : 'embedding <=> $1::vector'
+
       const result = await client.query(
         `SELECT id, text, embedding, url, title, source, lens, metadata,
-                1 - (embedding <=> $1) as similarity
+                1 - (embedding <=> $1::vector) AS similarity
          FROM ${this.tableName}
          WHERE embedding IS NOT NULL
-         ORDER BY embedding <=> $1
+         ORDER BY ${orderExpression}
          LIMIT $2`,
         [`[${vector.join(',')}]`, topK]
       )
@@ -259,12 +280,13 @@ export class PgVectorStoreAdapter implements VectorStoreAdapter {
         id: row.id,
         text: row.text,
         embedding: row.embedding ? row.embedding.slice(1, -1).split(',').map(Number) : undefined,
+        similarity: Number(row.similarity),
         metadata: {
+          ...(row.metadata || {}),
           url: row.url,
           title: row.title,
           source: row.source,
           lens: row.lens,
-          ...row.metadata,
         },
       }))
     } finally {
