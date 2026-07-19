@@ -1,0 +1,138 @@
+name: Temporary repository audit
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate complete repository audit
+        shell: bash
+        run: |
+          set +e
+          mkdir -p audit-output
+
+          printf '=== FILE INVENTORY ===\n' > audit-output/audit-report.txt
+          find . -type f -not -path './.git/*' -printf '%P\t%s bytes\n' | sort | tee audit-output/files.tsv >> audit-output/audit-report.txt
+
+          printf '\n=== DUPLICATE FILE CONTENT ===\n' >> audit-output/audit-report.txt
+          find . -type f -not -path './.git/*' -exec sha256sum {} + | sort | awk '{hash=$1; $1=""; sub(/^  /,""); files[hash]=files[hash] "\n  " $0; count[hash]++} END {for (h in count) if (count[h]>1) print h files[h]}' | sort >> audit-output/audit-report.txt
+
+          printf '\n=== GENERATED / BUILD / CACHE CANDIDATES ===\n' >> audit-output/audit-report.txt
+          find . -type f -not -path './.git/*' | grep -Ei '(^|/)(\.next|dist|build|coverage|node_modules|out|tmp|temp|cache|artifacts?)/|\.tsbuildinfo$|\.log$|\.bak$|\.old$|\.orig$|\.map$|~$|\.DS_Store$|Thumbs\.db$' | sort >> audit-output/audit-report.txt
+
+          printf '\n=== DEPLOYMENT / INFRA FILES ===\n' >> audit-output/audit-report.txt
+          find . -type f -not -path './.git/*' | grep -Ei '(^|/)(Dockerfile|docker-compose|render\.yaml|vercel\.json|netlify\.toml|railway\.json|Procfile|fly\.toml|\.github/workflows/|\.env|migrations?/|prisma/|drizzle/)' | sort >> audit-output/audit-report.txt
+
+          printf '\n=== ASSETS ===\n' >> audit-output/audit-report.txt
+          find public src -type f 2>/dev/null | grep -Ei '\.(png|jpe?g|gif|svg|webp|ico|woff2?|ttf|otf)$' | sort >> audit-output/audit-report.txt
+
+          printf '\n=== SOURCE FILES ===\n' >> audit-output/audit-report.txt
+          find src scripts -type f 2>/dev/null | sort >> audit-output/audit-report.txt
+
+          printf '\n=== IMPORT / REFERENCE COUNTS FOR SOURCE FILES ===\n' >> audit-output/audit-report.txt
+          python3 - <<'PY' >> audit-output/audit-report.txt
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          source_files = [p for base in ('src','scripts') if (root/base).exists() for p in (root/base).rglob('*') if p.is_file()]
+          text_files = []
+          for p in root.rglob('*'):
+              if not p.is_file() or '.git' in p.parts or 'node_modules' in p.parts or '.next' in p.parts:
+                  continue
+              try:
+                  text_files.append((p, p.read_text(errors='ignore')))
+              except Exception:
+                  pass
+
+          for p in sorted(source_files):
+              rel = p.as_posix()
+              stem = p.stem
+              rel_no_ext = rel.rsplit('.',1)[0]
+              needles = {rel, rel_no_ext, './'+p.name, '../'+p.name, stem}
+              count = 0
+              refs = []
+              for q, txt in text_files:
+                  if q == p:
+                      continue
+                  matched = False
+                  for needle in needles:
+                      if len(needle) >= 3 and needle in txt:
+                          matched = True
+                          break
+                  if matched:
+                      count += 1
+                      refs.append(q.as_posix())
+              print(f'{rel}\tapprox_refs={count}\t{",".join(refs[:8])}')
+          PY
+
+          printf '\n=== DUPLICATE CSS SELECTORS ===\n' >> audit-output/audit-report.txt
+          python3 - <<'PY' >> audit-output/audit-report.txt
+          from pathlib import Path
+          import re, collections
+          selectors = collections.defaultdict(list)
+          for p in Path('src').rglob('*.css'):
+              txt = p.read_text(errors='ignore')
+              for m in re.finditer(r'(^|\})\s*([^@][^{}]+)\s*\{', txt, re.M):
+                  sel = ' '.join(m.group(2).split())
+                  if sel:
+                      selectors[sel].append(p.as_posix())
+          for sel, files in sorted(selectors.items()):
+              if len(files) > 1:
+                  print(f'{sel}\t{len(files)}\t{files}')
+          PY
+
+          printf '\n=== PACKAGE DEPENDENCY USAGE ===\n' >> audit-output/audit-report.txt
+          npx --yes depcheck --json > audit-output/depcheck.json 2> audit-output/depcheck.stderr
+          cat audit-output/depcheck.json >> audit-output/audit-report.txt
+
+          printf '\n=== KNIP UNUSED FILES / EXPORTS / DEPENDENCIES ===\n' >> audit-output/audit-report.txt
+          npx --yes knip --reporter json > audit-output/knip.json 2> audit-output/knip.stderr
+          cat audit-output/knip.json >> audit-output/audit-report.txt
+
+          printf '\n=== TYPESCRIPT CHECK ===\n' >> audit-output/audit-report.txt
+          npm run typecheck > audit-output/typecheck.log 2>&1
+          echo "exit=$?" >> audit-output/audit-report.txt
+          cat audit-output/typecheck.log >> audit-output/audit-report.txt
+
+          printf '\n=== PRODUCTION BUILD ===\n' >> audit-output/audit-report.txt
+          npm run build > audit-output/build.log 2>&1
+          echo "exit=$?" >> audit-output/audit-report.txt
+          cat audit-output/build.log >> audit-output/audit-report.txt
+
+          printf '\n=== GIT TRACKED FILES ===\n' >> audit-output/audit-report.txt
+          git ls-files | sort >> audit-output/audit-report.txt
+
+          printf '\n=== GIT IGNORED FILES PRESENT ===\n' >> audit-output/audit-report.txt
+          git status --ignored --short >> audit-output/audit-report.txt
+
+          echo '--- AUDIT REPORT START ---'
+          cat audit-output/audit-report.txt
+          echo '--- AUDIT REPORT END ---'
+
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repository-audit
+          path: audit-output/
+          if-no-files-found: error
+          retention-days: 1
