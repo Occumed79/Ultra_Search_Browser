@@ -4,7 +4,6 @@ import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "next-themes";
 import { Header } from "../components/header";
 import "./globals.css";
-import "./palette-overrides.css";
 
 export const metadata: Metadata = {
   title: "Ultra Search Browser | Kagi-Style Search",
