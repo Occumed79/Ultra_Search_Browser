@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  Bookmark,
   ChevronRight,
   Clock,
   Command,
@@ -10,7 +9,6 @@ import {
   ExternalLink,
   Filter,
   Search,
-  Settings,
   Sparkles,
   X,
 } from 'lucide-react'
@@ -241,14 +239,6 @@ export default function Home() {
         <div className="aurora-3" />
       </div>
 
-      <header className="relative z-10 flex items-center justify-between px-6 py-5">
-        <a href="/" className="text-sm font-semibold tracking-[0.22em] text-white/80">ULTRA SEARCH</a>
-        <nav className="flex items-center gap-2">
-          <a className="glass-button" href="/history"><Clock className="h-3.5 w-3.5" /> History</a>
-          <a className="glass-button" href="/bookmarks"><Bookmark className="h-3.5 w-3.5" /> Bookmarks</a>
-          <a className="glass-button" href="/settings"><Settings className="h-3.5 w-3.5" /> Settings</a>
-        </nav>
-      </header>
 
       <main
         className="relative z-10 mx-auto flex w-full max-w-3xl flex-col px-4 pb-16"

@@ -34,7 +34,7 @@ export default function RootLayout({
           disableTransitionOnChange={false}
         >
           <Header />
-          <div className="[&>div>header]:hidden">{children}</div>
+          {children}
         </ThemeProvider>
       </body>
     </html>

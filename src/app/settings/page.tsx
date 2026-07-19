@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { Settings as SettingsIcon, Moon, Sun, Monitor, Globe, Zap, Keyboard, Cpu, Database } from "lucide-react";
 import { Switch } from "../../components/ui/switch";
-import { Header } from "../../components/header";
 import { useTheme } from "next-themes";
 import { useLocalStorage } from "../../hooks/use-local-storage";
 import { UserSettings, SearchSource } from "../../types/search";
@@ -70,8 +69,6 @@ export default function SettingsPage() {
         <div className="glass-bubble bubble-2" />
         <div className="glass-bubble bubble-3" />
       </div>
-
-      <Header />
 
       <main className="relative z-10 container mx-auto px-4 py-8 max-w-3xl">
         <div className="flex items-center gap-3 mb-6">

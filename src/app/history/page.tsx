@@ -2,13 +2,10 @@
 
 import {
   ArrowLeft,
-  Bookmark,
-  Clock3,
   Database,
   History,
   RotateCcw,
   Search,
-  Settings,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -102,22 +99,6 @@ export default function HistoryPage() {
         <div className="glass-bubble bubble-2" />
       </div>
 
-      <header className="relative z-10 flex items-center justify-between px-6 py-5">
-        <a href="/" className="text-sm font-semibold tracking-[0.22em] text-white/80">
-          ULTRA SEARCH
-        </a>
-        <nav className="flex items-center gap-2">
-          <a className="glass-button" href="/history" aria-current="page">
-            <Clock3 className="h-3.5 w-3.5" /> History
-          </a>
-          <a className="glass-button" href="/bookmarks">
-            <Bookmark className="h-3.5 w-3.5" /> Bookmarks
-          </a>
-          <a className="glass-button" href="/settings">
-            <Settings className="h-3.5 w-3.5" /> Settings
-          </a>
-        </nav>
-      </header>
 
       <main className="relative z-10 mx-auto w-full max-w-4xl px-4 pb-16 pt-8 sm:px-6">
         <a href="/" className="glass-button mb-6 w-fit">
