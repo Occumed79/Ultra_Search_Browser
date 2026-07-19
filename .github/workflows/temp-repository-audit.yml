@@ -51,7 +51,6 @@ jobs:
           printf '\n=== IMPORT / REFERENCE COUNTS FOR SOURCE FILES ===\n' >> audit-output/audit-report.txt
           python3 - <<'PY' >> audit-output/audit-report.txt
           from pathlib import Path
-          import re
 
           root = Path('.')
           source_files = [p for base in ('src','scripts') if (root/base).exists() for p in (root/base).rglob('*') if p.is_file()]
@@ -74,12 +73,7 @@ jobs:
               for q, txt in text_files:
                   if q == p:
                       continue
-                  matched = False
-                  for needle in needles:
-                      if len(needle) >= 3 and needle in txt:
-                          matched = True
-                          break
-                  if matched:
+                  if any(len(needle) >= 3 and needle in txt for needle in needles):
                       count += 1
                       refs.append(q.as_posix())
               print(f'{rel}\tapprox_refs={count}\t{",".join(refs[:8])}')
@@ -124,6 +118,8 @@ jobs:
 
           printf '\n=== GIT IGNORED FILES PRESENT ===\n' >> audit-output/audit-report.txt
           git status --ignored --short >> audit-output/audit-report.txt
+
+          git archive --format=zip --output=audit-output/repository-source.zip HEAD
 
           echo '--- AUDIT REPORT START ---'
           cat audit-output/audit-report.txt
