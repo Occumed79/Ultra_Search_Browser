@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "next-themes";
+import { Header } from "../components/header";
 import "./globals.css";
 import "./palette-overrides.css";
 
@@ -32,7 +33,8 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange={false}
         >
-          {children}
+          <Header />
+          <div className="[&>div>header]:hidden">{children}</div>
         </ThemeProvider>
       </body>
     </html>
