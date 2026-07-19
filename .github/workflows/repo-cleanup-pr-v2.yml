@@ -1,0 +1,153 @@
+name: One-time repository cleanup PR v2
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.head_ref == 'repo-cleanup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: repo-cleanup
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install current dependencies
+        run: npm ci
+
+      - name: Remove confirmed dead and duplicate files
+        shell: bash
+        run: |
+          rm -f \
+            .env.local.example \
+            SECURITY-NOTES.md \
+            netlify.toml \
+            render.yaml \
+            tailwind.config.js \
+            components/Globe.tsx \
+            components/MatrixRain.tsx \
+            components/Radar.tsx \
+            lib/search.ts \
+            lib/utils.ts \
+            scripts/install-pgvector.ts \
+            scripts/migrate-pgvector.ts \
+            src/components/Globe.tsx \
+            src/components/MatrixRain.tsx \
+            src/components/Radar.tsx \
+            src/components/ai-insight.tsx \
+            src/components/domain-memory-controls.tsx \
+            src/components/filter-panel.tsx \
+            src/components/keyboard-shortcuts.tsx \
+            src/components/search-bar.tsx \
+            src/components/search-results.tsx \
+            src/components/ui/badge.tsx \
+            src/components/ui/card.tsx \
+            src/components/ui/input.tsx \
+            src/components/ui/select.tsx \
+            src/components/ui/tabs.tsx \
+            src/components/ui/tooltip.tsx \
+            src/lib/.gitkeep \
+            src/lib/procurement-crawlers.ts \
+            src/lib/verticals/pricing/config.ts \
+            src/app/palette-overrides.css
+          rmdir components lib 2>/dev/null || true
+
+      - name: Consolidate active styling and configuration
+        shell: python
+        run: |
+          from pathlib import Path
+
+          layout = Path('src/app/layout.tsx')
+          text = layout.read_text()
+          text = text.replace('import "./palette-overrides.css";\n', '')
+          layout.write_text(text)
+
+          config = Path('next.config.ts')
+          text = config.read_text()
+          start = text.find('  images: {')
+          end = text.find('  experimental:', start)
+          if start != -1 and end != -1:
+              text = text[:start] + text[end:]
+          text = text.replace('optimizePackageImports: ["lucide-react", "framer-motion"]', 'optimizePackageImports: ["lucide-react"]')
+          config.write_text(text)
+
+          css = Path('src/app/globals.css')
+          text = css.read_text()
+          variables = {
+              '--background: 220 25% 8%;': '--background: 214 23% 11%;',
+              '--foreground: 210 20% 96%;': '--foreground: 210 32% 96%;',
+              '--card: 220 20% 10%;': '--card: 211 18% 17%;',
+              '--card-foreground: 210 20% 96%;': '--card-foreground: 210 32% 96%;',
+              '--primary: 165 80% 55%;': '--primary: 201 22% 66%;',
+              '--secondary: 220 18% 16%;': '--secondary: 210 16% 26%;',
+              '--muted: 220 15% 18%;': '--muted: 210 15% 34%;',
+              '--muted-foreground: 210 15% 60%;': '--muted-foreground: 210 15% 74%;',
+              '--accent: 165 70% 45%;': '--accent: 166 78% 64%;',
+              '--border: 220 15% 22%;': '--border: 211 14% 38%;',
+              '--input: 220 15% 22%;': '--input: 212 18% 20%;',
+              '--ring: 165 80% 55%;': '--ring: 166 78% 64%;',
+          }
+          for old, new in variables.items():
+              if old not in text:
+                  raise SystemExit(f'Missing CSS variable: {old}')
+              text = text.replace(old, new)
+
+          old = 'color: rgba(255,255,255,0.65); background: transparent; border: 1px solid transparent;'
+          new = 'color: rgba(241,245,249,0.78); background: rgba(248,250,252,0.08); border: 1px solid rgba(226,232,240,0.18);'
+          if old not in text:
+              raise SystemExit('Missing lens pill style')
+          text = text.replace(old, new, 1)
+
+          old = 'background: rgba(255,255,255,0.03); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);'
+          new = 'background: rgba(29,43,58,0.58); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);'
+          if old not in text:
+              raise SystemExit('Missing result card background')
+          text = text.replace(old, new, 1)
+
+          old = 'border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 16px 20px;'
+          new = 'border: 1px solid rgba(248,250,252,0.17); border-radius: 16px; padding: 16px 20px;'
+          if old not in text:
+              raise SystemExit('Missing result card border')
+          text = text.replace(old, new, 1)
+          css.write_text(text)
+
+      - name: Remove unused packages and update lockfile
+        run: >-
+          npm uninstall
+          @radix-ui/react-checkbox
+          @radix-ui/react-dropdown-menu
+          @radix-ui/react-popover
+          @radix-ui/react-select
+          @radix-ui/react-slider
+          @radix-ui/react-tabs
+          @radix-ui/react-toast
+          @radix-ui/react-tooltip
+          framer-motion
+          react-fast-marquee
+          zod
+
+      - name: Verify cleaned repository
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Commit verified cleanup
+        shell: bash
+        run: |
+          rm -f .github/workflows/repo-cleanup.yml .github/workflows/repo-cleanup-pr.yml .github/workflows/repo-cleanup-pr-v2.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Remove dead files and consolidate repository"
+          git push origin repo-cleanup
