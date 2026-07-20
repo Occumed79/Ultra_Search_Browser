@@ -64,10 +64,16 @@ jobs:
         run: npm ci
 
       - name: Type-check
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee .tmp/advanced-pipeline/typecheck.log
 
       - name: Production build
-        run: npm run build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee .tmp/advanced-pipeline/build.log
 
       - name: Commit completed implementation and remove staging files
         shell: bash
@@ -81,15 +87,13 @@ jobs:
           git commit -m "Reconnect staged advanced search pipeline"
           git push origin HEAD:advanced-search-pipeline
 
-      - name: Commit diagnostics when patch application fails
+      - name: Commit diagnostics when validation fails
         if: failure()
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -f .tmp/advanced-pipeline/diagnostic.txt ]; then
-            git add .tmp/advanced-pipeline/diagnostic.txt
-            git commit -m "Record advanced pipeline patch diagnostics" || true
-            git push origin HEAD:advanced-search-pipeline || true
-          fi
+          git add .tmp/advanced-pipeline/diagnostic.txt .tmp/advanced-pipeline/typecheck.log .tmp/advanced-pipeline/build.log 2>/dev/null || true
+          git commit -m "Record advanced pipeline validation diagnostics" || true
+          git push origin HEAD:advanced-search-pipeline || true
