@@ -6,54 +6,29 @@ import { Switch } from "../../components/ui/switch";
 import { useTheme } from "next-themes";
 import { useLocalStorage } from "../../hooks/use-local-storage";
 import { UserSettings, SearchSource } from "../../types/search";
+import { DEFAULT_USER_SETTINGS, SEARCH_SOURCE_OPTIONS, normalizeUserSettings } from "../../lib/search-settings";
 import { FEATURE_CAPABILITIES, type FeatureStatus } from "../../lib/feature-capabilities";
-
-const defaultSettings: UserSettings = {
-  theme: "system",
-  defaultSources: ["google", "bing", "duckduckgo", "brave", "wikipedia", "github", "stackoverflow", "news"],
-  resultsPerPage: 20,
-  autoSummarize: true,
-  safeSearch: true,
-  openInNewTab: true,
-  showFavicons: true,
-  showDescriptions: true,
-  keyboardShortcuts: true,
-  searchDelay: 300,
-  preferredLanguage: "en",
-  region: "us",
-  aiModel: "gpt-4o-mini",
-};
-
-const sourceOptions: { value: SearchSource; label: string }[] = [
-  { value: "google", label: "Google" },
-  { value: "bing", label: "Bing" },
-  { value: "duckduckgo", label: "DuckDuckGo" },
-  { value: "brave", label: "Brave" },
-  { value: "wikipedia", label: "Wikipedia" },
-  { value: "github", label: "GitHub" },
-  { value: "stackoverflow", label: "StackOverflow" },
-  { value: "news", label: "News" },
-  { value: "scholar", label: "Scholar" },
-  { value: "semantic", label: "Semantic AI" },
-];
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
-  const [settings, setSettings] = useLocalStorage<UserSettings>("user-settings", defaultSettings);
+  const [storedSettings, setSettings] = useLocalStorage<UserSettings>("user-settings", DEFAULT_USER_SETTINGS);
+  const settings = normalizeUserSettings(storedSettings);
   const [saved, setSaved] = useState(false);
 
   const updateSetting = <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSettings((prev) => normalizeUserSettings({ ...normalizeUserSettings(prev), [key]: value }));
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
   const toggleSource = (source: SearchSource) => {
     setSettings((prev) => {
-      const sources = prev.defaultSources.includes(source)
-        ? prev.defaultSources.filter((s) => s !== source)
-        : [...prev.defaultSources, source];
-      return { ...prev, defaultSources: sources };
+      const normalized = normalizeUserSettings(prev);
+      if (normalized.defaultSources.includes(source) && normalized.defaultSources.length === 1) return normalized;
+      const sources = normalized.defaultSources.includes(source)
+        ? normalized.defaultSources.filter((s) => s !== source)
+        : [...normalized.defaultSources, source];
+      return normalizeUserSettings({ ...normalized, defaultSources: sources });
     });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -98,7 +73,10 @@ export default function SettingsPage() {
                 ].map((option) => (
                   <button
                     key={option.value}
-                    onClick={() => setTheme(option.value)}
+                    onClick={() => {
+                      setTheme(option.value);
+                      updateSetting("theme", option.value as UserSettings["theme"]);
+                    }}
                     className={`flex items-center gap-2 text-[12px] px-3 py-2 rounded-lg border transition-all ${
                       theme === option.value
                         ? 'bg-white/10 border-white/20 text-white/90'
@@ -120,7 +98,7 @@ export default function SettingsPage() {
               <h2 className="text-[15px] font-semibold text-white/80">Default Sources</h2>
             </div>
             <div className="flex flex-wrap gap-2">
-              {sourceOptions.map((source) => (
+              {SEARCH_SOURCE_OPTIONS.map((source) => (
                 <button
                   key={source.value}
                   onClick={() => toggleSource(source.value)}
@@ -134,6 +112,19 @@ export default function SettingsPage() {
                 </button>
               ))}
             </div>
+            <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-4">
+              <div>
+                <p className="text-[13px] font-medium text-white/80">Results per search</p>
+                <p className="text-[12px] text-white/35">Limit the ranked result set returned by the server</p>
+              </div>
+              <select
+                value={settings.resultsPerPage}
+                onChange={(event) => updateSetting("resultsPerPage", Number(event.target.value))}
+                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white/70"
+              >
+                {[10, 20, 40, 60].map((count) => <option key={count} value={count}>{count}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Search Behavior */}
@@ -144,7 +135,7 @@ export default function SettingsPage() {
             </div>
             <div className="space-y-4">
               {[
-                { key: 'autoSummarize', label: 'Auto-summarize', desc: 'Generate AI summaries for search results' },
+                { key: 'autoSummarize', label: 'Auto-summarize', desc: 'Build a summary grounded in returned result titles and domains' },
                 { key: 'safeSearch', label: 'Safe Search', desc: 'Filter out explicit content' },
                 { key: 'openInNewTab', label: 'Open in New Tab', desc: 'Open result links in a new tab' },
                 { key: 'showFavicons', label: 'Show Favicons', desc: 'Display website icons in results' },

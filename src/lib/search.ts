@@ -96,6 +96,12 @@ function scoreResultForLens(result: ScrapedResult, lens: SearchLens): number {
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
+export interface SearchEngineOptions {
+  safeSearch?: boolean
+  preferredLanguage?: string
+  region?: string
+}
+
 async function fetchWithTimeout(url: string, timeout = 8000): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
@@ -119,9 +125,12 @@ async function fetchWithTimeout(url: string, timeout = 8000): Promise<Response> 
   }
 }
 
-export async function searchDuckDuckGo(query: string): Promise<{ text: string; results: ScrapedResult[] }> {
-  const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
-  const res = await fetchWithTimeout(searchUrl)
+export async function searchDuckDuckGo(query: string, options: SearchEngineOptions = {}): Promise<{ text: string; results: ScrapedResult[] }> {
+  const searchUrl = new URL('https://html.duckduckgo.com/html/')
+  searchUrl.searchParams.set('q', query)
+  if (options.safeSearch !== false) searchUrl.searchParams.set('kp', '1')
+  if (options.region) searchUrl.searchParams.set('kl', `${options.region}-${options.preferredLanguage || 'en'}`)
+  const res = await fetchWithTimeout(searchUrl.toString())
   if (!res.ok) throw new Error(`DuckDuckGo error: ${res.status}`)
 
   const html = await res.text()
@@ -145,9 +154,13 @@ export async function searchDuckDuckGo(query: string): Promise<{ text: string; r
   return { text: snippets.join(' '), results }
 }
 
-export async function searchBingHTML(query: string): Promise<{ text: string; results: ScrapedResult[] }> {
-  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=20`
-  const res = await fetchWithTimeout(searchUrl)
+export async function searchBingHTML(query: string, options: SearchEngineOptions = {}): Promise<{ text: string; results: ScrapedResult[] }> {
+  const searchUrl = new URL('https://www.bing.com/search')
+  searchUrl.searchParams.set('q', query)
+  searchUrl.searchParams.set('count', '20')
+  searchUrl.searchParams.set('adlt', options.safeSearch === false ? 'off' : 'strict')
+  if (options.preferredLanguage) searchUrl.searchParams.set('setlang', options.preferredLanguage)
+  const res = await fetchWithTimeout(searchUrl.toString())
   if (!res.ok) throw new Error(`Bing error: ${res.status}`)
 
   const html = await res.text()
@@ -180,9 +193,14 @@ function cleanGoogleUrl(href: string): string {
   return `https://www.google.com${href}`
 }
 
-export async function searchGoogleScrape(query: string): Promise<{ text: string; results: ScrapedResult[] }> {
-  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=10&hl=en`
-  const res = await fetchWithTimeout(searchUrl)
+export async function searchGoogleScrape(query: string, options: SearchEngineOptions = {}): Promise<{ text: string; results: ScrapedResult[] }> {
+  const searchUrl = new URL('https://www.google.com/search')
+  searchUrl.searchParams.set('q', query)
+  searchUrl.searchParams.set('num', '10')
+  searchUrl.searchParams.set('hl', options.preferredLanguage || 'en')
+  if (options.region) searchUrl.searchParams.set('gl', options.region)
+  if (options.safeSearch !== false) searchUrl.searchParams.set('safe', 'active')
+  const res = await fetchWithTimeout(searchUrl.toString())
   if (!res.ok) throw new Error(`Google error: ${res.status}`)
 
   const html = await res.text()

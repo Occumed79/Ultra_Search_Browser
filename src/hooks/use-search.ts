@@ -1,12 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   type IntelligenceObject,
   type ScrapedResult,
   type SearchLens,
   type SearchSuggestion,
+  type UserSettings,
 } from '@/types/search'
+import { useLocalStorage } from './use-local-storage'
+import { DEFAULT_USER_SETTINGS, normalizeUserSettings, toSearchRequestPreferences } from '@/lib/search-settings'
 
 interface UseSearchReturn {
   query: string
@@ -23,6 +26,7 @@ interface UseSearchReturn {
   hasSearched: boolean
   searchTime: number
   performSearch: () => Promise<void>
+  settings: UserSettings
 }
 
 const VALID_LENSES = new Set<SearchLens>([
@@ -41,6 +45,8 @@ const VALID_LENSES = new Set<SearchLens>([
 ])
 
 export function useSearch(): UseSearchReturn {
+  const [storedSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
+  const settings = useMemo(() => normalizeUserSettings(storedSettings), [storedSettings])
   const [query, setQuery] = useState('')
   const [lens, setLens] = useState<SearchLens>('web')
   const [intelligence, setIntelligence] = useState<IntelligenceObject | null>(null)
@@ -69,7 +75,7 @@ export function useSearch(): UseSearchReturn {
       const response = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchQuery, lens: searchLens }),
+        body: JSON.stringify({ query: searchQuery, lens: searchLens, settings: toSearchRequestPreferences(settings) }),
       })
 
       const payload = await response.json().catch(() => null) as {
@@ -200,7 +206,7 @@ export function useSearch(): UseSearchReturn {
     } finally {
       if (searchSequence.current === sequence) setIsLoading(false)
     }
-  }, [])
+  }, [settings])
 
   const performSearch = useCallback(
     async () => executeSearch(query, lens),
@@ -241,5 +247,6 @@ export function useSearch(): UseSearchReturn {
     hasSearched,
     searchTime,
     performSearch,
+    settings,
   }
 }
