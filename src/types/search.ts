@@ -37,6 +37,7 @@ export interface IntelligenceObject {
 }
 
 export interface ScrapedResult {
+  id?: string;
   title: string;
   url: string;
   description: string;
@@ -48,6 +49,13 @@ export interface ScrapedResult {
   intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence | LegalIntelligence | MedicalIntelligence | AcademicIntelligence | FinancialIntelligence;
   spamScore?: number;
   spamReasons?: string[];
+  extractionDiagnostics?: {
+    extractionAttempted: boolean;
+    extractionSucceeded: boolean;
+    extractionType: "html" | "pdf" | "docx" | "image" | "none" | string;
+    extractedTextLength: number;
+    extractionError?: string;
+  };
 }
 
 // ─── Intelligence Objects (Structured Data) ───

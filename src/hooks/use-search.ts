@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   type IntelligenceObject,
   type ScrapedResult,
@@ -16,6 +16,8 @@ interface UseSearchReturn {
   intelligence: IntelligenceObject | null
   scrapedResults: ScrapedResult[]
   isLoading: boolean
+  isEnriching: boolean
+  enrichmentError: string | null
   error: string | null
   suggestions: SearchSuggestion[]
   hasSearched: boolean
@@ -44,15 +46,22 @@ export function useSearch(): UseSearchReturn {
   const [intelligence, setIntelligence] = useState<IntelligenceObject | null>(null)
   const [scrapedResults, setScrapedResults] = useState<ScrapedResult[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isEnriching, setIsEnriching] = useState(false)
+  const [enrichmentError, setEnrichmentError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([])
   const [hasSearched, setHasSearched] = useState(false)
   const [searchTime, setSearchTime] = useState(0)
+  const searchSequence = useRef(0)
 
   const executeSearch = useCallback(async (searchQuery: string, searchLens: SearchLens) => {
     if (!searchQuery.trim()) return
 
+    const sequence = searchSequence.current + 1
+    searchSequence.current = sequence
     setIsLoading(true)
+    setIsEnriching(false)
+    setEnrichmentError(null)
     setError(null)
     const startTime = performance.now()
 
@@ -75,6 +84,7 @@ export function useSearch(): UseSearchReturn {
         sources?: string[]
         timestamp?: string
         confidence?: number
+        searchRunId?: string | null
       } | null
 
       if (!response.ok) {
@@ -111,6 +121,46 @@ export function useSearch(): UseSearchReturn {
       setScrapedResults(data.results)
       setHasSearched(true)
       setSearchTime(performance.now() - startTime)
+      setIsLoading(false)
+
+      if (data.results.length > 0) {
+        setIsEnriching(true)
+        void fetch('/api/search/enrich', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: data.query,
+            lens: data.lens,
+            results: data.results,
+            searchRunId: payload.searchRunId ?? null,
+          }),
+        })
+          .then(async response => {
+            const enrichment = await response.json().catch(() => null) as {
+              results?: ScrapedResult[]
+              error?: string
+              detail?: string
+            } | null
+
+            if (!response.ok) {
+              throw new Error(enrichment?.detail || enrichment?.error || 'Enrichment failed')
+            }
+
+            if (searchSequence.current === sequence && enrichment?.results) {
+              setScrapedResults(enrichment.results)
+            }
+          })
+          .catch(enrichmentFailure => {
+            if (searchSequence.current === sequence) {
+              setEnrichmentError(
+                enrichmentFailure instanceof Error ? enrichmentFailure.message : 'Enrichment failed'
+              )
+            }
+          })
+          .finally(() => {
+            if (searchSequence.current === sequence) setIsEnriching(false)
+          })
+      }
 
       if (data.expandedQueries.length) {
         setSuggestions(
@@ -148,7 +198,7 @@ export function useSearch(): UseSearchReturn {
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : 'Search failed')
     } finally {
-      setIsLoading(false)
+      if (searchSequence.current === sequence) setIsLoading(false)
     }
   }, [])
 
@@ -184,6 +234,8 @@ export function useSearch(): UseSearchReturn {
     intelligence,
     scrapedResults,
     isLoading,
+    isEnriching,
+    enrichmentError,
     error,
     suggestions,
     hasSearched,

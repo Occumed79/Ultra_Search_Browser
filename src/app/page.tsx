@@ -108,6 +108,11 @@ function SearchResultCard({ result, index }: { result: ResultWithId; index: numb
                 {domainPreference}
               </span>
             )}
+            {result.extractionDiagnostics?.extractionSucceeded && (
+              <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-0.5 text-[10px] text-cyan-100/70">
+                {result.extractionDiagnostics.extractionType.toUpperCase()} enriched
+              </span>
+            )}
           </div>
 
           <a href={result.url} target="_blank" rel="noopener noreferrer" className="block">
@@ -161,6 +166,8 @@ export default function Home() {
     intelligence,
     scrapedResults,
     isLoading,
+    isEnriching,
+    enrichmentError,
     error,
     hasSearched,
     searchTime,
@@ -290,8 +297,13 @@ export default function Home() {
         {hasSearched && (
           <section className="mt-6">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
-              <div className="text-xs text-white/40">
-                {visibleResults.length} results · {searchTime.toFixed(0)}ms
+              <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
+                <span>{visibleResults.length} results · {searchTime.toFixed(0)}ms</span>
+                {isEnriching && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-1 text-[10px] text-cyan-100/65">
+                    <Sparkles className="h-3 w-3 animate-pulse" /> Enriching top results
+                  </span>
+                )}
               </div>
               <button className="glass-button text-[11px]" onClick={() => setShowFilters(show => !show)}>
                 <Filter className="h-3 w-3" /> Filters
@@ -342,6 +354,13 @@ export default function Home() {
             {error && (
               <div className="mb-4 flex gap-2 rounded-xl border border-red-400/30 bg-red-400/5 p-4 text-sm text-red-300">
                 <AlertTriangle className="h-4 w-4 flex-shrink-0" /> {error}
+              </div>
+            )}
+
+            {enrichmentError && (
+              <div className="mb-4 flex gap-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3 text-xs text-amber-100/65">
+                <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                Advanced enrichment did not finish, so the fast search results remain available.
               </div>
             )}
 
