@@ -188,8 +188,11 @@ export async function POST(request: NextRequest) {
 
     const runtimeMs = Date.now() - startedAt
 
+    let searchRunId: string | null = null
+    const persistedResultIds = new Map<string, string>()
+
     try {
-      const searchRunId = await insertSearchRun({
+      searchRunId = await insertSearchRun({
         vertical: lens,
         query,
         normalized_query: query,
@@ -201,10 +204,10 @@ export async function POST(request: NextRequest) {
       })
 
       if (searchRunId) {
-        await Promise.allSettled(
-          mergedResults.slice(0, 30).map(result =>
-            insertSearchResult({
-              search_run_id: searchRunId,
+        const persisted = await Promise.allSettled(
+          mergedResults.slice(0, 30).map(async result => {
+            const id = await insertSearchResult({
+              search_run_id: searchRunId as string,
               url: result.url,
               domain: result.domain,
               title: result.title,
@@ -216,12 +219,24 @@ export async function POST(request: NextRequest) {
               extraction_status: 'search-result',
               metadata: { lens },
             })
-          )
+            return { url: result.url, id }
+          })
         )
+
+        for (const item of persisted) {
+          if (item.status === 'fulfilled' && item.value.id) {
+            persistedResultIds.set(item.value.url, item.value.id)
+          }
+        }
       }
     } catch (persistenceError) {
       console.warn('Search persistence failed:', persistenceError)
     }
+
+    const responseResults = mergedResults.map(result => ({
+      ...result,
+      id: persistedResultIds.get(result.url),
+    }))
 
     return NextResponse.json({
       query: intelligence.query,
@@ -229,7 +244,8 @@ export async function POST(request: NextRequest) {
       summary: intelligence.summary,
       expandedQueries: intelligence.queryExpansions,
       signals: intelligence.signals,
-      results: mergedResults,
+      results: responseResults,
+      searchRunId,
       sources: intelligence.sources,
       timestamp: intelligence.timestamp,
       confidence: intelligence.confidence,
