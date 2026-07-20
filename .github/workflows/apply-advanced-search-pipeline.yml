@@ -35,6 +35,7 @@ jobs:
           } > .tmp/advanced-pipeline/diagnostic.txt
           cat .tmp/advanced-pipeline/part-*.b64 > /tmp/ultra-advanced-pipeline.b64
           base64 --decode /tmp/ultra-advanced-pipeline.b64 > /tmp/ultra-advanced-pipeline.patch
+          cp /tmp/ultra-advanced-pipeline.patch .tmp/advanced-pipeline/reconstructed.patch
           {
             echo
             echo "Reconstructed files:"
@@ -50,6 +51,20 @@ jobs:
       - name: Apply patch
         shell: bash
         run: patch -p1 < /tmp/ultra-advanced-pipeline.patch
+
+      - name: Snapshot applied files
+        shell: bash
+        run: |
+          mkdir -p .tmp/advanced-pipeline/applied/src/app/api/search/enrich
+          mkdir -p .tmp/advanced-pipeline/applied/src/app/api/search
+          mkdir -p .tmp/advanced-pipeline/applied/src/app
+          mkdir -p .tmp/advanced-pipeline/applied/src/hooks
+          mkdir -p .tmp/advanced-pipeline/applied/src/types
+          cp src/app/api/search/enrich/route.ts .tmp/advanced-pipeline/applied/src/app/api/search/enrich/route.ts
+          cp src/app/api/search/route.ts .tmp/advanced-pipeline/applied/src/app/api/search/route.ts
+          cp src/app/page.tsx .tmp/advanced-pipeline/applied/src/app/page.tsx
+          cp src/hooks/use-search.ts .tmp/advanced-pipeline/applied/src/hooks/use-search.ts
+          cp src/types/search.ts .tmp/advanced-pipeline/applied/src/types/search.ts
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -82,11 +97,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: advanced-pipeline-validation
-          path: |
-            .tmp/advanced-pipeline/diagnostic.txt
-            .tmp/advanced-pipeline/typecheck.log
-            .tmp/advanced-pipeline/build.log
-          if-no-files-found: ignore
+          path: .tmp/advanced-pipeline
+          if-no-files-found: error
 
       - name: Fail when validation did not pass
         if: steps.typecheck.outcome != 'success' || steps.build.outcome != 'success'
