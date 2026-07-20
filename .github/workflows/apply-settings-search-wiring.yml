@@ -29,7 +29,9 @@ jobs:
       - name: Apply implementation
         id: apply
         continue-on-error: true
-        run: python .tmp/apply-settings-search.py > .tmp/apply.log 2>&1
+        run: |
+          python .tmp/hotfix-settings-script.py
+          python .tmp/apply-settings-search.py > .tmp/apply.log 2>&1
 
       - name: Upload apply diagnostics
         if: always()
