@@ -1,0 +1,59 @@
+name: Apply advanced search pipeline patch
+
+on:
+  push:
+    branches:
+      - advanced-search-pipeline
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-advanced-search-pipeline
+  cancel-in-progress: false
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+        with:
+          ref: advanced-search-pipeline
+          fetch-depth: 0
+
+      - name: Reconstruct and apply patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .tmp/advanced-pipeline/part-*.b64 | base64 --decode > /tmp/ultra-advanced-pipeline.patch
+          echo "d2e03f0b34664e9235763cbd3ce498009a69eb2c5dad86908c3e5bbe4962035b  /tmp/ultra-advanced-pipeline.patch" | sha256sum --check
+          patch -p1 < /tmp/ultra-advanced-pipeline.patch
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit completed implementation and remove staging files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .tmp/advanced-pipeline .tmp/test.txt
+          rm -f .github/workflows/apply-advanced-search-pipeline.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Reconnect staged advanced search pipeline"
+          git push origin HEAD:advanced-search-pipeline
