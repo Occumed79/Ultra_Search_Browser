@@ -15,7 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ResultActions } from '../components/result-actions'
 import { useSearch } from '../hooks/use-search'
-import type { ScrapedResult, SearchLens } from '../types/search'
+import type { ScrapedResult, SearchLens, UserSettings } from '../types/search'
 
 const LENSES: Array<{ id: SearchLens; label: string }> = [
   { id: 'web', label: 'Web' },
@@ -48,7 +48,7 @@ interface DomainPreference {
   action: string
 }
 
-function SearchResultCard({ result, index }: { result: ResultWithId; index: number }) {
+function SearchResultCard({ result, index, settings }: { result: ResultWithId; index: number; settings: UserSettings }) {
   const domain = useMemo(() => {
     try {
       return new URL(result.url).hostname.replace(/^www./, '')
@@ -87,14 +87,16 @@ function SearchResultCard({ result, index }: { result: ResultWithId; index: numb
   return (
     <article className="result-card animate-in" style={{ animationDelay: index * 35 + 'ms' }}>
       <div className="flex items-start gap-3">
-        <img
-          src={'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=32'}
-          alt=""
-          className="mt-0.5 h-5 w-5 flex-shrink-0 rounded opacity-60"
-          onError={event => {
-            event.currentTarget.style.display = 'none'
-          }}
-        />
+        {settings.showFavicons && (
+          <img
+            src={'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(domain) + '&sz=32'}
+            alt=""
+            className="mt-0.5 h-5 w-5 flex-shrink-0 rounded opacity-60"
+            onError={event => {
+              event.currentTarget.style.display = 'none'
+            }}
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <span className={'rounded-full border px-2 py-0.5 text-[10px] font-medium ' + sourceStyle}>
@@ -115,14 +117,14 @@ function SearchResultCard({ result, index }: { result: ResultWithId; index: numb
             )}
           </div>
 
-          <a href={result.url} target="_blank" rel="noopener noreferrer" className="block">
+          <a href={result.url} target={settings.openInNewTab ? '_blank' : undefined} rel={settings.openInNewTab ? 'noopener noreferrer' : undefined} className="block">
             <h2 className="line-clamp-2 text-[14px] font-medium text-white/85 transition-colors hover:text-teal-300/90">
               {result.title}
             </h2>
             <p className="mt-0.5 line-clamp-1 text-[11px] text-teal-400/50">{result.url}</p>
           </a>
 
-          {result.description && (
+          {settings.showDescriptions && result.description && (
             <p className="mt-1.5 line-clamp-3 text-[13px] text-white/40">{result.description}</p>
           )}
 
@@ -140,8 +142,8 @@ function SearchResultCard({ result, index }: { result: ResultWithId; index: numb
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <a
               href={result.url}
-              target="_blank"
-              rel="noopener noreferrer"
+              target={settings.openInNewTab ? '_blank' : undefined}
+              rel={settings.openInNewTab ? 'noopener noreferrer' : undefined}
               className="inline-flex items-center gap-1 text-[11px] text-teal-300/60 hover:text-teal-300/90"
             >
               <ExternalLink className="h-3 w-3" /> Visit
@@ -172,6 +174,7 @@ export default function Home() {
     hasSearched,
     searchTime,
     performSearch,
+    settings,
   } = useSearch()
   const [sortMode, setSortMode] = useState<SortMode>('score')
   const [filterSource, setFilterSource] = useState<string | null>(null)
@@ -180,6 +183,7 @@ export default function Home() {
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    if (!settings.keyboardShortcuts) return
     const handleKeyboard = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
@@ -188,7 +192,7 @@ export default function Home() {
     }
     window.addEventListener('keydown', handleKeyboard)
     return () => window.removeEventListener('keydown', handleKeyboard)
-  }, [])
+  }, [settings.keyboardShortcuts])
 
   const sources = useMemo(
     () => Array.from(new Set(scrapedResults.map(result => result.source))),
@@ -263,9 +267,11 @@ export default function Home() {
             placeholder="Search the web, documents, bids, pricing, providers..."
             className="flex-1 border-none bg-transparent text-[15px] text-white/90 outline-none placeholder:text-white/35"
           />
-          <kbd className="hidden items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/40 sm:flex">
-            <Command className="h-3 w-3" />K
-          </kbd>
+          {settings.keyboardShortcuts && (
+            <kbd className="hidden items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-white/40 sm:flex">
+              <Command className="h-3 w-3" />K
+            </kbd>
+          )}
           <button className="search-btn-glow" disabled={isLoading} onClick={() => void performSearch()}>
             {isLoading ? 'Searching...' : 'Search'}
           </button>
@@ -364,7 +370,7 @@ export default function Home() {
               </div>
             )}
 
-            {intelligence && (
+            {settings.autoSummarize && intelligence?.summary && (
               <div className="glass-surface animate-in mb-5 rounded-xl p-4">
                 <div className="mb-2 flex items-center gap-2">
                   <Sparkles className="h-4 w-4 text-teal-300/80" />
@@ -372,14 +378,14 @@ export default function Home() {
                   <span className="ml-auto text-[10px] text-white/40">{intelligence.confidence}% confidence</span>
                 </div>
                 <p className="text-[13px] leading-relaxed text-white/50">
-                  {intelligence.summary || 'Results for "' + intelligence.query + '" using the ' + intelligence.lens + ' lens.'}
+                  {intelligence.summary}
                 </p>
               </div>
             )}
 
             <div className="space-y-3">
               {visibleResults.map((result, index) => (
-                <SearchResultCard key={result.url + '-' + index} result={result} index={index} />
+                <SearchResultCard key={result.url + '-' + index} result={result} index={index} settings={settings} />
               ))}
             </div>
 

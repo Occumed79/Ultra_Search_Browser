@@ -4,6 +4,14 @@ import {
   searchDuckDuckGo,
   searchGoogleScrape,
 } from '../../../lib/search'
+import { searchSearXNG } from '../../../lib/searxng'
+import {
+  buildGroundedSummary,
+  buildSearchPlan,
+  collectSettledSearchJobs,
+  filterSafeResults,
+  type LiveSearchSource,
+} from '../../../lib/search-settings'
 import {
   buildIntelligenceObject,
   expandQuery,
@@ -76,7 +84,7 @@ function lensBonus(result: ScrapedResult, lens: SearchLens): number {
   return bonus
 }
 
-function scoreAndRank(results: ScrapedResult[], lens: SearchLens): ScrapedResult[] {
+function scoreAndRank(results: ScrapedResult[], lens: SearchLens, maxResults = MAX_RESULTS): ScrapedResult[] {
   const scored = results
     .filter(result => Boolean(result.url && result.title))
     .map((result, index) => {
@@ -91,7 +99,7 @@ function scoreAndRank(results: ScrapedResult[], lens: SearchLens): ScrapedResult
       }
     })
     .sort((left, right) => right.score - left.score)
-    .slice(0, MAX_RESULTS)
+    .slice(0, Math.min(MAX_RESULTS, maxResults))
 
   return scored.map((result, index) => ({ ...result, rank: index + 1 }))
 }
@@ -100,7 +108,7 @@ export async function POST(request: NextRequest) {
   const startedAt = Date.now()
 
   try {
-    const body = (await request.json()) as { query?: string; lens?: SearchLens }
+    const body = (await request.json()) as { query?: string; lens?: SearchLens; settings?: unknown }
     const query = body.query?.trim() || ''
 
     if (!query) {
@@ -112,6 +120,7 @@ export async function POST(request: NextRequest) {
       ? requestedLens
       : 'web'
 
+    const plan = buildSearchPlan(body.settings)
     const expanded = expandQuery(query, lens)
     const candidateQueries = Array.from(new Set([
       query,
@@ -119,11 +128,18 @@ export async function POST(request: NextRequest) {
       expanded.withOperators[0],
     ].filter((value): value is string => Boolean(value)))).slice(0, 3)
 
-    const engines = [
-      { name: 'DuckDuckGo', run: searchDuckDuckGo },
-      { name: 'Bing', run: searchBingHTML },
-      { name: 'Google', run: searchGoogleScrape },
-    ]
+    const engineOptions = {
+      safeSearch: plan.safeSearch,
+      preferredLanguage: plan.preferredLanguage,
+      region: plan.region,
+    }
+    const engineRegistry: Record<LiveSearchSource, { name: string; run: (query: string) => Promise<{ text: string; results: ScrapedResult[] }> }> = {
+      google: { name: 'Google', run: query => searchGoogleScrape(query, engineOptions) },
+      bing: { name: 'Bing', run: query => searchBingHTML(query, engineOptions) },
+      duckduckgo: { name: 'DuckDuckGo', run: query => searchDuckDuckGo(query, engineOptions) },
+      searxng: { name: 'SearXNG', run: query => searchSearXNG(query, engineOptions) },
+    }
+    const engines = plan.liveSources.map(source => engineRegistry[source])
 
     const liveJobs = candidateQueries.flatMap(candidateQuery =>
       engines.map(engine =>
@@ -139,17 +155,21 @@ export async function POST(request: NextRequest) {
       )
     )
 
-    const memoryKeywordPromise = withTimeout(
-      keywordSearchStoredResults(query, lens, undefined, 20),
-      MEMORY_TIMEOUT_MS,
-      'keyword memory search'
-    ).catch(() => [] as ScrapedResult[])
+    const memoryKeywordPromise = plan.useMemory
+      ? withTimeout(
+          keywordSearchStoredResults(query, lens, undefined, 20),
+          MEMORY_TIMEOUT_MS,
+          'keyword memory search'
+        ).catch(() => [] as ScrapedResult[])
+      : Promise.resolve([] as ScrapedResult[])
 
-    const memoryVectorPromise = withTimeout(
-      vectorSearchStoredResults(query, lens, 10),
-      MEMORY_TIMEOUT_MS,
-      'vector memory search'
-    ).catch(() => [] as ScrapedResult[])
+    const memoryVectorPromise = plan.useMemory
+      ? withTimeout(
+          vectorSearchStoredResults(query, lens, 10),
+          MEMORY_TIMEOUT_MS,
+          'vector memory search'
+        ).catch(() => [] as ScrapedResult[])
+      : Promise.resolve([] as ScrapedResult[])
 
     const [liveSettled, memoryKeyword, memoryVector] = await Promise.all([
       Promise.allSettled(liveJobs),
@@ -157,34 +177,28 @@ export async function POST(request: NextRequest) {
       memoryVectorPromise,
     ])
 
-    const liveResults: ScrapedResult[] = []
-    const rawTexts: string[] = []
-    const sources: string[] = []
-    const failures: string[] = []
-
-    for (const result of liveSettled) {
-      if (result.status === 'fulfilled') {
-        const { engine, query: engineQuery, data } = result.value
-        liveResults.push(...data.results)
-        if (data.text.trim()) rawTexts.push(data.text)
-        sources.push(`${engine} (${engineQuery.slice(0, 60)})`)
-      } else {
-        failures.push(result.reason instanceof Error ? result.reason.message : String(result.reason))
-      }
-    }
+    const collected = collectSettledSearchJobs(liveSettled)
+    const sources = [...collected.sources]
+    if (memoryKeyword.length > 0) sources.push('Small Web / keyword memory')
+    if (memoryVector.length > 0) sources.push('Small Web / vector memory')
 
     const mergedResults = scoreAndRank(
-      dedupeByUrl([...liveResults, ...memoryKeyword, ...memoryVector]),
-      lens
+      dedupeByUrl(filterSafeResults(
+        [...collected.results, ...memoryKeyword, ...memoryVector],
+        plan.safeSearch
+      )),
+      lens,
+      plan.resultsPerPage
     )
 
     const intelligence = buildIntelligenceObject(
       query,
       expanded,
       sources,
-      rawTexts,
-      failures.length > 0 ? `${failures.length} source requests did not respond in time.` : undefined
+      collected.rawTexts,
+      collected.failures.length > 0 ? `${collected.failures.length} source requests did not respond in time.` : undefined
     )
+    intelligence.summary = buildGroundedSummary(query, lens, mergedResults, plan.autoSummarize)
 
     const runtimeMs = Date.now() - startedAt
 
@@ -200,7 +214,7 @@ export async function POST(request: NextRequest) {
         result_count: mergedResults.length,
         runtime_ms: runtimeMs,
         sources,
-        operators: { candidateQueries, failures },
+        operators: { candidateQueries, failures: collected.failures, enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])] },
       })
 
       if (searchRunId) {
@@ -253,7 +267,9 @@ export async function POST(request: NextRequest) {
         runtimeMs,
         attemptedRequests: liveJobs.length,
         successfulRequests: liveSettled.filter(result => result.status === 'fulfilled').length,
-        failedRequests: failures.length,
+        failedRequests: collected.failures.length,
+        enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+        safeSearch: plan.safeSearch,
         memoryKeywordMatches: memoryKeyword.length,
         memoryVectorMatches: memoryVector.length,
       },

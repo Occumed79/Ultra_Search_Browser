@@ -11,7 +11,8 @@
     "smoke": "npx --yes tsx scripts/smoke-search.ts",
     "check:pgvector": "npx --yes tsx scripts/check-pgvector.ts",
     "smoke:pgvector": "npx --yes tsx scripts/smoke-pgvector-search.ts",
-    "verify": "npm run typecheck && npm run build"
+    "verify": "npm run typecheck && npm run test:settings && npm run build",
+    "test:settings": "npx --yes tsx --test scripts/settings-search.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.0",

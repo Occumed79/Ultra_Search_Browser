@@ -1,7 +1,7 @@
 // ─── Search Lenses ───
 export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing" | "provider" | "technical" | "news" | "legal" | "medical" | "academic" | "financial";
 
-export type SearchSource = "google" | "bing" | "duckduckgo" | "brave" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
+export type SearchSource = "google" | "bing" | "duckduckgo" | "searxng" | "memory" | "brave" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
 
 // ─── Legacy generic search result (kept for backward compat) ───
 export interface SearchResult {

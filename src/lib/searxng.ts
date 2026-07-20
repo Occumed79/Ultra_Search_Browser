@@ -17,12 +17,17 @@ export interface SearXNGResult {
 /**
  * Search using SearXNG instance
  */
-export async function searchSearXNG(query: string): Promise<{ text: string; results: ScrapedResult[] }> {
+export async function searchSearXNG(
+  query: string,
+  options: { safeSearch?: boolean; preferredLanguage?: string; region?: string } = {}
+): Promise<{ text: string; results: ScrapedResult[] }> {
   try {
     const url = new URL(`${SEARXNG_URL}/search`)
     url.searchParams.set('q', query)
     url.searchParams.set('format', 'json')
-    url.searchParams.set('engines', 'google,bing,duckduckgo,brave') // Default engines
+    url.searchParams.set('engines', 'google,bing,duckduckgo,brave')
+    url.searchParams.set('safesearch', options.safeSearch === false ? '0' : '2')
+    if (options.preferredLanguage) url.searchParams.set('language', options.preferredLanguage)
 
     const response = await fetch(url.toString(), {
       signal: AbortSignal.timeout(10000),
@@ -42,8 +47,10 @@ export async function searchSearXNG(query: string): Promise<{ text: string; resu
       url: result.url,
       title: result.title,
       description: result.content,
-      source: `searxng-${result.engine}`,
+      domain: (() => { try { return new URL(result.url).hostname.replace(/^www\./, '') } catch { return '' } })(),
+      source: 'SearXNG',
       rank: index + 1,
+      score: Number.isFinite(result.score) ? result.score : 0,
     }))
 
     const text = results.map((r: ScrapedResult) => `${r.title} ${r.description}`).join(' ')
