@@ -1,0 +1,22 @@
+Staged chunk byte counts:
+ 5000 .tmp/advanced-pipeline/part-00.b64
+ 5000 .tmp/advanced-pipeline/part-01.b64
+ 5000 .tmp/advanced-pipeline/part-02.b64
+ 5000 .tmp/advanced-pipeline/part-03.b64
+ 4572 .tmp/advanced-pipeline/part-04.b64
+24572 total
+
+Reconstructed files:
+24572 /tmp/ultra-advanced-pipeline.b64
+18429 /tmp/ultra-advanced-pipeline.patch
+43001 total
+
+Patch SHA-256:
+f535e6b1e57652dad3ce364e90316665848868127c8f0b26cd4196292d94446b  /tmp/ultra-advanced-pipeline.patch
+
+Dry-run output:
+checking file src/app/api/search/enrich/route.ts
+checking file src/app/api/search/route.ts
+checking file src/app/page.tsx
+checking file src/hooks/use-search.ts
+checking file src/types/search.ts
