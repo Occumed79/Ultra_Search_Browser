@@ -4,6 +4,8 @@ export const SUPPORTED_SEARCH_SOURCES = ['google', 'bing', 'duckduckgo', 'searxn
 export type SupportedSearchSource = (typeof SUPPORTED_SEARCH_SOURCES)[number]
 export type LiveSearchSource = Exclude<SupportedSearchSource, 'memory'>
 
+export const RESULT_COUNT_OPTIONS = [10, 20, 40, 60] as const
+
 export const SEARCH_SOURCE_OPTIONS: Array<{ value: SupportedSearchSource; label: string; description: string }> = [
   { value: 'google', label: 'Google', description: 'Google web results' },
   { value: 'bing', label: 'Bing', description: 'Bing web results' },
@@ -70,6 +72,16 @@ function cleanLocale(value: unknown, fallback: string, length: number): string {
   return cleaned || fallback
 }
 
+function normalizeResultCount(value: unknown): number {
+  const requested = typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(60, Math.max(10, Math.round(value)))
+    : DEFAULT_USER_SETTINGS.resultsPerPage
+
+  return RESULT_COUNT_OPTIONS.reduce((closest, option) =>
+    Math.abs(option - requested) < Math.abs(closest - requested) ? option : closest
+  , DEFAULT_USER_SETTINGS.resultsPerPage)
+}
+
 export function normalizeUserSettings(value: unknown): UserSettings {
   const candidate = asRecord(value)
   const selectedSources = Array.isArray(candidate.defaultSources)
@@ -78,17 +90,13 @@ export function normalizeUserSettings(value: unknown): UserSettings {
       )))
     : []
 
-  const requestedResults = typeof candidate.resultsPerPage === 'number' && Number.isFinite(candidate.resultsPerPage)
-    ? Math.round(candidate.resultsPerPage)
-    : DEFAULT_USER_SETTINGS.resultsPerPage
-
   return {
     ...DEFAULT_USER_SETTINGS,
     theme: typeof candidate.theme === 'string' && themeSet.has(candidate.theme)
       ? candidate.theme as UserSettings['theme']
       : DEFAULT_USER_SETTINGS.theme,
     defaultSources: selectedSources.length > 0 ? selectedSources : [...DEFAULT_USER_SETTINGS.defaultSources],
-    resultsPerPage: Math.min(60, Math.max(10, requestedResults)),
+    resultsPerPage: normalizeResultCount(candidate.resultsPerPage),
     autoSummarize: asBoolean(candidate.autoSummarize, DEFAULT_USER_SETTINGS.autoSummarize),
     safeSearch: asBoolean(candidate.safeSearch, DEFAULT_USER_SETTINGS.safeSearch),
     openInNewTab: asBoolean(candidate.openInNewTab, DEFAULT_USER_SETTINGS.openInNewTab),
