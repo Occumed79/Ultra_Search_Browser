@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { searchGoogleScrape } from '../../../lib/search'
 import {
-  searchBingHTML,
-  searchDuckDuckGo,
-  searchGoogleScrape,
-} from '../../../lib/search'
+  searchBingResilient,
+  searchDuckDuckGoResilient,
+} from '../../../lib/resilient-search'
 import { searchSearXNG } from '../../../lib/searxng'
 import {
   buildGroundedSummary,
@@ -40,7 +40,7 @@ const VALID_LENSES = new Set<SearchLens>([
   'financial',
 ])
 
-const REQUEST_TIMEOUT_MS = 9_000
+const REQUEST_TIMEOUT_MS = 6_000
 const MEMORY_TIMEOUT_MS = 4_000
 const MAX_RESULTS = 60
 
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
       query,
       expanded.expansions[0],
       expanded.withOperators[0],
-    ].filter((value): value is string => Boolean(value)))).slice(0, 3)
+    ].filter((value): value is string => Boolean(value)))).slice(0, 2)
 
     const engineOptions = {
       safeSearch: plan.safeSearch,
@@ -135,8 +135,8 @@ export async function POST(request: NextRequest) {
     }
     const engineRegistry: Record<LiveSearchSource, { name: string; run: (query: string) => Promise<{ text: string; results: ScrapedResult[] }> }> = {
       google: { name: 'Google', run: query => searchGoogleScrape(query, engineOptions) },
-      bing: { name: 'Bing', run: query => searchBingHTML(query, engineOptions) },
-      duckduckgo: { name: 'DuckDuckGo', run: query => searchDuckDuckGo(query, engineOptions) },
+      bing: { name: 'Bing', run: query => searchBingResilient(query, engineOptions) },
+      duckduckgo: { name: 'DuckDuckGo', run: query => searchDuckDuckGoResilient(query, engineOptions) },
       searxng: { name: 'SearXNG', run: query => searchSearXNG(query, engineOptions) },
     }
     const engines = plan.liveSources.map(source => engineRegistry[source])
@@ -196,7 +196,7 @@ export async function POST(request: NextRequest) {
       expanded,
       sources,
       collected.rawTexts,
-      collected.failures.length > 0 ? `${collected.failures.length} source requests did not respond in time.` : undefined
+      collected.failures.length > 0 ? `${collected.failures.length} source requests did not respond or returned an unreadable page.` : undefined
     )
     intelligence.summary = buildGroundedSummary(query, lens, mergedResults, plan.autoSummarize)
 
