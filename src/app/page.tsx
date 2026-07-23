@@ -2,12 +2,14 @@
 
 import {
   AlertTriangle,
+  Check,
   ChevronRight,
   Clock,
   Command,
   Download,
   ExternalLink,
   Filter,
+  Link2,
   Search,
   Sparkles,
   X,
@@ -180,6 +182,7 @@ export default function Home() {
   const [filterSource, setFilterSource] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
   const [lensOpen, setLensOpen] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -209,6 +212,25 @@ export default function Home() {
       return right.score - left.score
     })
   }, [filterSource, scrapedResults, sortMode])
+
+  async function copySearchLink() {
+    const value = window.location.href
+    try {
+      await navigator.clipboard.writeText(value)
+    } catch {
+      const textarea = document.createElement('textarea')
+      textarea.value = value
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      textarea.remove()
+    }
+
+    setLinkCopied(true)
+    window.setTimeout(() => setLinkCopied(false), 1600)
+  }
 
   function exportResults(format: 'json' | 'csv') {
     const safeQuery = query.replace(/[^a-zA-Z0-9-]/g, '_').slice(0, 50) || 'search'
@@ -249,7 +271,6 @@ export default function Home() {
         <div className="aurora-2" />
         <div className="aurora-3" />
       </div>
-
 
       <main
         className="relative z-10 mx-auto flex w-full max-w-3xl flex-col px-4 pb-16"
@@ -311,9 +332,15 @@ export default function Home() {
                   </span>
                 )}
               </div>
-              <button className="glass-button text-[11px]" onClick={() => setShowFilters(show => !show)}>
-                <Filter className="h-3 w-3" /> Filters
-              </button>
+              <div className="flex items-center gap-2">
+                <button className="glass-button text-[11px]" onClick={() => void copySearchLink()}>
+                  {linkCopied ? <Check className="h-3 w-3" /> : <Link2 className="h-3 w-3" />}
+                  {linkCopied ? 'Copied' : 'Copy link'}
+                </button>
+                <button className="glass-button text-[11px]" onClick={() => setShowFilters(show => !show)}>
+                  <Filter className="h-3 w-3" /> Filters
+                </button>
+              </div>
             </div>
 
             {showFilters && (
