@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "description": "Evaluation-only queries for measuring Ultra Search quality. These expectations never affect production ranking.",
+  "cases": [
+    {
+      "id": "web-osha-respiratory-protection",
+      "query": "OSHA respiratory protection medical evaluation requirements",
+      "lens": "web",
+      "requiredConcepts": [["OSHA", "occupational safety"], ["respiratory protection", "respirator"], ["medical evaluation", "medical clearance"]],
+      "preferredDomains": ["osha.gov"],
+      "expectOfficial": true,
+      "forbiddenTerms": ["shopping", "amazon"]
+    },
+    {
+      "id": "web-audiogram-vs-screening",
+      "query": "difference between an occupational audiogram and a hearing screening",
+      "lens": "web",
+      "requiredConcepts": [["audiogram", "audiometry"], ["hearing screening", "hearing test"], ["occupational", "workplace"]],
+      "forbiddenTerms": ["hearing aid sale", "coupon"]
+    },
+    {
+      "id": "government-osha-1910-134",
+      "query": "OSHA 1910.134 respirator fit testing standard",
+      "lens": "government",
+      "requiredConcepts": [["1910.134"], ["fit testing", "respirator fit"], ["respiratory protection"]],
+      "preferredDomains": ["osha.gov", "ecfr.gov"],
+      "expectOfficial": true
+    },
+    {
+      "id": "government-cdc-tb-screening",
+      "query": "CDC tuberculosis screening healthcare personnel guidance",
+      "lens": "government",
+      "requiredConcepts": [["tuberculosis", "TB"], ["healthcare personnel", "health care personnel"], ["screening", "testing"]],
+      "preferredDomains": ["cdc.gov"],
+      "expectOfficial": true
+    },
+    {
+      "id": "procurement-occ-health-rfp",
+      "query": "occupational health services request for proposal 2026",
+      "lens": "procurement",
+      "requiredConcepts": [["occupational health", "occupational medicine"], ["request for proposal", "RFP", "solicitation", "bid"], ["2026"]],
+      "expectOfficial": true,
+      "freshnessRequired": true,
+      "forbiddenTerms": ["job opening", "career", "awarded contract"]
+    },
+    {
+      "id": "procurement-drug-testing-bid",
+      "query": "employee drug and alcohol testing services bid 2026",
+      "lens": "procurement",
+      "requiredConcepts": [["drug testing", "drug screening"], ["alcohol testing", "breath alcohol"], ["bid", "RFP", "solicitation"], ["2026"]],
+      "expectOfficial": true,
+      "freshnessRequired": true,
+      "forbiddenTerms": ["treatment center", "rehab program", "job posting"]
+    },
+    {
+      "id": "pdf-occ-health-fee-schedule",
+      "query": "filetype:pdf occupational health fee schedule",
+      "lens": "pdf",
+      "requiredConcepts": [["occupational health", "occupational medicine"], ["fee schedule", "pricing", "rates"]],
+      "expectPdf": true
+    },
+    {
+      "id": "pdf-preemployment-exam-requirements",
+      "query": "filetype:pdf pre-employment medical examination requirements",
+      "lens": "pdf",
+      "requiredConcepts": [["pre-employment", "preemployment", "pre-placement"], ["medical examination", "physical examination"], ["requirements", "guidelines"]],
+      "expectPdf": true
+    },
+    {
+      "id": "provider-fresno-occ-med",
+      "query": "occupational medicine clinic Fresno California spirometry audiogram",
+      "lens": "provider",
+      "requiredConcepts": [["occupational medicine", "occupational health"], ["Fresno"], ["spirometry", "pulmonary function"], ["audiogram", "audiometry"]],
+      "forbiddenTerms": ["veterinary", "mental health counseling"]
+    },
+    {
+      "id": "provider-stuttgart-audiogram",
+      "query": "occupational audiogram provider Stuttgart Germany pure tone 500 6000 Hz",
+      "lens": "provider",
+      "requiredConcepts": [["Stuttgart"], ["audiogram", "audiometry", "hearing test"], ["500", "6000", "pure tone"]],
+      "forbiddenTerms": ["hearing aid shop", "consumer electronics"]
+    },
+    {
+      "id": "pricing-stress-test-california",
+      "query": "treadmill stress test self pay price California",
+      "lens": "pricing",
+      "requiredConcepts": [["treadmill stress test", "exercise stress test", "exercise treadmill test"], ["self pay", "cash price", "pricing", "cost"], ["California"]],
+      "forbiddenTerms": ["veterinary", "software pricing"]
+    },
+    {
+      "id": "pricing-drug-screen-fee",
+      "query": "occupational health drug screen price list",
+      "lens": "pricing",
+      "requiredConcepts": [["occupational health", "occupational medicine"], ["drug screen", "drug testing"], ["price", "fee", "rate", "cost"]],
+      "forbiddenTerms": ["rehab treatment", "pharmacy coupon"]
+    },
+    {
+      "id": "medical-bruce-protocol",
+      "query": "exercise treadmill test Bruce protocol interpretation",
+      "lens": "medical",
+      "requiredConcepts": [["exercise treadmill test", "exercise stress test"], ["Bruce protocol"], ["interpretation", "results", "ECG"]],
+      "preferredDomains": ["nih.gov", "ncbi.nlm.nih.gov", "ahajournals.org"]
+    },
+    {
+      "id": "medical-occupational-audiometry",
+      "query": "pure tone audiometry 500 6000 Hz occupational hearing conservation",
+      "lens": "medical",
+      "requiredConcepts": [["pure tone audiometry", "audiogram"], ["500", "6000"], ["hearing conservation", "occupational hearing"]],
+      "preferredDomains": ["osha.gov", "cdc.gov", "niosh.gov"]
+    },
+    {
+      "id": "technical-nextjs-abortsignal",
+      "query": "Next.js 16 route handler AbortSignal timeout fetch",
+      "lens": "technical",
+      "requiredConcepts": [["Next.js", "NextJS"], ["route handler", "route.ts"], ["AbortSignal", "timeout"], ["fetch"]],
+      "preferredDomains": ["nextjs.org", "developer.mozilla.org"]
+    },
+    {
+      "id": "technical-pgvector-ivfflat",
+      "query": "pgvector cosine similarity IVFFlat index 384 dimensions",
+      "lens": "technical",
+      "requiredConcepts": [["pgvector"], ["cosine similarity", "cosine distance"], ["IVFFlat", "IVF Flat"], ["384 dimensions", "vector(384)"]],
+      "preferredDomains": ["github.com", "postgresql.org"]
+    },
+    {
+      "id": "news-osha-enforcement",
+      "query": "latest OSHA workplace safety enforcement news",
+      "lens": "news",
+      "requiredConcepts": [["OSHA"], ["workplace safety", "occupational safety"], ["enforcement", "citation", "penalty"]],
+      "preferredDomains": ["osha.gov"],
+      "freshnessRequired": true
+    },
+    {
+      "id": "news-healthcare-workforce",
+      "query": "latest occupational health workforce news",
+      "lens": "news",
+      "requiredConcepts": [["occupational health", "occupational medicine"], ["workforce", "employment", "staffing"]],
+      "freshnessRequired": true,
+      "forbiddenTerms": ["job board", "apply now"]
+    },
+    {
+      "id": "academic-noise-hearing-loss",
+      "query": "occupational noise exposure hearing loss systematic review",
+      "lens": "academic",
+      "requiredConcepts": [["occupational noise", "workplace noise"], ["hearing loss"], ["systematic review", "meta-analysis"]],
+      "preferredDomains": ["nih.gov", "ncbi.nlm.nih.gov", "pubmed.ncbi.nlm.nih.gov", "sciencedirect.com"]
+    },
+    {
+      "id": "academic-respirator-fit-testing",
+      "query": "respirator fit testing effectiveness peer reviewed study",
+      "lens": "academic",
+      "requiredConcepts": [["respirator fit testing", "fit test"], ["effectiveness", "performance"], ["study", "research", "peer reviewed"]],
+      "preferredDomains": ["nih.gov", "ncbi.nlm.nih.gov", "cdc.gov"]
+    },
+    {
+      "id": "legal-ada-medical-exams",
+      "query": "ADA pre-employment medical examinations employer rules",
+      "lens": "legal",
+      "requiredConcepts": [["ADA", "Americans with Disabilities Act"], ["pre-employment", "post-offer"], ["medical examination", "medical inquiry"], ["employer"]],
+      "preferredDomains": ["eeoc.gov", "ada.gov"],
+      "expectOfficial": true
+    },
+    {
+      "id": "legal-california-stress-test-supervision",
+      "query": "California exercise treadmill stress test supervision requirements",
+      "lens": "legal",
+      "requiredConcepts": [["California"], ["exercise treadmill test", "stress test"], ["supervision", "monitoring"], ["requirements", "regulation", "standard"]],
+      "preferredDomains": ["ca.gov", "mbc.ca.gov"]
+    },
+    {
+      "id": "financial-hospital-price-transparency",
+      "query": "hospital price transparency chargemaster cash price requirements",
+      "lens": "financial",
+      "requiredConcepts": [["hospital price transparency"], ["chargemaster", "standard charges"], ["cash price", "discounted cash price"], ["requirements", "rule"]],
+      "preferredDomains": ["cms.gov"],
+      "expectOfficial": true
+    },
+    {
+      "id": "financial-cpt-93015-price",
+      "query": "CPT 93015 treadmill stress test price Medicare physician fee schedule",
+      "lens": "financial",
+      "requiredConcepts": [["93015"], ["treadmill stress test", "cardiovascular stress test"], ["Medicare", "physician fee schedule"], ["price", "payment", "allowable"]],
+      "preferredDomains": ["cms.gov"],
+      "expectOfficial": true
+    }
+  ]
+}

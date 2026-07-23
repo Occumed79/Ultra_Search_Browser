@@ -65,6 +65,19 @@ npm run check:pgvector
 npm run smoke:pgvector
 ```
 
+## Search Quality Lab
+
+The repository includes an evaluation-only benchmark for measuring relevance, source diversity, duplicates, stale results, official-source coverage, PDF coverage, nDCG@10, and reciprocal rank.
+
+```bash
+npm run quality:test
+APP_URL=https://ultra-search-browser.onrender.com npm run quality:live
+```
+
+The benchmark and manual relevance grades never feed production ranking. They are test instruments, not a preferred result list or search index. Live reports are written to `artifacts/search-quality/`, and the manual **Search Quality Lab** GitHub workflow uploads both Markdown and JSON reports.
+
+See `quality/README.md` for the benchmark format and grading process.
+
 ## Render deployment
 
 Create a Web Service connected to this repository with:

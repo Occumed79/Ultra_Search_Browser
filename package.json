@@ -11,6 +11,8 @@
     "smoke": "npx --yes tsx scripts/smoke-search.ts",
     "check:pgvector": "npx --yes tsx scripts/check-pgvector.ts",
     "smoke:pgvector": "npx --yes tsx scripts/smoke-pgvector-search.ts",
+    "quality:live": "npx --yes tsx scripts/search-quality-live.ts",
+    "quality:test": "npx --yes tsx --test scripts/search-quality.test.ts",
     "verify": "npm run typecheck && npm run test:settings && npm run build",
     "test:search": "npx --yes tsx --test scripts/*.test.ts",
     "test:settings": "npm run test:search"
