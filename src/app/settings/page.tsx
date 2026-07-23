@@ -25,7 +25,7 @@ type CapabilityKey = 'database' | 'searxng' | 'localEmbeddings' | 'ocr'
 type Capabilities = Record<CapabilityKey, { configured: boolean; label: string }>
 type BooleanSetting = 'autoSummarize' | 'safeSearch' | 'openInNewTab' | 'showFavicons' | 'showDescriptions'
 
-const SOURCE_DESCRIPTIONS: Record<SearchSource, string> = {
+const SOURCE_DESCRIPTIONS: Record<string, string> = {
   google: 'Broad web coverage',
   bing: 'Independent web index',
   duckduckgo: 'Privacy-focused web results',
@@ -165,7 +165,7 @@ export default function SettingsPage() {
                   >
                     <div>
                       <p className="text-[13px] font-medium text-white/80">{source.label}</p>
-                      <p className="mt-0.5 text-[11px] text-white/35">{SOURCE_DESCRIPTIONS[source.value]}</p>
+                      <p className="mt-0.5 text-[11px] text-white/35">{SOURCE_DESCRIPTIONS[source.value] ?? 'Search source'}</p>
                     </div>
                     <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${selected ? 'bg-teal-300 shadow-[0_0_12px_rgba(94,234,212,0.55)]' : 'bg-white/15'}`} />
                   </button>
@@ -239,10 +239,11 @@ export default function SettingsPage() {
               {runtimeItems.map(item => {
                 const capability = capabilities?.[item.key]
                 const enabled = capability?.configured === true
+                const Icon = item.icon
                 return (
                   <div key={item.key} className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
                     <div className={`flex h-9 w-9 items-center justify-center rounded-xl border ${enabled ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/75' : 'border-white/8 bg-white/[0.035] text-white/30'}`}>
-                      <item.icon className="h-4 w-4" />
+                      <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-[12px] font-medium text-white/75">{item.label}</p>
