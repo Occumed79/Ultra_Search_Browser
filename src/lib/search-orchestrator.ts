@@ -1,4 +1,4 @@
-import { calculateCombinedSpamScore, applySpamPenalty } from './anti-spam'
+import { applySpamPenalty, calculateCombinedSpamScore } from './anti-spam'
 import { parseBangs } from './bangs'
 import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
 import { expandQuery, scoreSignals } from './intelligence'
@@ -63,6 +63,13 @@ interface TaskSuccess {
   runtimeMs: number
 }
 
+interface Occurrence {
+  result: ScrapedResult
+  sources: Set<string>
+  queries: Set<string>
+  purposes: Set<QueryPurpose>
+}
+
 function withTimeout<T>(promise: Promise<T>, milliseconds: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out`)), milliseconds)
@@ -84,7 +91,8 @@ function normalizeUrl(url: string): string {
     const parsed = new URL(url)
     parsed.hash = ''
     for (const key of Array.from(parsed.searchParams.keys())) {
-      if (key.toLowerCase().startsWith('utm_') || ['fbclid', 'gclid'].includes(key.toLowerCase())) {
+      const lowered = key.toLowerCase()
+      if (lowered.startsWith('utm_') || lowered === 'fbclid' || lowered === 'gclid') {
         parsed.searchParams.delete(key)
       }
     }
@@ -94,17 +102,16 @@ function normalizeUrl(url: string): string {
   }
 }
 
-function normalizeResult(result: ScrapedResult, source: string): ScrapedResult | null {
+function normalizeResult(result: ScrapedResult, fallbackSource: string): ScrapedResult | null {
   if (!result?.title || !result?.url) return null
   try {
     const url = normalizeUrl(result.url)
-    const domain = result.domain || new URL(url).hostname.replace(/^www\./, '')
     return {
       ...result,
       url,
-      domain,
+      domain: result.domain || new URL(url).hostname.replace(/^www\./, ''),
       description: result.description || '',
-      source: result.source || source,
+      source: result.source || fallbackSource,
       rank: Number.isFinite(result.rank) ? result.rank : 1,
       score: Number.isFinite(result.score) ? result.score : 0,
     }
@@ -113,31 +120,32 @@ function normalizeResult(result: ScrapedResult, source: string): ScrapedResult |
   }
 }
 
-function reconstructedQuery(operators: OperatorsResult, fallback: string): string {
-  const terms = [...operators.exactPhrases, operators.cleanQuery].filter(Boolean)
-  return terms.join(' ').replace(/\s+/g, ' ').trim() || fallback.trim()
+function reconstructQuery(operators: OperatorsResult, fallback: string): string {
+  return [...operators.exactPhrases, operators.cleanQuery]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim() || fallback.trim()
 }
 
-function resolveLens(requestedLens: SearchLens, forcedVertical?: string): SearchLens {
-  return forcedVertical && VALID_LENSES.has(forcedVertical as SearchLens)
-    ? forcedVertical as SearchLens
-    : requestedLens
+function resolveLens(requested: SearchLens, forced?: string): SearchLens {
+  return forced && VALID_LENSES.has(forced as SearchLens) ? forced as SearchLens : requested
 }
 
 function applyOperatorFilters(results: ScrapedResult[], operators: OperatorsResult): ScrapedResult[] {
   return results.filter(result => {
     const domain = result.domain.toLowerCase().replace(/^www\./, '')
-    const haystack = `${result.title} ${result.description} ${result.url}`.toLowerCase()
     const title = result.title.toLowerCase()
     const url = result.url.toLowerCase()
+    const text = `${result.title} ${result.description} ${result.url}`.toLowerCase()
 
-    if (operators.includedSites.length > 0 && !operators.includedSites.some(site => domain === site || domain.endsWith(`.${site}`))) return false
+    if (operators.includedSites.length && !operators.includedSites.some(site => domain === site || domain.endsWith(`.${site}`))) return false
     if (operators.excludedSites.some(site => domain === site || domain.endsWith(`.${site}`))) return false
-    if (operators.fileTypes.length > 0 && !operators.fileTypes.some(type => url.includes(`.${type.toLowerCase()}`))) return false
+    if (operators.fileTypes.length && !operators.fileTypes.some(type => url.includes(`.${type.toLowerCase()}`))) return false
     if (operators.inTitleTerms.some(term => !title.includes(term.toLowerCase()))) return false
     if (operators.inUrlTerms.some(term => !url.includes(term.toLowerCase()))) return false
-    if (operators.exactPhrases.some(phrase => !haystack.includes(phrase.toLowerCase()))) return false
-    if (operators.excludedTerms.some(term => haystack.includes(term.toLowerCase()))) return false
+    if (operators.exactPhrases.some(phrase => !text.includes(phrase.toLowerCase()))) return false
+    if (operators.excludedTerms.some(term => text.includes(term.toLowerCase()))) return false
     return true
   })
 }
@@ -156,19 +164,17 @@ function lensBonus(result: ScrapedResult, lens: SearchLens): number {
   if (lens === 'procurement' && /due date|deadline|responses due|closing date|currently open|active solicitation/.test(text)) score += 20
   if (lens === 'pricing' && /fee schedule|price|pricing|cost|cash pay|self-pay|rate|chargemaster/.test(text)) score += 28
   if (lens === 'provider' && /clinic|provider|medical center|occupational health|occupational medicine/.test(text)) score += 24
-  if (lens === 'academic' && (/\.edu$/.test(domain) || /journal|abstract|doi|research/.test(text))) score += 24
+  if (lens === 'academic' && (domain.endsWith('.edu') || /journal|abstract|doi|research/.test(text))) score += 24
   if (lens === 'technical' && /github\.com|stackoverflow\.com|documentation|api reference/.test(`${domain} ${text}`)) score += 24
   return score
 }
 
 function purposeBonus(purposes: Set<QueryPurpose>): number {
-  let score = 0
-  if (purposes.has('official')) score += 10
-  if (purposes.has('document')) score += 10
-  if (purposes.has('freshness')) score += 8
-  if (purposes.has('portal')) score += 8
-  if (purposes.has('semantic')) score += 4
-  return score
+  return (purposes.has('official') ? 10 : 0)
+    + (purposes.has('document') ? 10 : 0)
+    + (purposes.has('freshness') ? 8 : 0)
+    + (purposes.has('portal') ? 8 : 0)
+    + (purposes.has('semantic') ? 4 : 0)
 }
 
 function sourceExecutor(source: LiveSearchSource, options: SearchEngineOptions) {
@@ -183,12 +189,15 @@ function sourceExecutor(source: LiveSearchSource, options: SearchEngineOptions) 
 
 async function runLiveTask(task: RetrievalTask, options: SearchEngineOptions): Promise<TaskSuccess> {
   const startedAt = Date.now()
-  const executor = sourceExecutor(task.source, options)
-  const data = await withTimeout(executor(task.query), TASK_TIMEOUT_MS, `${task.source} search`)
+  const data = await withTimeout(
+    sourceExecutor(task.source, options)(task.query),
+    TASK_TIMEOUT_MS,
+    `${task.source} search`
+  )
   const results = data.results
     .map(result => normalizeResult(result, task.source))
     .filter((result): result is ScrapedResult => Boolean(result))
-  if (results.length === 0) throw new Error(`${task.source} returned no parseable results`)
+  if (!results.length) throw new Error(`${task.source} returned no parseable results`)
   return { task, data: { ...data, results }, runtimeMs: Date.now() - startedAt }
 }
 
@@ -200,6 +209,34 @@ function smallWebCategory(lens: SearchLens): string | undefined {
   return undefined
 }
 
+function addResults(
+  occurrences: Map<string, Occurrence>,
+  results: ScrapedResult[],
+  source: string,
+  query: string,
+  purpose: QueryPurpose = 'semantic'
+) {
+  for (const rawResult of results) {
+    const result = normalizeResult(rawResult, source)
+    if (!result) continue
+    const key = normalizeUrl(result.url).toLowerCase()
+    const existing = occurrences.get(key)
+    if (existing) {
+      existing.sources.add(source)
+      existing.queries.add(query)
+      existing.purposes.add(purpose)
+      if (result.score > existing.result.score) existing.result = result
+    } else {
+      occurrences.set(key, {
+        result,
+        sources: new Set([source]),
+        queries: new Set([query]),
+        purposes: new Set([purpose]),
+      })
+    }
+  }
+}
+
 export async function orchestrateSearch(
   rawQuery: string,
   requestedLens: SearchLens,
@@ -207,116 +244,104 @@ export async function orchestrateSearch(
 ): Promise<OrchestratedSearch> {
   const bangs = parseBangs(rawQuery)
   const operators = parseSearchOperators(bangs.cleanQuery || rawQuery)
-  const normalizedQuery = reconstructedQuery(operators, bangs.cleanQuery || rawQuery)
+  const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
   const lens = resolveLens(requestedLens, bangs.forcedVertical)
   const expanded = expandQuery(normalizedQuery, lens)
   const orchestration = buildSearchOrchestrationPlan(normalizedQuery, lens, expanded, operators, plan)
-  const engineOptions: SearchEngineOptions = {
+  const options: SearchEngineOptions = {
     safeSearch: plan.safeSearch,
     preferredLanguage: plan.preferredLanguage,
     region: plan.region,
   }
 
-  const liveSettledPromise = Promise.allSettled(
-    orchestration.tasks.map(task => runLiveTask(task, engineOptions))
-  )
+  const livePromise = Promise.allSettled(orchestration.tasks.map(task => runLiveTask(task, options)))
   const keywordPromise = plan.useMemory
     ? withTimeout(keywordSearchStoredResults(normalizedQuery, lens, operators, 20), MEMORY_TIMEOUT_MS, 'keyword memory search').catch(() => [] as ScrapedResult[])
     : Promise.resolve([] as ScrapedResult[])
   const vectorPromise = plan.useMemory
     ? withTimeout(vectorSearchStoredResults(normalizedQuery, lens, 12), MEMORY_TIMEOUT_MS, 'vector memory search').catch(() => [] as ScrapedResult[])
     : Promise.resolve([] as ScrapedResult[])
-  const smallWebPromise = plan.useMemory && process.env.DATABASE_URL
+  const smallWebPromise: Promise<Awaited<ReturnType<typeof searchSmallWeb>>> = plan.useMemory && Boolean(process.env.DATABASE_URL)
     ? withTimeout(searchSmallWeb(normalizedQuery, smallWebCategory(lens), 10), MEMORY_TIMEOUT_MS, 'small web search').catch(() => [])
     : Promise.resolve([])
-  const useMarginalia = process.env.ENABLE_MARGINALIA !== 'false' && ['web', 'provider', 'pricing', 'academic', 'news'].includes(lens)
+  const useMarginalia = process.env.ENABLE_MARGINALIA !== 'false'
+    && ['web', 'provider', 'pricing', 'academic', 'news'].includes(lens)
   const marginaliaPromise = useMarginalia
-    ? withTimeout(searchMarginalia(normalizedQuery), OPTIONAL_SOURCE_TIMEOUT_MS, 'Marginalia search').catch(() => ({ text: '', results: [] as ScrapedResult[] }))
+    ? withTimeout(searchMarginalia(normalizedQuery), OPTIONAL_SOURCE_TIMEOUT_MS, 'Marginalia search')
+        .catch(() => ({ text: '', results: [] as ScrapedResult[] }))
     : Promise.resolve({ text: '', results: [] as ScrapedResult[] })
 
   const [liveSettled, memoryKeyword, memoryVector, smallWebEntries, marginalia] = await Promise.all([
-    liveSettledPromise,
+    livePromise,
     keywordPromise,
     vectorPromise,
     smallWebPromise,
     marginaliaPromise,
   ])
 
+  const occurrences = new Map<string, Occurrence>()
   const sourceRuns: SourceRunDiagnostic[] = []
+  const sourceLabels = new Set<string>()
   const failures: string[] = []
   const rawTexts: string[] = []
-  const sourceLabels = new Set<string>()
-  const occurrences = new Map<string, { result: ScrapedResult; sources: Set<string>; queries: Set<string>; purposes: Set<QueryPurpose> }>()
 
-  for (let index = 0; index < liveSettled.length; index += 1) {
-    const settled = liveSettled[index]
+  liveSettled.forEach((settled, index) => {
     const task = orchestration.tasks[index]
     if (settled.status === 'rejected') {
       const error = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
       failures.push(`${task.source}: ${error}`)
-      sourceRuns.push({ source: task.source, query: task.query, purpose: task.purpose, status: 'failed', resultCount: 0, runtimeMs: TASK_TIMEOUT_MS, error })
-      continue
+      sourceRuns.push({
+        source: task.source,
+        query: task.query,
+        purpose: task.purpose,
+        status: 'failed',
+        resultCount: 0,
+        runtimeMs: TASK_TIMEOUT_MS,
+        error,
+      })
+      return
     }
 
     const { data, runtimeMs } = settled.value
-    sourceRuns.push({ source: task.source, query: task.query, purpose: task.purpose, status: 'success', resultCount: data.results.length, runtimeMs })
+    sourceRuns.push({
+      source: task.source,
+      query: task.query,
+      purpose: task.purpose,
+      status: 'success',
+      resultCount: data.results.length,
+      runtimeMs,
+    })
     sourceLabels.add(`${task.source} · ${task.purpose}`)
     if (data.text.trim()) rawTexts.push(data.text)
+    addResults(occurrences, data.results, task.source, task.query, task.purpose)
+  })
 
-    for (const result of data.results) {
-      const key = normalizeUrl(result.url).toLowerCase()
-      const existing = occurrences.get(key)
-      if (existing) {
-        existing.sources.add(task.source)
-        existing.queries.add(task.query)
-        existing.purposes.add(task.purpose)
-        if ((result.score || 0) > (existing.result.score || 0)) existing.result = result
-      } else {
-        occurrences.set(key, {
-          result,
-          sources: new Set([task.source]),
-          queries: new Set([task.query]),
-          purposes: new Set([task.purpose]),
-        })
-      }
-    }
-  }
+  addResults(occurrences, memoryKeyword, 'memory-keyword', normalizedQuery)
+  addResults(occurrences, memoryVector, 'memory-vector', normalizedQuery)
+  addResults(occurrences, marginalia.results, 'marginalia', normalizedQuery)
+  addResults(
+    occurrences,
+    smallWebEntries.map((entry, index) => ({
+      title: entry.title,
+      url: entry.url,
+      description: entry.description || entry.content || '',
+      domain: (() => {
+        try { return new URL(entry.url).hostname.replace(/^www\./, '') } catch { return '' }
+      })(),
+      source: 'small-web',
+      rank: index + 1,
+      score: 0,
+    })),
+    'small-web',
+    normalizedQuery
+  )
 
-  const addMemoryResults = (results: ScrapedResult[], source: string) => {
-    for (const result of results) {
-      const normalized = normalizeResult(result, source)
-      if (!normalized) continue
-      const key = normalizeUrl(normalized.url).toLowerCase()
-      const existing = occurrences.get(key)
-      if (existing) {
-        existing.sources.add(source)
-        existing.queries.add(normalizedQuery)
-      } else {
-        occurrences.set(key, {
-          result: normalized,
-          sources: new Set([source]),
-          queries: new Set([normalizedQuery]),
-          purposes: new Set(['semantic']),
-        })
-      }
-    }
-    if (results.length > 0) sourceLabels.add(source)
-  }
+  if (memoryKeyword.length) sourceLabels.add('memory-keyword')
+  if (memoryVector.length) sourceLabels.add('memory-vector')
+  if (smallWebEntries.length) sourceLabels.add('small-web')
+  if (marginalia.results.length) sourceLabels.add('marginalia')
 
-  addMemoryResults(memoryKeyword, 'memory-keyword')
-  addMemoryResults(memoryVector, 'memory-vector')
-  addMemoryResults(marginalia.results, 'marginalia')
-  addMemoryResults(smallWebEntries.map((entry, index) => ({
-    title: entry.title,
-    url: entry.url,
-    description: entry.description || entry.content || '',
-    domain: (() => { try { return new URL(entry.url).hostname.replace(/^www\./, '') } catch { return '' } })(),
-    source: 'small-web',
-    rank: index + 1,
-    score: 0,
-  })), 'small-web')
-
-  let results = Array.from(occurrences.values()).map(({ result, sources, queries, purposes }) => {
+  let results: ScrapedResult[] = Array.from(occurrences.values()).map(({ result, sources, queries, purposes }) => {
     const signalScore = scoreSignals(`${result.title} ${result.description}`, result.url)
       .reduce((total, signal) => total + signal.score, 0)
     const overlap = Math.max(0, sources.size - 1) * 12 + Math.max(0, queries.size - 1) * 6
@@ -339,11 +364,20 @@ export async function orchestrateSearch(
   try {
     const semantic = rerankResults(
       normalizedQuery,
-      results.map(result => ({ id: result.url, text: `${result.title} ${result.description}`, url: result.url, title: result.title, source: result.source })),
+      results.map(result => ({
+        id: result.url,
+        text: `${result.title} ${result.description}`,
+        url: result.url,
+        title: result.title,
+        source: result.source,
+      })),
       results.length
     )
     const semanticScores = new Map(semantic.map(item => [item.id, item.score]))
-    results = results.map(result => ({ ...result, score: result.score + Math.max(0, semanticScores.get(result.url) || 0) * 35 }))
+    results = results.map(result => ({
+      ...result,
+      score: result.score + Math.max(0, semanticScores.get(result.url) || 0) * 35,
+    }))
   } catch (error) {
     console.warn('Local semantic reranking failed:', error)
   }
@@ -360,10 +394,8 @@ export async function orchestrateSearch(
 
   if (process.env.DATABASE_URL) {
     try {
-      const preferences = await getDomainPreferences('default')
-      const applied = applyDomainPreferences(results, preferences)
-      results = applied.results as ScrapedResult[]
-      results = results.map(result => {
+      const applied = applyDomainPreferences(results, await getDomainPreferences('default'))
+      results = (applied.results as ScrapedResult[]).map(result => {
         const adjustment = applied.adjustments.get(result.url)
         return adjustment ? { ...result, score: adjustment.adjustedScore } : result
       })
