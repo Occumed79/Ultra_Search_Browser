@@ -30,8 +30,9 @@ async function getAdapter(): Promise<VectorStoreAdapter | null> {
   adapterPromise = (async () => {
     try {
       const adapter = createVectorStoreAdapter('pgvector', databaseUrl)
-      if ('initialize' in adapter && typeof adapter.initialize === 'function') {
-        await adapter.initialize()
+      const initializable = adapter as VectorStoreAdapter & { initialize?: () => Promise<void> }
+      if (typeof initializable.initialize === 'function') {
+        await initializable.initialize()
       }
       return adapter
     } catch (error) {
