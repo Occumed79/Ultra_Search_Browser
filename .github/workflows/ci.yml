@@ -28,7 +28,23 @@ jobs:
         run: npm ci --silent
 
       - name: Type-check
-        run: npm run typecheck
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck > typecheck.log 2>&1
+
+      - name: Upload TypeScript diagnostics
+        if: steps.typecheck.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: typecheck-diagnostics
+          path: typecheck.log
+          if-no-files-found: error
+
+      - name: Fail on TypeScript errors
+        if: steps.typecheck.outcome == 'failure'
+        run: |
+          cat typecheck.log
+          exit 1
 
       - name: Settings and search tests
         run: npm run test:settings
