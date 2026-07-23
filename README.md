@@ -1,12 +1,11 @@
 # Ultra Search Browser
 
-Ultra Search Browser is a focused research search app that combines multiple public web engines, query expansion, lens-aware ranking, asynchronous document enrichment, optional PostgreSQL search memory, and adapter-backed procurement intelligence from Insight Hub.
+Ultra Search Browser is a focused research search app that combines multiple public web engines, query expansion, lens-aware ranking, asynchronous document enrichment, and optional PostgreSQL search memory.
 
 ## What is live
 
 - Multi-engine search through Google, Bing, and DuckDuckGo scraping
 - Optional self-hosted SearXNG source
-- Optional Insight Hub source for adapter-collected actionable procurement opportunities
 - Web, PDF, Government, Procurement, Pricing, Provider, Technical, News, Legal, Medical, Academic, and Financial lenses
 - Query expansion and lens-specific ranking signals
 - Fast initial results followed by bounded asynchronous enrichment
@@ -25,8 +24,6 @@ The first search response is intentionally fast. Advanced extraction and intelli
 
 Public search engines may rate-limit or change their HTML. The app keeps successful engine results when another selected source fails. For the most stable independent metasearch path, configure a self-hosted SearXNG instance.
 
-For Procurement searches, `INSIGHT_HUB_API_URL` adds Insight Hub's adapter-fed actionable opportunity inventory as one candidate source. Those records are blended with live-web results and must compete on relevance; they are not automatically placed first.
-
 ## Local setup
 
 ```bash
@@ -42,7 +39,6 @@ Open `http://localhost:3000`.
 | --- | --- | --- |
 | `DATABASE_URL` | No | PostgreSQL persistence, bookmarks, history, domain preferences, and pgvector retrieval |
 | `SEARXNG_URL` | No | Enables the SearXNG source |
-| `INSIGHT_HUB_API_URL` | No | Enables adapter-backed actionable procurement results from the deployed Insight Hub API; use the service origin, with or without `/api` |
 | `ENABLE_LOCAL_EMBEDDINGS=true` | No | Enables the local MiniLM embedding model; otherwise hash-based 384-dimensional embeddings are used |
 | `ENABLE_OCR=true` | No | Enables Tesseract OCR; disabled by default because it is resource intensive |
 
