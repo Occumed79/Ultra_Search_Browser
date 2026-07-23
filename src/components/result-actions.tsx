@@ -114,6 +114,7 @@ export function ResultActions({ url, resultId, domain }: ResultActionsProps) {
   async function saveBookmark() {
     setLoading(true)
     setMessage(null)
+    let persisted = false
 
     try {
       const response = await fetch('/api/bookmarks', {
@@ -123,28 +124,22 @@ export function ResultActions({ url, resultId, domain }: ResultActionsProps) {
       })
 
       if (response.ok) {
+        persisted = true
         showMessage('Bookmarked')
-        return
-      }
-
-      if (response.status !== 501) {
+      } else if (response.status !== 501) {
         const payload = (await response.json().catch(() => null)) as { error?: string } | null
         throw new Error(payload?.error || 'Bookmark could not be saved')
       }
     } catch {
-      // The bookmark still remains useful when persistent storage is temporarily unavailable.
+      // Fall through to browser storage so the action still succeeds for the user.
     } finally {
-      try {
-        if (!persistentActionsEnabled) {
+      if (!persisted) {
+        try {
           saveLocalBookmark(url, domain)
           showMessage('Saved locally')
-        } else if (!message) {
-          // A database request may fail even when capability detection previously succeeded.
-          saveLocalBookmark(url, domain)
-          showMessage('Saved locally')
+        } catch {
+          showMessage('Failed')
         }
-      } catch {
-        showMessage('Failed')
       }
       setLoading(false)
     }
