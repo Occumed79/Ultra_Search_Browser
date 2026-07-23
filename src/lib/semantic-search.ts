@@ -33,7 +33,6 @@ export function generateEmbedding(text: string): number[] {
     wordFreq[word] = (wordFreq[word] || 0) + 1
   })
 
-  // Create a fixed-size embedding based on word frequencies
   const embedding = new Array(128).fill(0)
   const uniqueWords = Object.keys(wordFreq)
 
@@ -43,7 +42,6 @@ export function generateEmbedding(text: string): number[] {
     embedding[index] = Math.min(1, wordFreq[word] / Math.max(words.length, 1))
   })
 
-  // Normalize
   const magnitude = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0))
   if (magnitude > 0) {
     return embedding.map(val => val / magnitude)
@@ -134,8 +132,18 @@ export function scoreLexicalRelevance(
   const normalizedQuery = normalizeSearchText(query)
   const normalizedCombined = normalizeSearchText(combinedText)
   const exactPhrase = normalizedQuery.length >= 5 && normalizedCombined.includes(normalizedQuery) ? 1 : 0
+  const completeCoverage = bodyCoverage === 1 ? 1 : 0
 
-  const score = bodyCoverage * 0.55 + titleCoverage * 0.3 + exactPhrase * 0.15
+  // Curved coverage sharply separates broad one- or two-word matches from
+  // results that satisfy most of the user's concepts. Complete coverage is
+  // rewarded independently so a highly specific result can beat a generic
+  // authoritative homepage even when the exact phrase is not contiguous.
+  const score =
+    Math.pow(bodyCoverage, 1.4) * 0.5
+    + Math.pow(titleCoverage, 1.6) * 0.25
+    + completeCoverage * 0.2
+    + exactPhrase * 0.05
+
   return Math.max(0, Math.min(1, score))
 }
 
@@ -175,13 +183,11 @@ export class BM25Index {
       docLength: words.length,
     })
 
-    // Update document frequencies
     const uniqueWords = new Set(words)
     uniqueWords.forEach(word => {
       this.docFreqs.set(word, (this.docFreqs.get(word) || 0) + 1)
     })
 
-    // Update average document length
     this.totalDocs++
     const totalLength = Array.from(this.documents.values()).reduce((sum, doc) => sum + doc.docLength, 0)
     this.avgDocLength = totalLength / this.totalDocs
@@ -240,7 +246,7 @@ export function cosineSimilarity(vec1: number[], vec2: number[]): number {
 export class HybridSearchIndex {
   private bm25Index: BM25Index
   private vectors: Map<string, DocumentVector>
-  private alpha: number // Weight for BM25 (0-1)
+  private alpha: number
 
   constructor(alpha = 0.5) {
     this.bm25Index = new BM25Index()
@@ -258,10 +264,7 @@ export class HybridSearchIndex {
     topK = 10,
     bm25Params?: BM25Params
   ): SearchResult[] {
-    // BM25 scores
     const bm25Scores = this.bm25Index.score(query, bm25Params)
-
-    // Vector scores
     const queryEmbedding = generateEmbedding(query)
     const vectorScores = new Map<string, number>()
 
@@ -270,11 +273,8 @@ export class HybridSearchIndex {
       vectorScores.set(id, similarity)
     })
 
-    // Normalize scores
     const maxBM25 = Math.max(...Array.from(bm25Scores.values()), 1)
     const maxVector = Math.max(...Array.from(vectorScores.values()), 1)
-
-    // Combine scores
     const results: SearchResult[] = []
 
     this.vectors.forEach((doc, id) => {
@@ -290,7 +290,6 @@ export class HybridSearchIndex {
       })
     })
 
-    // Sort by combined score and return top K
     return results
       .sort((a, b) => b.score - a.score)
       .slice(0, topK)
@@ -311,7 +310,6 @@ export async function semanticSearch(
 ): Promise<SearchResult[]> {
   const index = new HybridSearchIndex(alpha)
 
-  // Add documents to index
   for (const doc of documents) {
     const embedding = generateEmbedding(doc.text)
     index.addDocument({
@@ -327,7 +325,6 @@ export async function semanticSearch(
     })
   }
 
-  // Perform search
   return index.search(query, topK)
 }
 
