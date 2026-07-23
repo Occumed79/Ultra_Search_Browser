@@ -4,6 +4,7 @@ import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
 import { expandQuery, scoreSignals } from './intelligence'
 import { searchMarginalia } from './marginalia'
 import { dedupeByUrl, keywordSearchStoredResults, vectorSearchStoredResults } from './memory-retrieval'
+import { calculateRankingPrecisionSignals } from './ranking-signals'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
 import { searchGoogleScrape, type SearchEngineOptions } from './search'
 import { buildSearchOrchestrationPlan, type QueryPurpose, type RetrievalTask } from './search-planner'
@@ -374,10 +375,15 @@ export async function orchestrateSearch(
       results.length
     )
     const semanticScores = new Map(semantic.map(item => [item.id, item.score]))
-    results = results.map(result => ({
-      ...result,
-      score: result.score + Math.max(0, semanticScores.get(result.url) || 0) * 35,
-    }))
+    results = results.map(result => {
+      const precision = calculateRankingPrecisionSignals(normalizedQuery, lens, result)
+      return {
+        ...result,
+        score: result.score
+          + Math.max(0, semanticScores.get(result.url) || 0) * 35
+          + precision.totalAdjustment,
+      }
+    })
   } catch (error) {
     console.warn('Local semantic reranking failed:', error)
   }
