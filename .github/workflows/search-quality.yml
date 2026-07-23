@@ -1,6 +1,14 @@
 name: Search Quality Lab
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - quality/**
+      - src/lib/search-quality.ts
+      - scripts/search-quality-live.ts
+      - scripts/search-quality.test.ts
+      - .github/workflows/search-quality.yml
   workflow_dispatch:
     inputs:
       app_url:
@@ -48,13 +56,14 @@ jobs:
 
       - name: Run live Search Quality Lab
         env:
-          APP_URL: ${{ inputs.app_url }}
-          QUALITY_LIMIT: ${{ inputs.limit }}
+          APP_URL: ${{ inputs.app_url || 'https://ultra-search-browser.onrender.com' }}
+          QUALITY_LIMIT: ${{ inputs.limit || '24' }}
           QUALITY_CONCURRENCY: '2'
-          QUALITY_STRICT: ${{ inputs.strict }}
+          QUALITY_STRICT: ${{ inputs.strict || 'false' }}
         run: |
-          if [ "${{ inputs.lenses }}" != "all" ]; then
-            export QUALITY_LENSES="${{ inputs.lenses }}"
+          LENSES="${{ inputs.lenses || 'all' }}"
+          if [ "$LENSES" != "all" ]; then
+            export QUALITY_LENSES="$LENSES"
           fi
           npm run quality:live
 
