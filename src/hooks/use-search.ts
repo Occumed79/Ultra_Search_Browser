@@ -10,6 +10,7 @@ import {
 } from '@/types/search'
 import { useLocalStorage } from './use-local-storage'
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings, toSearchRequestPreferences } from '@/lib/search-settings'
+import { buildSearchPath, parseSearchUrl } from '@/lib/search-url'
 
 interface UseSearchReturn {
   query: string
@@ -29,20 +30,7 @@ interface UseSearchReturn {
   settings: UserSettings
 }
 
-const VALID_LENSES = new Set<SearchLens>([
-  'web',
-  'pdf',
-  'government',
-  'procurement',
-  'pricing',
-  'provider',
-  'technical',
-  'news',
-  'legal',
-  'medical',
-  'academic',
-  'financial',
-])
+type HistoryMode = 'push' | 'replace' | 'none'
 
 export function useSearch(): UseSearchReturn {
   const [storedSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
@@ -59,9 +47,45 @@ export function useSearch(): UseSearchReturn {
   const [hasSearched, setHasSearched] = useState(false)
   const [searchTime, setSearchTime] = useState(0)
   const searchSequence = useRef(0)
+  const initializedFromUrl = useRef(false)
 
-  const executeSearch = useCallback(async (searchQuery: string, searchLens: SearchLens) => {
-    if (!searchQuery.trim()) return
+  const resetSearch = useCallback(() => {
+    searchSequence.current += 1
+    setQuery('')
+    setLens('web')
+    setIntelligence(null)
+    setScrapedResults([])
+    setIsLoading(false)
+    setIsEnriching(false)
+    setEnrichmentError(null)
+    setError(null)
+    setSuggestions([])
+    setHasSearched(false)
+    setSearchTime(0)
+  }, [])
+
+  const executeSearch = useCallback(async (
+    searchQuery: string,
+    searchLens: SearchLens,
+    historyMode: HistoryMode = 'none'
+  ) => {
+    const normalizedSearchQuery = searchQuery.trim()
+    if (!normalizedSearchQuery) return
+
+    if (historyMode !== 'none') {
+      const nextPath = buildSearchPath(
+        window.location.pathname,
+        window.location.search,
+        normalizedSearchQuery,
+        searchLens,
+        window.location.hash
+      )
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      if (nextPath !== currentPath) {
+        const method = historyMode === 'push' ? 'pushState' : 'replaceState'
+        window.history[method]({}, '', nextPath)
+      }
+    }
 
     const sequence = searchSequence.current + 1
     searchSequence.current = sequence
@@ -75,7 +99,11 @@ export function useSearch(): UseSearchReturn {
       const response = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchQuery, lens: searchLens, settings: toSearchRequestPreferences(settings) }),
+        body: JSON.stringify({
+          query: normalizedSearchQuery,
+          lens: searchLens,
+          settings: toSearchRequestPreferences(settings),
+        }),
       })
 
       const payload = await response.json().catch(() => null) as {
@@ -101,6 +129,8 @@ export function useSearch(): UseSearchReturn {
       if (!payload?.query || !payload.lens || !payload.timestamp) {
         throw new Error('Search failed: the server returned an incomplete response')
       }
+
+      if (searchSequence.current !== sequence) return
 
       const data = {
         query: payload.query,
@@ -184,7 +214,7 @@ export function useSearch(): UseSearchReturn {
         const stored = localStorage.getItem('search_history')
         const history = stored ? (JSON.parse(stored) as Array<Record<string, unknown>>) : []
         const nextEntry = {
-          query: searchQuery,
+          query: normalizedSearchQuery,
           normalized_query: data.query,
           lens: data.lens,
           vertical: data.lens,
@@ -202,35 +232,45 @@ export function useSearch(): UseSearchReturn {
         // Browser storage is an optional fallback; search remains functional without it.
       }
     } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : 'Search failed')
+      if (searchSequence.current === sequence) {
+        setError(searchError instanceof Error ? searchError.message : 'Search failed')
+      }
     } finally {
       if (searchSequence.current === sequence) setIsLoading(false)
     }
   }, [settings])
 
   const performSearch = useCallback(
-    async () => executeSearch(query, lens),
+    async () => executeSearch(query, lens, 'push'),
     [executeSearch, lens, query]
   )
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const requestedQuery = params.get('q')?.trim() ?? ''
-    const requestedLens = params.get('lens') as SearchLens | null
+    const applyUrlState = () => {
+      const requestedSearch = parseSearchUrl(window.location.search)
+      if (!requestedSearch) {
+        resetSearch()
+        return
+      }
 
-    if (!requestedQuery) return
+      setQuery(requestedSearch.query)
+      setLens(requestedSearch.lens)
+      void executeSearch(requestedSearch.query, requestedSearch.lens, 'none')
+    }
 
-    const resolvedLens = requestedLens && VALID_LENSES.has(requestedLens) ? requestedLens : 'web'
-    setQuery(requestedQuery)
-    setLens(resolvedLens)
+    if (!initializedFromUrl.current) {
+      initializedFromUrl.current = true
+      const requestedSearch = parseSearchUrl(window.location.search)
+      if (requestedSearch) {
+        setQuery(requestedSearch.query)
+        setLens(requestedSearch.lens)
+        void executeSearch(requestedSearch.query, requestedSearch.lens, 'none')
+      }
+    }
 
-    params.delete('q')
-    params.delete('lens')
-    const cleanUrl = params.size ? `/?${params.toString()}` : '/'
-    window.history.replaceState({}, '', cleanUrl)
-
-    void executeSearch(requestedQuery, resolvedLens)
-  }, [executeSearch])
+    window.addEventListener('popstate', applyUrlState)
+    return () => window.removeEventListener('popstate', applyUrlState)
+  }, [executeSearch, resetSearch])
 
   return {
     query,
