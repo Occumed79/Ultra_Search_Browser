@@ -6,16 +6,12 @@ import {
   Database,
   Globe,
   Keyboard,
-  Monitor,
-  Moon,
   RotateCcw,
   Settings as SettingsIcon,
   ShieldCheck,
-  Sun,
   Zap,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useTheme } from 'next-themes'
 import { Switch } from '../../components/ui/switch'
 import { useLocalStorage } from '../../hooks/use-local-storage'
 import type { SearchSource, UserSettings } from '../../types/search'
@@ -46,7 +42,6 @@ const BEHAVIOR_OPTIONS: Array<{ key: BooleanSetting; label: string; description:
 ]
 
 export default function SettingsPage() {
-  const { theme, setTheme } = useTheme()
   const [storedSettings, setSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
   const settings = normalizeUserSettings(storedSettings)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
@@ -100,11 +95,9 @@ export default function SettingsPage() {
 
   function resetSettings() {
     setSettings(DEFAULT_USER_SETTINGS)
-    setTheme(DEFAULT_USER_SETTINGS.theme)
     markSaved()
   }
 
-  const currentTheme = theme ?? settings.theme
   const runtimeItems = [
     { key: 'database' as const, label: 'Persistent storage', icon: Database },
     { key: 'searxng' as const, label: 'SearXNG', icon: Globe },
@@ -146,39 +139,6 @@ export default function SettingsPage() {
         </div>
 
         <div className="space-y-5">
-          <section className="glass-surface rounded-[22px] p-5 sm:p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Monitor className="h-5 w-5 text-white/60" />
-              <div>
-                <h2 className="text-[15px] font-semibold text-white/85">Appearance</h2>
-                <p className="text-xs text-white/35">Choose how the interface follows your display.</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {[
-                { value: 'light', icon: Sun, label: 'Light' },
-                { value: 'dark', icon: Moon, label: 'Dark' },
-                { value: 'system', icon: Monitor, label: 'System' },
-              ].map(option => (
-                <button
-                  key={option.value}
-                  onClick={() => {
-                    setTheme(option.value)
-                    updateSetting('theme', option.value as UserSettings['theme'])
-                  }}
-                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-[12px] transition-all ${
-                    currentTheme === option.value
-                      ? 'border-teal-200/25 bg-teal-200/[0.09] text-white/90'
-                      : 'border-white/10 bg-white/[0.035] text-white/50 hover:bg-white/[0.07]'
-                  }`}
-                >
-                  <option.icon className="h-4 w-4" />
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </section>
-
           <section className="glass-surface rounded-[22px] p-5 sm:p-6">
             <div className="mb-4 flex items-center gap-2">
               <Globe className="h-5 w-5 text-white/60" />
