@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
-import { orchestrateSearch } from '../../../lib/search-orchestrator'
+import { orchestrateSearchWithAdapters } from '../../../lib/search-orchestration-with-adapters'
 import { buildGroundedSummary, buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
 import type { SearchLens } from '../../../types/search'
@@ -35,12 +35,13 @@ export async function POST(request: NextRequest) {
       ? body.lens
       : 'web'
     const plan = buildSearchPlan(body.settings)
-    const orchestration = await orchestrateSearch(query, requestedLens, plan)
+    const orchestration = await orchestrateSearchWithAdapters(query, requestedLens, plan)
     const noExternalResults = orchestration.diagnostics.successfulLiveTasks === 0
       && orchestration.diagnostics.memoryKeywordMatches === 0
       && orchestration.diagnostics.memoryVectorMatches === 0
       && orchestration.diagnostics.smallWebMatches === 0
       && orchestration.diagnostics.marginaliaMatches === 0
+      && orchestration.diagnostics.insightHubMatches === 0
 
     if (orchestration.results.length === 0 && noExternalResults && orchestration.failures.length > 0) {
       return NextResponse.json(
@@ -75,6 +76,11 @@ export async function POST(request: NextRequest) {
     const runtimeMs = Date.now() - startedAt
     let searchRunId: string | null = null
     const persistedResultIds = new Map<string, string>()
+    const enabledSources = [
+      ...plan.liveSources,
+      ...(plan.useMemory ? ['memory'] : []),
+      ...(orchestration.diagnostics.insightHubConfigured ? ['insight-hub-adapters'] : []),
+    ]
 
     try {
       searchRunId = await insertSearchRun({
@@ -89,7 +95,7 @@ export async function POST(request: NextRequest) {
           parsed: orchestration.operators,
           variants: orchestration.diagnostics.queryVariants,
           failures: orchestration.failures,
-          enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+          enabledSources,
         },
       })
 
@@ -146,7 +152,7 @@ export async function POST(request: NextRequest) {
       confidence: intelligence.confidence,
       diagnostics: {
         runtimeMs,
-        enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+        enabledSources,
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
         ...orchestration.diagnostics,
