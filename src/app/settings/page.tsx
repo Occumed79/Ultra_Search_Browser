@@ -12,6 +12,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { DomainPreferencesPanel } from '../../components/domain-preferences-panel'
 import { Switch } from '../../components/ui/switch'
 import { useLocalStorage } from '../../hooks/use-local-storage'
 import type { SearchSource, UserSettings } from '../../types/search'
@@ -225,6 +226,8 @@ export default function SettingsPage() {
               <Switch checked={settings.keyboardShortcuts} onCheckedChange={value => updateSetting('keyboardShortcuts', value)} />
             </div>
           </section>
+
+          <DomainPreferencesPanel />
 
           <section className="glass-surface rounded-[22px] p-5 sm:p-6">
             <div className="mb-4 flex items-center gap-2">
