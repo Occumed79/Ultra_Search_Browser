@@ -152,21 +152,13 @@ async function runWithConcurrency<T, R>(
   return results
 }
 
-function buildSummary(reports: CaseReport[]) {
+function buildSummary(reports: CaseReport[], selectedCases: SearchQualityBenchmarkCase[]) {
   const successful = reports.filter(report => report.status === 'success' && report.evaluation)
   const evaluations = successful.map(report => report.evaluation!)
-  const officialExpected = successful.filter(report => {
-    const benchmark = selectedCases.find(item => item.id === report.id)
-    return benchmark?.expectOfficial
-  })
-  const pdfExpected = successful.filter(report => {
-    const benchmark = selectedCases.find(item => item.id === report.id)
-    return benchmark?.expectPdf
-  })
-  const preferredExpected = successful.filter(report => {
-    const benchmark = selectedCases.find(item => item.id === report.id)
-    return Boolean(benchmark?.preferredDomains?.length)
-  })
+  const caseById = new Map(selectedCases.map(item => [item.id, item]))
+  const officialExpected = successful.filter(report => caseById.get(report.id)?.expectOfficial)
+  const pdfExpected = successful.filter(report => caseById.get(report.id)?.expectPdf)
+  const preferredExpected = successful.filter(report => Boolean(caseById.get(report.id)?.preferredDomains?.length))
   const judged = evaluations.filter(evaluation => evaluation.ndcgAt10 !== null)
 
   return {
@@ -198,10 +190,12 @@ function buildSummary(reports: CaseReport[]) {
   }
 }
 
+type QualitySummary = ReturnType<typeof buildSummary>
+
 function markdownReport(
   generatedAt: string,
   health: Record<string, unknown>,
-  summary: ReturnType<typeof buildSummary>,
+  summary: QualitySummary,
   reports: CaseReport[]
 ): string {
   const lines = [
@@ -237,8 +231,7 @@ function markdownReport(
   ]
 
   for (const report of reports) {
-    lines.push(`### ${report.id}`)
-    lines.push('')
+    lines.push(`### ${report.id}`, '')
     lines.push(`- **Lens:** ${report.lens}`)
     lines.push(`- **Query:** ${report.query}`)
     lines.push(`- **Status:** ${report.status}`)
@@ -272,17 +265,17 @@ function markdownReport(
   return `${lines.join('\n')}\n`
 }
 
-const benchmark = await readJson<BenchmarkFile>('quality/benchmark.json')
-const judgmentFile = await readJson<JudgmentFile>('quality/judgments.json')
-const requestedLenses = (process.env.QUALITY_LENSES || '')
-  .split(',')
-  .map(value => value.trim())
-  .filter(Boolean)
-const selectedCases = benchmark.cases
-  .filter(item => !requestedLenses.length || requestedLenses.includes(item.lens))
-  .slice(0, QUALITY_LIMIT)
-
 async function main() {
+  const benchmark = await readJson<BenchmarkFile>('quality/benchmark.json')
+  const judgmentFile = await readJson<JudgmentFile>('quality/judgments.json')
+  const requestedLenses = (process.env.QUALITY_LENSES || '')
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+  const selectedCases = benchmark.cases
+    .filter(item => !requestedLenses.length || requestedLenses.includes(item.lens))
+    .slice(0, QUALITY_LIMIT)
+
   console.log(`Running Search Quality Lab against ${APP_URL}`)
   console.log(`Cases: ${selectedCases.length}; concurrency: ${QUALITY_CONCURRENCY}`)
 
@@ -297,7 +290,7 @@ async function main() {
   })
 
   const generatedAt = new Date().toISOString()
-  const summary = buildSummary(reports)
+  const summary = buildSummary(reports, selectedCases)
   const report = {
     generatedAt,
     target: APP_URL,
@@ -320,7 +313,14 @@ async function main() {
   if (severeFailure || strictFailure) process.exitCode = 1
 }
 
-main().catch(error => {
-  console.error(error instanceof Error ? error.stack || error.message : error)
+main().catch(async error => {
+  const message = error instanceof Error ? error.stack || error.message : String(error)
+  console.error(message)
+  try {
+    await mkdir(ARTIFACT_DIR, { recursive: true })
+    await writeFile(path.join(ARTIFACT_DIR, 'search-quality-error.txt'), `${message}\n`)
+  } catch {
+    // Keep the original failure as the process outcome.
+  }
   process.exit(1)
 })
