@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: production-search-smoke
@@ -26,10 +27,57 @@ jobs:
         with:
           node-version: 22
 
+      - name: Publish pending production status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "{\"state\":\"pending\",\"context\":\"production-search-smoke\",\"description\":\"Waiting for Render and testing live search\",\"target_url\":\"${TARGET_URL}\"}"
+
       - name: Wait for Render and test live search
+        id: smoke
+        continue-on-error: true
         env:
           APP_URL: https://ultra-search-browser.onrender.com
           EXPECTED_COMMIT: ${{ github.sha }}
           MAX_WAIT_MS: 720000
           POLL_INTERVAL_MS: 15000
         run: node scripts/production-smoke.mjs
+
+      - name: Publish successful production status
+        if: steps.smoke.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"production-search-smoke\",\"description\":\"Render serves this commit and live searches passed\",\"target_url\":\"${TARGET_URL}\"}"
+
+      - name: Publish failed production status
+        if: steps.smoke.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "{\"state\":\"failure\",\"context\":\"production-search-smoke\",\"description\":\"Render deployment or live search verification failed\",\"target_url\":\"${TARGET_URL}\"}"
+
+      - name: Fail workflow when production verification failed
+        if: steps.smoke.outcome != 'success'
+        run: exit 1
