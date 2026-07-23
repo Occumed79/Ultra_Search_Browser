@@ -3,6 +3,7 @@ import { searchBingHTML, searchDuckDuckGo, type SearchEngineOptions } from './se
 import type { ScrapedResult } from '../types/search'
 
 const FALLBACK_TIMEOUT_MS = 4_500
+const SOURCE_RESULT_LIMIT = 30
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 function extractDomain(url: string): string {
@@ -82,7 +83,7 @@ function mergeResults(resultSets: ScrapedResult[][]): ScrapedResult[] {
     }
   }
 
-  return merged.slice(0, 30).map((result, index) => ({ ...result, rank: index + 1 }))
+  return merged.slice(0, SOURCE_RESULT_LIMIT).map((result, index) => ({ ...result, rank: index + 1 }))
 }
 
 function toSearchPayload(results: ScrapedResult[]) {
