@@ -35,3 +35,10 @@ test('parses DuckDuckGo Lite results and unwraps redirect URLs', () => {
   assert.equal(results[0].url, 'https://example.gov/bids/123')
   assert.equal(results[0].domain, 'example.gov')
 })
+
+test('does not mistake challenge pages for valid search results', () => {
+  const challenge = '<html><body><h1>Verify you are human</h1><p>Complete the CAPTCHA.</p></body></html>'
+
+  assert.equal(parseBingRss(challenge).length, 0)
+  assert.equal(parseDuckDuckGoLite(challenge).length, 0)
+})
