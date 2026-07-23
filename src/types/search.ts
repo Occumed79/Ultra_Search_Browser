@@ -49,6 +49,12 @@ export interface ScrapedResult {
   intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence | LegalIntelligence | MedicalIntelligence | AcademicIntelligence | FinancialIntelligence;
   spamScore?: number;
   spamReasons?: string[];
+  retrieval?: {
+    sources: string[];
+    queries: string[];
+    purposes: string[];
+    overlap: number;
+  };
   extractionDiagnostics?: {
     extractionAttempted: boolean;
     extractionSucceeded: boolean;
