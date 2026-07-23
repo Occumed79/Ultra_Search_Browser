@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseBingRss, parseDuckDuckGoLite } from '../src/lib/resilient-search'
+import { parseBingRss, parseDuckDuckGoLite } from '../src/lib/search-response-parsers'
 
 test('parses Bing RSS search items into ranked results', () => {
   const results = parseBingRss(`
