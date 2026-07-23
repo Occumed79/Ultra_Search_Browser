@@ -4,6 +4,7 @@ import { query as databaseQuery } from '../../../../lib/db'
 import { fetchAndExtractFromURL } from '../../../../lib/document-extraction'
 import { applyDomainPreferences, getDomainPreferences, type DomainPreference } from '../../../../lib/domain-memory'
 import { extractIntelligence } from '../../../../lib/entity-extraction'
+import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { insertPricingFinding } from '../../../../lib/search-storage'
 import { extractPricingFindings } from '../../../../lib/verticals/pricing/extract'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
@@ -152,6 +153,7 @@ export async function POST(request: NextRequest) {
           extractionSucceeded: 0,
           pricingFindingsSaved: 0,
           blockedDomainsRemoved: 0,
+          persistentMemory: { enabled: false, attempted: 0, indexed: 0 },
         },
       })
     }
@@ -244,6 +246,8 @@ export async function POST(request: NextRequest) {
       result.rank = index + 1
     })
 
+    const persistentMemory = await indexResultsInPersistentMemory(enriched, lens, 12, 4_000)
+
     return NextResponse.json({
       query,
       lens,
@@ -254,6 +258,7 @@ export async function POST(request: NextRequest) {
         extractionSucceeded,
         pricingFindingsSaved,
         blockedDomainsRemoved,
+        persistentMemory,
       },
     })
   } catch (error) {
