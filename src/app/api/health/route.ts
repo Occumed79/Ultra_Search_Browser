@@ -13,11 +13,12 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v2',
+    searchPipeline: 'orchestrated-v3-adapter-blend',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
       searxng: Boolean(process.env.SEARXNG_URL),
+      insightHub: Boolean(process.env.INSIGHT_HUB_API_URL),
       localEmbeddings: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
       ocr: process.env.ENABLE_OCR === 'true',
       marginalia: process.env.ENABLE_MARGINALIA !== 'false',
