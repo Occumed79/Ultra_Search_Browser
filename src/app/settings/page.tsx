@@ -1,287 +1,264 @@
-"use client";
+'use client'
 
-import { useState } from "react";
-import { Settings as SettingsIcon, Moon, Sun, Monitor, Globe, Zap, Keyboard, Cpu, Database } from "lucide-react";
-import { Switch } from "../../components/ui/switch";
-import { useTheme } from "next-themes";
-import { useLocalStorage } from "../../hooks/use-local-storage";
-import { UserSettings, SearchSource } from "../../types/search";
-import { DEFAULT_USER_SETTINGS, SEARCH_SOURCE_OPTIONS, normalizeUserSettings } from "../../lib/search-settings";
-import { FEATURE_CAPABILITIES, type FeatureStatus } from "../../lib/feature-capabilities";
+import {
+  CheckCircle2,
+  Cpu,
+  Database,
+  Globe,
+  Keyboard,
+  RotateCcw,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  Zap,
+} from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Switch } from '../../components/ui/switch'
+import { useLocalStorage } from '../../hooks/use-local-storage'
+import type { SearchSource, UserSettings } from '../../types/search'
+import {
+  DEFAULT_USER_SETTINGS,
+  SEARCH_SOURCE_OPTIONS,
+  normalizeUserSettings,
+} from '../../lib/search-settings'
+
+type CapabilityKey = 'database' | 'searxng' | 'localEmbeddings' | 'ocr'
+type Capabilities = Record<CapabilityKey, { configured: boolean; label: string }>
+type BooleanSetting = 'autoSummarize' | 'safeSearch' | 'openInNewTab' | 'showFavicons' | 'showDescriptions'
+
+const SOURCE_DESCRIPTIONS: Record<string, string> = {
+  google: 'Broad web coverage',
+  bing: 'Independent web index',
+  duckduckgo: 'Privacy-focused web results',
+  searxng: 'Self-hosted metasearch source',
+  memory: 'Previously indexed search memory',
+}
+
+const BEHAVIOR_OPTIONS: Array<{ key: BooleanSetting; label: string; description: string }> = [
+  { key: 'autoSummarize', label: 'Search summary', description: 'Summarize the ranked results using their titles and domains' },
+  { key: 'safeSearch', label: 'Safe Search', description: 'Filter explicit result metadata' },
+  { key: 'openInNewTab', label: 'Open in new tab', description: 'Keep Ultra Search open when visiting a result' },
+  { key: 'showFavicons', label: 'Show website icons', description: 'Display a small site icon beside each result' },
+  { key: 'showDescriptions', label: 'Show descriptions', description: 'Display result snippets beneath titles' },
+]
 
 export default function SettingsPage() {
-  const { theme, setTheme } = useTheme();
-  const [storedSettings, setSettings] = useLocalStorage<UserSettings>("user-settings", DEFAULT_USER_SETTINGS);
-  const settings = normalizeUserSettings(storedSettings);
-  const [saved, setSaved] = useState(false);
+  const [storedSettings, setSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
+  const settings = normalizeUserSettings(storedSettings)
+  const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
+  const [saved, setSaved] = useState(false)
+  const savedTimer = useRef<number | null>(null)
 
-  const updateSetting = <K extends keyof UserSettings>(key: K, value: UserSettings[K]) => {
-    setSettings((prev) => normalizeUserSettings({ ...normalizeUserSettings(prev), [key]: value }));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  useEffect(() => {
+    let mounted = true
+    fetch('/api/capabilities', { cache: 'no-store' })
+      .then(async response => {
+        if (!response.ok) throw new Error('Capability status unavailable')
+        return (await response.json()) as Capabilities
+      })
+      .then(data => {
+        if (mounted) setCapabilities(data)
+      })
+      .catch(() => {
+        if (mounted) setCapabilities(null)
+      })
 
-  const toggleSource = (source: SearchSource) => {
-    setSettings((prev) => {
-      const normalized = normalizeUserSettings(prev);
-      if (normalized.defaultSources.includes(source) && normalized.defaultSources.length === 1) return normalized;
-      const sources = normalized.defaultSources.includes(source)
-        ? normalized.defaultSources.filter((s) => s !== source)
-        : [...normalized.defaultSources, source];
-      return normalizeUserSettings({ ...normalized, defaultSources: sources });
-    });
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+    return () => {
+      mounted = false
+      if (savedTimer.current) window.clearTimeout(savedTimer.current)
+    }
+  }, [])
+
+  function markSaved() {
+    setSaved(true)
+    if (savedTimer.current) window.clearTimeout(savedTimer.current)
+    savedTimer.current = window.setTimeout(() => setSaved(false), 1800)
+  }
+
+  function updateSetting<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
+    setSettings(previous => normalizeUserSettings({ ...normalizeUserSettings(previous), [key]: value }))
+    markSaved()
+  }
+
+  function toggleSource(source: SearchSource) {
+    if (source === 'searxng' && capabilities?.searxng.configured === false) return
+
+    setSettings(previous => {
+      const normalized = normalizeUserSettings(previous)
+      if (normalized.defaultSources.includes(source) && normalized.defaultSources.length === 1) return normalized
+      const defaultSources = normalized.defaultSources.includes(source)
+        ? normalized.defaultSources.filter(item => item !== source)
+        : [...normalized.defaultSources, source]
+      return normalizeUserSettings({ ...normalized, defaultSources })
+    })
+    markSaved()
+  }
+
+  function resetSettings() {
+    setSettings(DEFAULT_USER_SETTINGS)
+    markSaved()
+  }
+
+  const runtimeItems = [
+    { key: 'database' as const, label: 'Persistent storage', icon: Database },
+    { key: 'searxng' as const, label: 'SearXNG', icon: Globe },
+    { key: 'localEmbeddings' as const, label: 'Local embeddings', icon: Cpu },
+    { key: 'ocr' as const, label: 'OCR', icon: ShieldCheck },
+  ]
 
   return (
-    <div className="min-h-screen relative">
+    <div className="relative min-h-screen overflow-hidden">
       <div className="liquid-bg">
         <div className="aurora-1" />
         <div className="aurora-2" />
         <div className="aurora-3" />
         <div className="glass-bubble bubble-1" />
         <div className="glass-bubble bubble-2" />
-        <div className="glass-bubble bubble-3" />
       </div>
 
-      <main className="relative z-10 container mx-auto px-4 py-8 max-w-3xl">
-        <div className="flex items-center gap-3 mb-6">
-          <SettingsIcon className="h-6 w-6 text-teal-300/80" />
-          <h1 className="text-2xl font-bold text-white/90">Settings</h1>
-          {saved && (
-            <span className="text-sm text-emerald-300/80 animate-in fade-in">
-              Saved!
-            </span>
-          )}
+      <main className="relative z-10 mx-auto w-full max-w-4xl px-4 pb-16 pt-8 sm:px-6">
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="mb-3 flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.18em] text-teal-200/65">
+              <SettingsIcon className="h-3.5 w-3.5" /> Search preferences
+            </div>
+            <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white/95">Settings</h1>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-white/45">
+              Control the sources, result density, and behaviors that actually affect search.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {saved && (
+              <span className="inline-flex items-center gap-1.5 text-xs text-emerald-200/75">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Saved
+              </span>
+            )}
+            <button className="glass-button text-[11px]" onClick={resetSettings}>
+              <RotateCcw className="h-3.5 w-3.5" /> Reset defaults
+            </button>
+          </div>
         </div>
 
         <div className="space-y-5">
-          {/* Appearance */}
-          <div className="glass-surface rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Monitor className="h-5 w-5 text-white/60" />
-              <h2 className="text-[15px] font-semibold text-white/80">Appearance</h2>
-            </div>
-            <div className="space-y-3">
-              <label className="text-sm text-white/60 block">Theme</label>
-              <div className="flex gap-2">
-                {[
-                  { value: "light", icon: Sun, label: "Light" },
-                  { value: "dark", icon: Moon, label: "Dark" },
-                  { value: "system", icon: Monitor, label: "System" },
-                ].map((option) => (
-                  <button
-                    key={option.value}
-                    onClick={() => {
-                      setTheme(option.value);
-                      updateSetting("theme", option.value as UserSettings["theme"]);
-                    }}
-                    className={`flex items-center gap-2 text-[12px] px-3 py-2 rounded-lg border transition-all ${
-                      theme === option.value
-                        ? 'bg-white/10 border-white/20 text-white/90'
-                        : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/[0.07]'
-                    }`}
-                  >
-                    <option.icon className="h-4 w-4" />
-                    {option.label}
-                  </button>
-                ))}
+          <section className="glass-surface rounded-[22px] p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <Globe className="h-5 w-5 text-white/60" />
+              <div>
+                <h2 className="text-[15px] font-semibold text-white/85">Search sources</h2>
+                <p className="text-xs text-white/35">Only these selected sources run during a search.</p>
               </div>
             </div>
-          </div>
 
-          {/* Sources */}
-          <div className="glass-surface rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Globe className="h-5 w-5 text-white/60" />
-              <h2 className="text-[15px] font-semibold text-white/80">Default Sources</h2>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {SEARCH_SOURCE_OPTIONS.map(source => {
+                const selected = settings.defaultSources.includes(source.value)
+                const unavailable = source.value === 'searxng' && capabilities?.searxng.configured === false
+                return (
+                  <button
+                    key={source.value}
+                    disabled={unavailable}
+                    onClick={() => toggleSource(source.value)}
+                    className={`flex items-center justify-between gap-4 rounded-xl border px-4 py-3 text-left transition-all ${
+                      selected
+                        ? 'border-teal-200/25 bg-teal-200/[0.08]'
+                        : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.055]'
+                    } ${unavailable ? 'cursor-not-allowed opacity-45' : ''}`}
+                  >
+                    <div>
+                      <p className="text-[13px] font-medium text-white/80">{source.label}</p>
+                      <p className="mt-0.5 text-[11px] text-white/35">{SOURCE_DESCRIPTIONS[source.value] ?? 'Search source'}</p>
+                    </div>
+                    <span className={`h-2.5 w-2.5 flex-shrink-0 rounded-full ${selected ? 'bg-teal-300 shadow-[0_0_12px_rgba(94,234,212,0.55)]' : 'bg-white/15'}`} />
+                  </button>
+                )
+              })}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {SEARCH_SOURCE_OPTIONS.map((source) => (
-                <button
-                  key={source.value}
-                  onClick={() => toggleSource(source.value)}
-                  className={`text-[12px] px-3 py-1.5 rounded-full border transition-all ${
-                    settings.defaultSources.includes(source.value)
-                      ? 'bg-white/10 border-white/20 text-white/90'
-                      : 'bg-white/5 border-white/10 text-white/50 hover:bg-white/[0.07]'
-                  }`}
-                >
-                  {source.label}
-                </button>
-              ))}
-            </div>
-            <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-4">
+
+            {capabilities?.searxng.configured === false && (
+              <p className="mt-3 text-[11px] text-white/30">SearXNG is unavailable until the server has a SEARXNG_URL configured.</p>
+            )}
+
+            <div className="mt-5 flex items-center justify-between gap-4 border-t border-white/8 pt-5">
               <div>
                 <p className="text-[13px] font-medium text-white/80">Results per search</p>
-                <p className="text-[12px] text-white/35">Limit the ranked result set returned by the server</p>
+                <p className="text-[11px] text-white/35">Limit the final ranked result set.</p>
               </div>
               <select
                 value={settings.resultsPerPage}
-                onChange={(event) => updateSetting("resultsPerPage", Number(event.target.value))}
-                className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white/70"
+                onChange={event => updateSetting('resultsPerPage', Number(event.target.value))}
+                className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-[12px] text-white/70"
               >
-                {[10, 20, 40, 60].map((count) => <option key={count} value={count}>{count}</option>)}
+                {[10, 20, 40, 60].map(count => <option key={count} value={count}>{count}</option>)}
               </select>
             </div>
-          </div>
+          </section>
 
-          {/* Search Behavior */}
-          <div className="glass-surface rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
+          <section className="glass-surface rounded-[22px] p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2">
               <Zap className="h-5 w-5 text-white/60" />
-              <h2 className="text-[15px] font-semibold text-white/80">Search Behavior</h2>
+              <div>
+                <h2 className="text-[15px] font-semibold text-white/85">Search behavior</h2>
+                <p className="text-xs text-white/35">Tune how results are filtered and displayed.</p>
+              </div>
             </div>
-            <div className="space-y-4">
-              {[
-                { key: 'autoSummarize', label: 'Auto-summarize', desc: 'Build a summary grounded in returned result titles and domains' },
-                { key: 'safeSearch', label: 'Safe Search', desc: 'Filter out explicit content' },
-                { key: 'openInNewTab', label: 'Open in New Tab', desc: 'Open result links in a new tab' },
-                { key: 'showFavicons', label: 'Show Favicons', desc: 'Display website icons in results' },
-                { key: 'showDescriptions', label: 'Show Descriptions', desc: 'Display result descriptions' },
-              ].map((item) => (
-                <div key={item.key} className="flex items-center justify-between">
+            <div className="divide-y divide-white/8">
+              {BEHAVIOR_OPTIONS.map(item => (
+                <div key={item.key} className="flex items-center justify-between gap-4 py-3 first:pt-0 last:pb-0">
                   <div>
                     <p className="text-[13px] font-medium text-white/80">{item.label}</p>
-                    <p className="text-[12px] text-white/35">{item.desc}</p>
+                    <p className="mt-0.5 text-[11px] text-white/35">{item.description}</p>
                   </div>
-                  <Switch
-                    checked={settings[item.key as keyof UserSettings] as boolean}
-                    onCheckedChange={(v) => updateSetting(item.key as keyof UserSettings, v)}
-                  />
+                  <Switch checked={settings[item.key]} onCheckedChange={value => updateSetting(item.key, value)} />
                 </div>
               ))}
             </div>
-          </div>
+          </section>
 
-          {/* Keyboard */}
-          <div className="glass-surface rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Keyboard className="h-5 w-5 text-white/60" />
-              <h2 className="text-[15px] font-semibold text-white/80">Keyboard Shortcuts</h2>
-            </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[13px] font-medium text-white/80">Enable Shortcuts</p>
-                <p className="text-[12px] text-white/35">Use keyboard shortcuts for faster navigation</p>
+          <section className="glass-surface rounded-[22px] p-5 sm:p-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <Keyboard className="mt-0.5 h-5 w-5 text-white/60" />
+                <div>
+                  <h2 className="text-[15px] font-semibold text-white/85">Keyboard shortcut</h2>
+                  <p className="mt-1 text-xs text-white/35">Use Command/Ctrl + K to focus the search box.</p>
+                </div>
               </div>
-              <Switch
-                checked={settings.keyboardShortcuts}
-                onCheckedChange={(v) => updateSetting("keyboardShortcuts", v)}
-              />
+              <Switch checked={settings.keyboardShortcuts} onCheckedChange={value => updateSetting('keyboardShortcuts', value)} />
             </div>
-          </div>
+          </section>
 
-          {/* Advanced Features */}
-          <div className="glass-surface rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
+          <section className="glass-surface rounded-[22px] p-5 sm:p-6">
+            <div className="mb-4 flex items-center gap-2">
               <Cpu className="h-5 w-5 text-white/60" />
-              <h2 className="text-[15px] font-semibold text-white/80">Advanced Features</h2>
-            </div>
-            <div className="space-y-3">
-              {FEATURE_CAPABILITIES.map((feature) => (
-                <div key={feature.id} className="flex items-start justify-between gap-4 p-3 rounded-lg border border-white/5 bg-white/[0.03]">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <p className="font-medium text-[13px] text-white/80">{feature.label}</p>
-                      <StatusBadge status={feature.status} />
-                    </div>
-                    <p className="text-[11px] text-white/35">{feature.description}</p>
-                    {feature.notes && (
-                      <p className="text-[11px] text-white/25 mt-1 italic">{feature.notes}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            <div className="pt-4 mt-4 border-t border-white/5">
-              <p className="text-[13px] font-medium text-white/80 mb-2">Procurement Search Diagnostics</p>
-              <p className="text-[11px] text-white/35 mb-3">
-                Procurement search uses web search with query expansion, PDF extraction, and ranking boosts. Diagnostics are logged to console during searches.
-              </p>
-              <div className="grid grid-cols-1 gap-2 text-[11px]">
-                {[
-                  { color: 'bg-blue-400', text: 'Query Expansion: RFP, RFQ, bid, solicitation, site:.gov, site:.us, PDF' },
-                  { color: 'bg-emerald-400', text: 'PDF Extraction: Automatic for .gov/.us and PDF URLs' },
-                  { color: 'bg-purple-400', text: 'Ranking Boosts: .gov domains, procurement terms, occupational health' },
-                  { color: 'bg-orange-400', text: 'Intelligence: Procurement, pricing, provider extraction' },
-                ].map((item, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${item.color}`}></div>
-                    <span className="text-white/35">{item.text}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Database Configuration */}
-          <div className="glass-surface rounded-xl p-5">
-            <div className="flex items-center gap-2 mb-4">
-              <Database className="h-5 w-5 text-white/60" />
-              <h2 className="text-[15px] font-semibold text-white/80">Database Configuration</h2>
-            </div>
-            <div className="space-y-4">
               <div>
-                <p className="text-[13px] font-medium text-white/80 mb-2">DATABASE_URL (Server-Side Only)</p>
-                <p className="text-[11px] text-white/35 mb-3">
-                  PostgreSQL connection string for pgvector integration. This must be configured as an environment variable on your deployment platform (e.g., Render, Vercel). The browser never sees the raw connection string.
-                </p>
-                <div className="p-3 bg-white/[0.03] rounded-lg border border-white/5">
-                  <p className="text-[11px] text-white/35">
-                    <strong className="text-white/60">Configuration:</strong> Set <code className="bg-white/5 px-1 py-0.5 rounded text-[10px]">DATABASE_URL</code> in your deployment environment variables.
-                  </p>
-                  <p className="text-[11px] text-white/35 mt-2">
-                    <strong className="text-white/60">Example:</strong> <code className="bg-white/5 px-1 py-0.5 rounded text-[10px]">postgresql://user:password@host:port/database</code>
-                  </p>
-                </div>
-                <p className="text-[11px] text-white/25 mt-2">
-                  If DATABASE_URL is not configured, the app uses local in-memory vector storage only.
-                </p>
-              </div>
-              <div className="pt-4 border-t border-white/5">
-                <p className="text-[13px] font-medium text-white/80 mb-2">pgvector Capabilities</p>
-                <p className="text-[11px] text-white/35 mb-3">
-                  When DATABASE_URL is configured, the app automatically initializes the pgvector extension and schema on first use.
-                </p>
-                <div className="grid grid-cols-1 gap-2 text-[11px]">
-                  {[
-                    'Automatic schema initialization',
-                    'Vector similarity search with cosine distance',
-                    'Persistent document storage',
-                  ].map((text, i) => (
-                    <div key={i} className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-blue-400"></div>
-                      <span className="text-white/35">{text}</span>
-                    </div>
-                  ))}
-                </div>
+                <h2 className="text-[15px] font-semibold text-white/85">Deployment capabilities</h2>
+                <p className="text-xs text-white/35">Live status from this running server—not a generic feature roadmap.</p>
               </div>
             </div>
-          </div>
+
+            <div className="grid gap-2 sm:grid-cols-2">
+              {runtimeItems.map(item => {
+                const capability = capabilities?.[item.key]
+                const enabled = capability?.configured === true
+                const Icon = item.icon
+                return (
+                  <div key={item.key} className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
+                    <div className={`flex h-9 w-9 items-center justify-center rounded-xl border ${enabled ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/75' : 'border-white/8 bg-white/[0.035] text-white/30'}`}>
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[12px] font-medium text-white/75">{item.label}</p>
+                      <p className="truncate text-[10px] text-white/30">{capability?.label ?? 'Checking server status'}</p>
+                    </div>
+                    <span className={`rounded-full border px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em] ${enabled ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/70' : 'border-white/10 bg-white/[0.03] text-white/30'}`}>
+                      {capabilities === null ? 'Unknown' : enabled ? 'On' : 'Off'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
         </div>
       </main>
     </div>
-  );
-}
-
-function StatusBadge({ status }: { status: FeatureStatus }) {
-  const styles: Record<FeatureStatus, string> = {
-    active: 'bg-emerald-500/15 text-emerald-300/80 border-emerald-500/20',
-    experimental: 'bg-teal-500/15 text-teal-300/80 border-teal-500/20',
-    scaffold: 'bg-white/5 text-white/40 border-white/10',
-    planned: 'bg-white/5 text-white/40 border-white/10',
-    blocked: 'bg-red-500/15 text-red-300/80 border-red-500/20',
-  };
-  const labels: Record<FeatureStatus, string> = {
-    active: 'Active', experimental: 'Experimental', scaffold: 'Scaffold',
-    planned: 'Planned', blocked: 'Blocked',
-  };
-  return (
-    <span className={`text-[10px] px-2 py-0.5 rounded-full border ${styles[status]}`}>
-      {labels[status]}
-    </span>
-  );
+  )
 }

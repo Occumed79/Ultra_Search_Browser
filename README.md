@@ -1,102 +1,92 @@
 # Ultra Search Browser
 
-A Kagi-style broad search browser with multi-engine aggregation, query intelligence, signal scoring, and structured results — all without API keys.
+Ultra Search Browser is a focused research search app that combines multiple public web engines, query expansion, lens-aware ranking, asynchronous document enrichment, and optional PostgreSQL search memory.
 
-## Features
+## What is live
 
-- **Multi-Engine Aggregation**: Simultaneously scrapes DuckDuckGo, Bing, and Google for maximum coverage
-- **Query Expansion Engine**: Auto-expands queries with synonyms, operators, and lens-specific terms
-- **Search Lenses**: Web, PDF, Government, Procurement, Pricing, Provider, Technical, News, Legal, Medical, Academic, and Financial lenses
-- **Signal Scoring**: Domain authority, document type, and content signals for relevance ranking
-- **Intelligence Objects**: Structured results with organization, opportunity type, due dates, and confidence scores
-- **Document Extraction**: HTML, PDF, DOCX, and image text extraction with entity recognition
-- **OCR Support**: Text extraction from images using Tesseract.js
-- **Vector Storage**: Local in-memory and PostgreSQL pgvector adapters for semantic search
-- **Zero API Keys**: Uses cheerio + web scraping — no paid services required
+- Multi-engine search through Google, Bing, and DuckDuckGo scraping
+- Optional self-hosted SearXNG source
+- Web, PDF, Government, Procurement, Pricing, Provider, Technical, News, Legal, Medical, Academic, and Financial lenses
+- Query expansion and lens-specific ranking signals
+- Fast initial results followed by bounded asynchronous enrichment
+- HTML, PDF, and DOCX text extraction
+- Optional OCR for images and scanned documents
+- Structured intelligence extraction for supported lenses
+- Safe Search, result-count, source-selection, display, and keyboard preferences
+- Search history and bookmarks with browser fallback when PostgreSQL is unavailable
+- PostgreSQL + pgvector persistence and hybrid retrieval when `DATABASE_URL` is configured
+- Domain controls and result feedback when persistent storage is available
+- JSON and CSV result export
 
-## Advanced Features Roadmap
+## Runtime model
 
-### Currently Active
-- **Local BM25 Reranking**: In-memory BM25-style term frequency scoring for result relevance
-- **Document Text Extraction**: HTML, PDF, DOCX, and image text extraction with entity recognition (emails, phones, URLs, dates, monetary values)
-- **PDF Binary Parsing**: Direct binary PDF file parsing using pdf-parse library (8s timeout)
-- **DOCX Binary Parsing**: Direct binary DOCX file parsing using mammoth library (10s timeout)
-- **pgvector Retrieval**: PostgreSQL pgvector integration with pg library (requires DATABASE_URL and pgvector extension)
-- **Intelligence Object Extraction**: Automatic extraction of structured data for procurement, provider, pricing, legal, medical, academic, and financial lenses
-- **Vector Storage**: Local in-memory adapter and PostgreSQL pgvector adapter for semantic search
-- **Procurement Search**: Web search with procurement-focused query expansion (RFP, RFQ, bid, solicitation, site:.gov, site:.us, PDF) and ranking boosts for government domains and procurement terms
-- **Government/PDF Ranking Boosts**: Automatic ranking boosts for .gov domains (+50), .us domains (+30), PDF files (+40), and procurement terms (+25)
-- **Anti-Spam Heuristics**: Rule-based spam detection to downrank ads, trackers, affiliate links, and AI slop
+The first search response is intentionally fast. Advanced extraction and intelligence work runs through `/api/search/enrich`; enriched results replace the initial cards when the request completes. If enrichment fails or times out, the initial results remain usable.
 
-### Experimental (Requires explicit opt-in via environment variables)
-- **Local Embedding Model**: @xenova/transformers with Xenova/all-MiniLM-L6-v2 (requires `ENABLE_LOCAL_EMBEDDINGS=true`, 60s timeout, falls back to hash-based embeddings)
-- **OCR (Optical Character Recognition)**: Text extraction from images using Tesseract.js (requires `ENABLE_OCR=true`, 30s timeout, disabled by default due to performance impact)
-- **Local Pseudo-Vector Reranking**: Hash-based TF-IDF vector approximation for semantic similarity (in-memory, not production-grade embeddings)
-- **Domain Memory (Personalized Results)**: User control to raise, lower, pin, or block domains (requires DATABASE_URL)
-- **SearXNG Integration**: Self-hosted metasearch backbone (requires SEARXNG_URL environment variable)
-- **Marginalia API Integration**: Niche non-commercial content booster (automatically detected when available)
-- **Small Web Enrichment**: Curated RSS/Atom/blog index (requires DATABASE_URL and manual feed configuration)
+Public search engines may rate-limit or change their HTML. The app keeps successful engine results when another selected source fails. For the most stable independent metasearch path, configure a self-hosted SearXNG instance.
 
-*See Settings → Advanced Features for current capability status and runtime notes.*
-
-## Tech Stack
-
-- Next.js 16 (App Router)
-- React 19 + TypeScript
-- Tailwind CSS + Framer Motion
-- Cheerio (server-side scraping)
-- pdf-parse (PDF binary parsing)
-- mammoth (DOCX binary parsing)
-- Tesseract.js (OCR)
-- pg (PostgreSQL client)
-- Radix UI Primitives
-- Geist Font
-
-## Getting Started
+## Local setup
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open `http://localhost:3000`.
 
-**No API keys required.** The app uses web scraping and local algorithms.
+## Environment variables
 
-## Deployment
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | No | PostgreSQL persistence, bookmarks, history, domain preferences, and pgvector retrieval |
+| `SEARXNG_URL` | No | Enables the SearXNG source |
+| `ENABLE_LOCAL_EMBEDDINGS=true` | No | Enables the local MiniLM embedding model; otherwise hash-based 384-dimensional embeddings are used |
+| `ENABLE_OCR=true` | No | Enables Tesseract OCR; disabled by default because it is resource intensive |
 
-### 1. Push to GitHub
+The app does not expose server environment values to the browser. Settings reads only boolean capability status from `/api/capabilities`.
+
+## Verification
 
 ```bash
-git add .
-git commit -m "Ready for deployment"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/ultimate-search-browser.git
-git push -u origin main
+npm run typecheck
+npm run test:settings
+npm run build
 ```
 
-### 2. Deploy to Render
+Or run the complete verification command:
 
-1. Go to [render.com](https://render.com) → **New Web Service**
-2. Connect your GitHub repo
-3. Settings:
-   - **Build Command**: `npm install && npm run build`
-   - **Start Command**: `npm start`
-   - **Plan**: Free
-4. Click **Create Web Service**
+```bash
+npm run verify
+```
 
-Render will auto-deploy on every push to `main`.
+Additional database checks:
 
-### 3. Neon Database (Optional, for pgvector)
+```bash
+npm run check:pgvector
+npm run smoke:pgvector
+```
 
-For persistent vector storage and semantic search using pgvector:
+## Render deployment
 
-1. Go to [neon.tech](https://neon.tech) → Create Project
-2. Copy the connection string
-3. Add to Render as `DATABASE_URL` env var
-4. The app will automatically initialize the pgvector extension and schema on first use
+Create a Web Service connected to this repository with:
 
-**Why Neon?** With Neon + pgvector, you get persistent embeddings and true semantic/hybrid retrieval. The app includes a full PgVectorStoreAdapter implementation with cosine similarity search.
+- **Build command:** `npm install && npm run build`
+- **Start command:** `npm start`
+- **Node version:** 22
+- **Health endpoint:** `/api/health`
+
+Add the optional environment variables above in the Render service settings. Each push to `main` can then deploy automatically.
+
+## Stack
+
+- Next.js 16 App Router
+- React 19 and TypeScript
+- Tailwind CSS
+- Cheerio
+- pdf-parse
+- Mammoth
+- Tesseract.js
+- PostgreSQL and pgvector
+- Radix UI primitives
 
 ## License
 
