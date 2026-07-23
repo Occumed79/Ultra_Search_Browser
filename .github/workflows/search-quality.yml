@@ -141,3 +141,40 @@ jobs:
       - name: Fail workflow when quality evaluation failed
         if: steps.quality.outcome != 'success'
         run: exit 1
+
+  summarize-quality:
+    needs: evaluate-production
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Download quality report
+        id: download
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: search-quality-report-*
+          path: report
+          merge-multiple: true
+
+      - name: Print compact quality diagnostics
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = 'report/search-quality-report.json'
+          if (!fs.existsSync(path)) {
+            console.log('QUALITY_REPORT_MISSING')
+            process.exit(0)
+          }
+          const report = JSON.parse(fs.readFileSync(path, 'utf8'))
+          console.log('QUALITY_SUMMARY ' + JSON.stringify(report.summary))
+          const failures = (report.reports || []).filter(item => item.status === 'failed').slice(0, 8)
+          for (const item of failures) {
+            console.log(`QUALITY_FAILURE ${item.id}: ${item.error || 'unknown failure'}`)
+          }
+          const zeroes = (report.reports || []).filter(item => item.status === 'success' && item.evaluation?.resultCount === 0).slice(0, 8)
+          for (const item of zeroes) {
+            console.log(`QUALITY_ZERO_RESULTS ${item.id}`)
+          }
+          NODE
