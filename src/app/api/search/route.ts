@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
+import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
 import { buildGroundedSummary, buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
@@ -55,6 +56,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    orchestration.results = await applyResultFeedbackRanking(orchestration.results)
+
     const note = orchestration.failures.length > 0
       ? `${orchestration.failures.length} retrieval tasks failed or returned unreadable pages; successful sources were preserved.`
       : undefined
@@ -99,6 +102,7 @@ export async function POST(request: NextRequest) {
             const id = await insertSearchResult({
               search_run_id: searchRunId as string,
               url: result.url,
+              normalized_url: result.url,
               domain: result.domain,
               title: result.title,
               snippet: result.description,
