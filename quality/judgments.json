@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "Optional human relevance judgments used only by the Search Quality Lab. Grades: 3 exact, 2 highly useful, 1 loosely relevant, 0 irrelevant. This file is never read by production search ranking.",
+  "queries": {}
+}
