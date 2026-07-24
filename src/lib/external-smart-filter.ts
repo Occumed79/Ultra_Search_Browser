@@ -74,6 +74,7 @@ interface ProviderResult {
 }
 
 interface ProviderEnvironment {
+  [key: string]: string | undefined
   CEREBRAS_API_KEY?: string
   CEREBRAS_SMART_MODEL?: string
   GROQ_API_KEY?: string
