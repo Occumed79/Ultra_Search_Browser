@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { insertSearchResult } from '../../../../lib/search-storage'
+import { verifiedResultsOnly } from '../../../../lib/verified-results'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
 
 export const dynamic = 'force-dynamic'
@@ -21,15 +22,6 @@ interface ValidationRequest {
 
 function sseEvent(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`
-}
-
-export function verifiedResultsOnly(results: ScrapedResult[]): ScrapedResult[] {
-  return results.filter(result =>
-    result.bucket === 'valid'
-    && result.validation?.status === 'valid'
-    && result.pageValidation?.availability === 'reachable'
-    && ['open', 'active', 'current', 'unknown'].includes(result.pageValidation.lifecycle.status)
-  )
 }
 
 async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens) {
