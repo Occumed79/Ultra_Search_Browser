@@ -98,10 +98,19 @@ async function runSearch({ query, lens, expectExternalSmartFilter }) {
   if (expectExternalSmartFilter && data.diagnostics.smartFilter.externalUsed !== true) {
     throw new Error(`${lens} search did not successfully use Cerebras or Groq: ${JSON.stringify(data.diagnostics.smartFilter).slice(0, 1_500)}`)
   }
+  if (expectExternalSmartFilter) {
+    const attempts = data.diagnostics.smartFilter.providerAttempts
+    const successfulRole = Array.isArray(attempts)
+      && attempts.some(attempt => attempt.status === 'success' && ['primary', 'fallback', 'review'].includes(attempt.role))
+    if (!successfulRole) {
+      throw new Error(`${lens} search did not report a successful provider role: ${JSON.stringify(attempts).slice(0, 1_500)}`)
+    }
+  }
 
   console.log(`\n[${lens}] ${data.results.length} results in ${runtimeMs}ms`)
   console.log(`[${lens}] ${data.diagnostics.attemptedLiveTasks} live tasks; ${data.diagnostics.successfulLiveTasks} succeeded; ${data.diagnostics.failedLiveTasks} failed`)
   console.log(`[${lens}] smart filter: ${data.diagnostics.smartFilter.mode}; externalUsed=${data.diagnostics.smartFilter.externalUsed}`)
+  console.log(`[${lens}] provider attempts: ${JSON.stringify(data.diagnostics.smartFilter.providerAttempts || [])}`)
   console.log(`[${lens}] query variants: ${data.diagnostics.queryVariants.map(item => `${item.purpose}: ${item.query}`).join(' | ')}`)
   for (const result of data.results.slice(0, 3)) {
     console.log(`[${lens}] - ${result.title} — ${result.url}`)
@@ -117,6 +126,14 @@ async function main() {
   const health = await waitForDeployment()
   console.log(`Production deployment ready: ${health.commit}`)
   console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
+
+  if (health.capabilities?.groqSmartFilter === true) {
+    if (!health.capabilities.groqSmartModel || !health.capabilities.groqReviewModel) {
+      throw new Error('Groq is configured but separate smart and review model metadata is missing.')
+    }
+    console.log(`Groq fallback model: ${health.capabilities.groqSmartModel}`)
+    console.log(`Groq review model: ${health.capabilities.groqReviewModel}`)
+  }
 
   const expectExternalSmartFilter = health.capabilities?.cerebrasSmartFilter === true
     || health.capabilities?.groqSmartFilter === true
