@@ -2,12 +2,22 @@ import {
   cosineSimilarity,
   generateLocalEmbedding,
 } from './embeddings'
+import {
+  runExternalSmartFilterPool,
+  type ExternalCandidateDecision,
+  type ExternalProviderAttempt,
+} from './external-smart-filter'
 import { lensCompatibilityAdjustment } from './ranking-signals'
 import { scoreLexicalRelevance } from './semantic-search'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
 export type SmartFilterStatus = 'valid' | 'uncertain' | 'rejected'
-export type SmartFilterMode = 'local-rules' | 'local-transformer'
+export type SmartFilterMode =
+  | 'local-rules'
+  | 'local-transformer'
+  | 'cerebras'
+  | 'groq'
+  | 'cerebras+groq'
 
 export interface SearchIntent {
   originalQuery: string
@@ -21,6 +31,9 @@ export interface SmartFilterDiagnostics {
   mode: SmartFilterMode
   localModelEnabled: boolean
   localModelUsed: boolean
+  externalConfigured: boolean
+  externalUsed: boolean
+  providerAttempts: ExternalProviderAttempt[]
   candidateCount: number
   validCount: number
   uncertainCount: number
@@ -33,6 +46,7 @@ export interface SmartFilterDiagnostics {
 
 export interface SmartFilterOptions {
   useLocalTransformer?: boolean
+  useExternalProviders?: boolean
   semanticCandidateLimit?: number
 }
 
@@ -204,6 +218,66 @@ async function semanticScores(
   return scores
 }
 
+function mergeExternalDecision(
+  local: CandidateDecision,
+  external?: ExternalCandidateDecision
+): CandidateDecision {
+  if (!external) return local
+
+  if (external.status === 'valid') {
+    if (local.status === 'rejected' && external.relevance < 0.72) {
+      return {
+        ...local,
+        status: 'uncertain',
+        relevance: Math.max(local.relevance, external.relevance),
+        reason: external.reason,
+      }
+    }
+    return {
+      ...local,
+      status: 'valid',
+      relevance: Math.max(local.relevance, external.relevance),
+      reason: external.reason,
+    }
+  }
+
+  if (external.status === 'rejected') {
+    if (local.status === 'valid' && local.relevance >= 0.75) {
+      return {
+        ...local,
+        status: 'uncertain',
+        relevance: Math.max(local.relevance, external.relevance),
+        reason: external.reason,
+      }
+    }
+    return {
+      ...local,
+      status: 'rejected',
+      relevance: Math.min(local.relevance, external.relevance),
+      reason: external.reason,
+    }
+  }
+
+  return {
+    ...local,
+    status: 'uncertain',
+    relevance: Math.max(local.relevance, external.relevance),
+    reason: external.reason,
+  }
+}
+
+function existingExternalDecision(result: ScrapedResult): ExternalCandidateDecision | undefined {
+  const validation = result.validation
+  if (!validation) return undefined
+  if (validation.mode === 'local-rules' || validation.mode === 'local-transformer') return undefined
+  return {
+    id: result.rank - 1,
+    status: validation.status,
+    relevance: validation.relevance,
+    reason: validation.reason,
+  }
+}
+
 export async function applySmartFilter(
   query: string,
   lens: SearchLens,
@@ -215,7 +289,7 @@ export async function applySmartFilter(
   const localModelEnabled = options.useLocalTransformer === true
     && process.env.DISABLE_LOCAL_SMART_FILTER !== 'true'
   let localModelUsed = false
-  let modelFailure: string | undefined
+  let localFailure: string | undefined
   let semanticByUrl = new Map<string, number>()
 
   if (localModelEnabled && results.length > 0) {
@@ -227,19 +301,39 @@ export async function applySmartFilter(
       )
       localModelUsed = semanticByUrl.size > 0
     } catch (error) {
-      modelFailure = error instanceof Error ? error.message : String(error)
-      console.warn('Local transformer filter failed; using deterministic full-query filter:', modelFailure)
+      localFailure = error instanceof Error ? error.message : String(error)
+      console.warn('Local transformer filter failed; using deterministic full-query filter:', localFailure)
     }
   }
 
-  const classified = results.map(result => {
-    const decision = classifyLocalCandidate(
-      query,
-      lens,
-      intent,
-      result,
-      semanticByUrl.get(result.url)
-    )
+  const localDecisions = results.map(result => classifyLocalCandidate(
+    query,
+    lens,
+    intent,
+    result,
+    semanticByUrl.get(result.url)
+  ))
+
+  const external = options.useExternalProviders === true
+    ? await runExternalSmartFilterPool(query, lens, intent, results, localDecisions)
+    : {
+        configured: Boolean(process.env.CEREBRAS_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim()),
+        used: false,
+        decisions: new Map<number, ExternalCandidateDecision>(),
+        attempts: [] as ExternalProviderAttempt[],
+      }
+
+  const priorMode = results
+    .map(result => result.validation?.mode)
+    .find(mode => mode && mode !== 'local-rules' && mode !== 'local-transformer')
+  const finalMode: SmartFilterMode = external.used && external.mode
+    ? external.mode
+    : priorMode || (localModelUsed ? 'local-transformer' : 'local-rules')
+  const interpretation = external.interpretation?.trim() || intent.interpretation
+
+  const classified = results.map((result, index) => {
+    const externalDecision = external.decisions.get(index) || existingExternalDecision(result)
+    const decision = mergeExternalDecision(localDecisions[index], externalDecision)
     const statusAdjustment = decision.status === 'valid'
       ? Math.round(decision.relevance * 24)
       : decision.status === 'uncertain'
@@ -254,7 +348,7 @@ export async function applySmartFilter(
         relevance: Number(decision.relevance.toFixed(3)),
         reason: decision.reason,
         matchedConcepts: decision.matchedConcepts,
-        mode: localModelUsed ? 'local-transformer' as const : 'local-rules' as const,
+        mode: externalDecision ? finalMode : (localModelUsed ? 'local-transformer' as const : 'local-rules' as const),
       },
     }
   })
@@ -290,20 +384,28 @@ export async function applySmartFilter(
     .slice(0, displayLimit)
     .map((result, index) => ({ ...result, rank: index + 1 }))
 
+  const providerFailures = external.attempts
+    .filter(attempt => attempt.status === 'failed')
+    .map(attempt => `${attempt.provider}: ${attempt.error}`)
+  const failure = [localFailure, ...providerFailures].filter(Boolean).join(' | ') || undefined
+
   return {
     results: displayed,
     diagnostics: {
-      mode: localModelUsed ? 'local-transformer' : 'local-rules',
+      mode: finalMode,
       localModelEnabled,
       localModelUsed,
+      externalConfigured: external.configured,
+      externalUsed: external.used,
+      providerAttempts: external.attempts,
       candidateCount: results.length,
       validCount: valid.length,
       uncertainCount: uncertain.length,
       rejectedCount: rejected.length,
       displayedCount: displayed.length,
-      interpretation: intent.interpretation,
+      interpretation,
       requiredConcepts: intent.requiredConcepts,
-      failure: modelFailure,
+      failure,
     },
   }
 }
