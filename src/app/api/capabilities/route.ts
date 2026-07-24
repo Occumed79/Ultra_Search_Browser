@@ -44,6 +44,10 @@ export async function GET() {
         ? `Fallback · ${providers.groq.smartModel} · Review · ${providers.groq.reviewModel}`
         : 'Fallback and review smart-filter provider',
     },
+    evidenceValidation: {
+      configured: true,
+      label: 'Deep page inspection, lifecycle detection, entity deduplication, and streaming verification',
+    },
     ocr: {
       configured: process.env.ENABLE_OCR === 'true',
       label: 'Image and scanned-document OCR',
