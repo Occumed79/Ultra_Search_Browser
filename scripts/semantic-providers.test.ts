@@ -5,7 +5,9 @@ import {
   parseCloudflareRerankScores,
 } from '../src/lib/cloudflare-reranker'
 import {
+  geminiResponseSchema,
   parseGeminiIntentPayload,
+  planSemanticIntent,
   semanticIntentCapabilities,
   type SemanticIntentPlan,
 } from '../src/lib/semantic-intent'
@@ -41,6 +43,53 @@ test('Gemini semantic payload preserves complete multi-concept intent', () => {
   assert.equal(plan.requiredConcepts.length, 3)
   assert.ok(plan.searchVariants.some(variant => /Arbeitsmedizin/i.test(variant)))
   assert.deepEqual(semanticBudgets(plan), { variants: 12, tasks: 28 })
+})
+
+test('Gemini response schema excludes unsupported additionalProperties keyword', () => {
+  const schema = geminiResponseSchema() as Record<string, unknown>
+  assert.equal('additionalProperties' in schema, false)
+  assert.equal(schema.type, 'object')
+  assert.ok(Array.isArray(schema.required))
+})
+
+test('Gemini planner sends a supported response schema and parses the response', async () => {
+  let requestBody: Record<string, unknown> | undefined
+  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+    requestBody = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [{
+            text: JSON.stringify({
+              interpretation: 'Find occupational health services.',
+              requiredConcepts: ['occupational health services'],
+              optionalConcepts: [],
+              exclusions: [],
+              geography: [],
+              timeConstraints: [],
+              sourcePreferences: ['official provider pages'],
+              searchVariants: ['occupational medicine services'],
+              suggestedLens: 'web',
+              complexity: 'simple',
+            }),
+          }],
+        },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+
+  const plan = await planSemanticIntent(
+    'occupational health services',
+    'web',
+    { GEMINI_API_KEY: 'test-key' },
+    fetchImpl
+  )
+
+  const generationConfig = requestBody?.generationConfig as Record<string, unknown>
+  const schema = generationConfig.responseSchema as Record<string, unknown>
+  assert.equal('additionalProperties' in schema, false)
+  assert.equal(plan.usedExternal, true)
+  assert.deepEqual(plan.searchVariants, ['occupational medicine services'])
 })
 
 test('semantic provider capabilities require complete credentials', () => {
