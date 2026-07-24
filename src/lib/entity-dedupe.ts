@@ -2,6 +2,7 @@ import type { ScrapedResult, SearchLens } from '../types/search'
 
 export interface EntityDedupeOutcome {
   results: ScrapedResult[]
+  duplicates: ScrapedResult[]
   duplicateCount: number
   groupCount: number
 }
@@ -105,14 +106,31 @@ export function deduplicateEntities(results: ScrapedResult[], lens: SearchLens):
     else groups.push([result])
   }
 
+  const duplicates: ScrapedResult[] = []
   const merged = groups.map(group => {
     const ordered = [...group].sort((left, right) => sourcePriority(right) - sourcePriority(left))
     const primary = ordered[0]
+    const primaryFingerprint = fingerprint(primary, lens)
     const alternateUrls = Array.from(new Set(ordered.slice(1).map(item => item.url)))
     const alternateSources = Array.from(new Set(ordered.slice(1).map(item => item.source)))
     const retrievalSources = Array.from(new Set(ordered.flatMap(item => item.retrieval?.sources || [item.source])))
     const retrievalQueries = Array.from(new Set(ordered.flatMap(item => item.retrieval?.queries || [])))
     const retrievalPurposes = Array.from(new Set(ordered.flatMap(item => item.retrieval?.purposes || [])))
+
+    for (const duplicate of ordered.slice(1)) {
+      duplicates.push({
+        ...duplicate,
+        bucket: 'duplicate',
+        entity: {
+          fingerprint: primaryFingerprint,
+          confirmationCount: group.length,
+          alternateUrls: [primary.url],
+          alternateSources: [primary.source],
+          officialSource: false,
+          duplicateOf: primary.url,
+        },
+      })
+    }
 
     return {
       ...primary,
@@ -124,7 +142,7 @@ export function deduplicateEntities(results: ScrapedResult[], lens: SearchLens):
         overlap: retrievalSources.length,
       },
       entity: {
-        fingerprint: fingerprint(primary, lens),
+        fingerprint: primaryFingerprint,
         confirmationCount: group.length,
         alternateUrls,
         alternateSources,
@@ -136,7 +154,8 @@ export function deduplicateEntities(results: ScrapedResult[], lens: SearchLens):
   merged.sort((left, right) => right.score - left.score)
   return {
     results: merged.map((result, index) => ({ ...result, rank: index + 1 })),
-    duplicateCount: Math.max(0, results.length - merged.length),
+    duplicates,
+    duplicateCount: duplicates.length,
     groupCount: merged.length,
   }
 }
