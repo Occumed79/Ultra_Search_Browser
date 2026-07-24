@@ -1,4 +1,6 @@
+import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,16 +15,22 @@ function deployedCommit(): string {
 
 function healthPayload() {
   const providers = externalSmartFilterCapabilities()
+  const gemini = semanticIntentCapabilities()
+  const cloudflare = cloudflareRerankCapabilities()
 
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v3-smart-filter',
+    searchPipeline: 'orchestrated-v4-semantic-superfilter',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
       searxng: Boolean(process.env.SEARXNG_URL),
       localEmbeddings: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
+      geminiIntentPlanner: gemini.configured,
+      geminiIntentModel: gemini.model,
+      cloudflareReranker: cloudflare.configured,
+      cloudflareRerankModel: cloudflare.model,
       cerebrasSmartFilter: providers.cerebras.configured,
       cerebrasSmartModel: providers.cerebras.model,
       groqSmartFilter: providers.groq.configured,
