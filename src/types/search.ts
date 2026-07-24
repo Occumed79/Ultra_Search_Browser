@@ -60,7 +60,7 @@ export interface ScrapedResult {
     relevance: number;
     reason: string;
     matchedConcepts: string[];
-    mode: "local-rules" | "local-transformer";
+    mode: "local-rules" | "local-transformer" | "cerebras" | "groq" | "cerebras+groq";
   };
   extractionDiagnostics?: {
     extractionAttempted: boolean;
