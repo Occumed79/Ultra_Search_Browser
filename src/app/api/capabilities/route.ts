@@ -25,8 +25,8 @@ export async function GET() {
     groq: {
       configured: providers.groq.configured,
       label: providers.groq.configured
-        ? `Fallback and review filter · ${providers.groq.model}`
-        : 'Fallback smart-filter provider',
+        ? `Fallback · ${providers.groq.smartModel} · Review · ${providers.groq.reviewModel}`
+        : 'Fallback and review smart-filter provider',
     },
     ocr: {
       configured: process.env.ENABLE_OCR === 'true',
