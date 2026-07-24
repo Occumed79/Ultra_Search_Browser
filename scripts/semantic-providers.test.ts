@@ -6,6 +6,7 @@ import {
 } from '../src/lib/cloudflare-reranker'
 import {
   geminiResponseSchema,
+  normalizeGeminiModel,
   parseGeminiIntentPayload,
   planSemanticIntent,
   semanticIntentCapabilities,
@@ -35,7 +36,7 @@ test('Gemini semantic payload preserves complete multi-concept intent', () => {
     ],
     suggestedLens: 'provider',
     complexity: 'complex',
-  }), 'occupational health clinics in Stuttgart offering pure-tone audiograms', 'provider', 'gemini-2.5-flash-lite', 121)
+  }), 'occupational health clinics in Stuttgart offering pure-tone audiograms', 'provider', 'gemini-3.5-flash-lite', 121)
 
   assert.equal(plan.usedExternal, true)
   assert.equal(plan.provider, 'gemini')
@@ -45,6 +46,19 @@ test('Gemini semantic payload preserves complete multi-concept intent', () => {
   assert.deepEqual(semanticBudgets(plan), { variants: 12, tasks: 28 })
 })
 
+test('retired Gemini model variables migrate to the current stable Flash-Lite model', () => {
+  assert.equal(normalizeGeminiModel('gemini-2.5-flash-lite'), 'gemini-3.5-flash-lite')
+  assert.equal(normalizeGeminiModel('gemini-3.1-flash-lite-preview'), 'gemini-3.5-flash-lite')
+  assert.equal(normalizeGeminiModel('gemini-3.1-flash-lite'), 'gemini-3.1-flash-lite')
+  assert.equal(
+    semanticIntentCapabilities({
+      GEMINI_API_KEY: 'key',
+      GEMINI_INTENT_MODEL: 'gemini-2.5-flash-lite',
+    }).model,
+    'gemini-3.5-flash-lite'
+  )
+})
+
 test('Gemini response schema excludes unsupported additionalProperties keyword', () => {
   const schema = geminiResponseSchema() as Record<string, unknown>
   assert.equal('additionalProperties' in schema, false)
@@ -52,9 +66,11 @@ test('Gemini response schema excludes unsupported additionalProperties keyword',
   assert.ok(Array.isArray(schema.required))
 })
 
-test('Gemini planner sends a supported response schema and parses the response', async () => {
+test('Gemini planner sends the current model with a supported request shape', async () => {
+  let requestedUrl = ''
   let requestBody: Record<string, unknown> | undefined
-  const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+  const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+    requestedUrl = String(url)
     requestBody = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
     return new Response(JSON.stringify({
       candidates: [{
@@ -81,14 +97,20 @@ test('Gemini planner sends a supported response schema and parses the response',
   const plan = await planSemanticIntent(
     'occupational health services',
     'web',
-    { GEMINI_API_KEY: 'test-key' },
+    {
+      GEMINI_API_KEY: 'test-key',
+      GEMINI_INTENT_MODEL: 'gemini-2.5-flash-lite',
+    },
     fetchImpl
   )
 
   const generationConfig = requestBody?.generationConfig as Record<string, unknown>
   const schema = generationConfig.responseSchema as Record<string, unknown>
+  assert.match(requestedUrl, /gemini-3\.5-flash-lite/)
   assert.equal('additionalProperties' in schema, false)
+  assert.equal('temperature' in generationConfig, false)
   assert.equal(plan.usedExternal, true)
+  assert.equal(plan.model, 'gemini-3.5-flash-lite')
   assert.deepEqual(plan.searchVariants, ['occupational medicine services'])
 })
 
@@ -164,7 +186,7 @@ test('complex Gemini intent expands the adaptive fan-out without losing original
     complexity: 'complex',
     usedExternal: true,
     provider: 'gemini',
-    model: 'gemini-2.5-flash-lite',
+    model: 'gemini-3.5-flash-lite',
     runtimeMs: 100,
   }
 
