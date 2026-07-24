@@ -60,7 +60,7 @@ export interface ScrapedResult {
     relevance: number;
     reason: string;
     matchedConcepts: string[];
-    mode: "ai" | "local";
+    mode: "local-rules" | "local-transformer";
   };
   extractionDiagnostics?: {
     extractionAttempted: boolean;
