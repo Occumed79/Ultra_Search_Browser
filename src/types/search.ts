@@ -222,3 +222,19 @@ export interface SearchSuggestion {
 export type ViewMode = "grid" | "list" | "compact" | "cards";
 
 export type ThemeMode = "light" | "dark" | "system" | "oled" | "sepia";
+
+export interface UserSettings {
+  theme: ThemeMode;
+  defaultSources: SearchSource[];
+  resultsPerPage: number;
+  autoSummarize: boolean;
+  safeSearch: boolean;
+  openInNewTab: boolean;
+  showFavicons: boolean;
+  showDescriptions: boolean;
+  keyboardShortcuts: boolean;
+  searchDelay: number;
+  preferredLanguage: string;
+  region: string;
+  aiModel: string;
+}
