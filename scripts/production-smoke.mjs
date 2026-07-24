@@ -39,7 +39,12 @@ async function waitForDeployment() {
       if (
         response.ok
         && data.status === 'ok'
-        && ['orchestrated-v2', 'orchestrated-v3-smart-filter', 'orchestrated-v4-semantic-superfilter'].includes(data.searchPipeline)
+        && [
+          'orchestrated-v2',
+          'orchestrated-v3-smart-filter',
+          'orchestrated-v4-semantic-superfilter',
+          'orchestrated-v5-evidence-stream',
+        ].includes(data.searchPipeline)
         && (!EXPECTED_COMMIT || commitMatches(data.commit, EXPECTED_COMMIT))
       ) {
         return data
@@ -142,6 +147,65 @@ async function runSearch({
   return data
 }
 
+function parseSseBlock(block) {
+  let event = 'message'
+  const data = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+  }
+  if (!data.length) return null
+  return { event, data: JSON.parse(data.join('\n')) }
+}
+
+async function runEvidenceValidation({ query, lens, results }) {
+  const response = await fetch(`${APP_URL}/api/search/validate`, {
+    method: 'POST',
+    headers: {
+      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query, lens, results: results.slice(0, 4), maxTargets: 3 }),
+    signal: AbortSignal.timeout(95_000),
+  })
+  if (!response.ok || !response.body) {
+    throw new Error(`Evidence validation returned HTTP ${response.status}: ${(await response.text()).slice(0, 800)}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let complete = null
+  let progressEvents = 0
+  let resultEvents = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true }).replaceAll('\r\n', '\n')
+    const blocks = buffer.split('\n\n')
+    buffer = blocks.pop() || ''
+    for (const block of blocks) {
+      const parsed = parseSseBlock(block)
+      if (!parsed) continue
+      if (parsed.event === 'progress') progressEvents += 1
+      if (parsed.event === 'result') resultEvents += 1
+      if (parsed.event === 'error') throw new Error(`Evidence stream error: ${JSON.stringify(parsed.data).slice(0, 1_500)}`)
+      if (parsed.event === 'complete') complete = parsed.data
+    }
+  }
+
+  if (!complete) throw new Error('Evidence-validation stream ended without a complete event.')
+  if (complete.progress?.phase !== 'complete') throw new Error(`Evidence validation did not complete: ${JSON.stringify(complete.progress)}`)
+  if (Number(complete.progress?.checked || 0) < 1) throw new Error('Evidence validation did not inspect any destination pages.')
+  if (!complete.buckets || !Array.isArray(complete.results)) throw new Error('Evidence validation returned no result buckets.')
+  if (progressEvents < 1 || resultEvents < 1) throw new Error(`Evidence stream did not emit live progress/results: progress=${progressEvents}; results=${resultEvents}`)
+
+  console.log(`\n[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}; uncertain=${complete.progress.uncertain}; expired=${complete.progress.expired}; dead=${complete.progress.dead}; rejected=${complete.progress.rejected}; duplicates=${complete.progress.duplicates}`)
+  console.log(`[evidence] runtime=${complete.diagnostics?.runtimeMs}ms; cache=${JSON.stringify(complete.diagnostics?.pageCache || {})}`)
+  return complete
+}
+
 async function main() {
   console.log(`Testing production: ${APP_URL}`)
   if (EXPECTED_COMMIT) console.log(`Expected commit: ${EXPECTED_COMMIT}`)
@@ -163,13 +227,18 @@ async function main() {
   if (health.capabilities?.cloudflareReranker === true && !health.capabilities.cloudflareRerankModel) {
     throw new Error('Cloudflare is configured but reranker model metadata is missing.')
   }
+  if (health.searchPipeline === 'orchestrated-v5-evidence-stream') {
+    if (health.capabilities?.deepPageValidation !== true || health.capabilities?.streamingValidation !== true) {
+      throw new Error('Evidence-first deployment is missing deep page or streaming capabilities.')
+    }
+  }
 
   const expectExternalSmartFilter = health.capabilities?.cerebrasSmartFilter === true
     || health.capabilities?.groqSmartFilter === true
   const expectGemini = health.capabilities?.geminiIntentPlanner === true
   const expectCloudflare = health.capabilities?.cloudflareReranker === true
 
-  await runSearch({
+  const web = await runSearch({
     query: 'occupational health services',
     lens: 'web',
     expectExternalSmartFilter,
@@ -183,6 +252,14 @@ async function main() {
     expectGemini,
     expectCloudflare,
   })
+
+  if (health.searchPipeline === 'orchestrated-v5-evidence-stream') {
+    await runEvidenceValidation({
+      query: web.query || 'occupational health services',
+      lens: web.lens || 'web',
+      results: web.results,
+    })
+  }
 
   console.log('\nProduction smoke test passed.')
 }
