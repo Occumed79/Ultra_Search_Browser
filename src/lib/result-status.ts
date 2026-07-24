@@ -49,27 +49,33 @@ function clean(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+function validUtcDate(year: number, month: number, day: number): Date | undefined {
+  const date = new Date(Date.UTC(year, month, day, 23, 59, 59))
+  if (
+    Number.isNaN(date.getTime())
+    || date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month
+    || date.getUTCDate() !== day
+  ) return undefined
+  return date
+}
+
 export function parseStatusDate(value: string): Date | undefined {
   const text = value.trim().replace(/(\d)(st|nd|rd|th)\b/gi, '$1')
   const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/)
-  if (iso) {
-    const date = new Date(Date.UTC(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]), 23, 59, 59))
-    return Number.isNaN(date.getTime()) ? undefined : date
-  }
+  if (iso) return validUtcDate(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]))
 
   const numeric = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/)
   if (numeric) {
     const year = Number(numeric[3]) < 100 ? 2000 + Number(numeric[3]) : Number(numeric[3])
-    const date = new Date(Date.UTC(year, Number(numeric[1]) - 1, Number(numeric[2]), 23, 59, 59))
-    return Number.isNaN(date.getTime()) ? undefined : date
+    return validUtcDate(year, Number(numeric[1]) - 1, Number(numeric[2]))
   }
 
   const named = text.match(/^([a-z]+)\s+(\d{1,2})[,]?\s+(\d{4})$/i)
   if (named) {
     const month = MONTHS[named[1].toLowerCase()]
     if (month === undefined) return undefined
-    const date = new Date(Date.UTC(Number(named[3]), month, Number(named[2]), 23, 59, 59))
-    return Number.isNaN(date.getTime()) ? undefined : date
+    return validUtcDate(Number(named[3]), month, Number(named[2]))
   }
 
   return undefined
@@ -119,13 +125,6 @@ function latestDate(dates: ExtractedStatusDate[], kinds: ExtractedStatusDate['ki
     .sort((left, right) => right.getTime() - left.getTime())[0]
 }
 
-function earliestDate(dates: ExtractedStatusDate[], kinds: ExtractedStatusDate['kind'][]): Date | undefined {
-  return dates
-    .filter(item => kinds.includes(item.kind) && item.iso)
-    .map(item => new Date(item.iso as string))
-    .sort((left, right) => left.getTime() - right.getTime())[0]
-}
-
 export function classifyResultStatus(
   text: string,
   lens: SearchLens,
@@ -147,11 +146,13 @@ export function classifyResultStatus(
     return { status: 'expired', reason: 'The page explicitly identifies the item as archived or expired.', confidence: 0.97, dates }
   }
 
-  const deadline = earliestDate(dates, ['due', 'closing', 'expiration'])
+  // Amendments commonly leave old deadlines visible. The latest contextual
+  // deadline is the safest operative deadline unless the page explicitly says closed.
+  const deadline = latestDate(dates, ['due', 'closing', 'expiration'])
   if (deadline && deadline.getTime() < now.getTime()) {
     return {
       status: 'expired',
-      reason: `The extracted deadline ${deadline.toISOString().slice(0, 10)} has passed.`,
+      reason: `The latest extracted deadline ${deadline.toISOString().slice(0, 10)} has passed.`,
       confidence: lens === 'procurement' ? 0.96 : 0.86,
       dates,
     }
@@ -164,7 +165,7 @@ export function classifyResultStatus(
   if (deadline && deadline.getTime() >= now.getTime()) {
     return {
       status: lens === 'procurement' ? 'open' : 'active',
-      reason: `The extracted deadline ${deadline.toISOString().slice(0, 10)} is still in the future.`,
+      reason: `The latest extracted deadline ${deadline.toISOString().slice(0, 10)} is still in the future.`,
       confidence: 0.92,
       dates,
     }
