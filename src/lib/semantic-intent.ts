@@ -29,6 +29,7 @@ export interface SemanticIntentEnvironment {
   [key: string]: string | undefined
   GEMINI_API_KEY?: string
   GEMINI_INTENT_MODEL?: string
+  GEMINI_MODEL?: string
 }
 
 interface GeminiIntentPayload {
@@ -44,7 +45,7 @@ interface GeminiIntentPayload {
   complexity?: unknown
 }
 
-const GEMINI_TIMEOUT_MS = 5_000
+const GEMINI_TIMEOUT_MS = 7_000
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
 const VALID_LENSES = new Set<SearchLens>([
   'web', 'pdf', 'government', 'procurement', 'pricing', 'provider',
@@ -74,6 +75,12 @@ function normalizeArray(value: unknown, limit: number, maxLength = 180): string[
     if (output.length >= limit) break
   }
   return output
+}
+
+function configuredModel(env: SemanticIntentEnvironment): string {
+  return env.GEMINI_INTENT_MODEL?.trim()
+    || env.GEMINI_MODEL?.trim()
+    || DEFAULT_GEMINI_MODEL
 }
 
 function deterministicConcepts(query: string): string[] {
@@ -122,7 +129,7 @@ export function semanticIntentCapabilities(
 ): SemanticIntentCapabilities {
   return {
     configured: Boolean(env.GEMINI_API_KEY?.trim()),
-    model: env.GEMINI_INTENT_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
+    model: configuredModel(env),
   }
 }
 
@@ -219,7 +226,7 @@ export async function planSemanticIntent(
 ): Promise<SemanticIntentPlan> {
   const startedAt = Date.now()
   const apiKey = env.GEMINI_API_KEY?.trim()
-  const model = env.GEMINI_INTENT_MODEL?.trim() || DEFAULT_GEMINI_MODEL
+  const model = configuredModel(env)
   if (!apiKey) return fallbackPlan(query, lens, startedAt)
 
   const controller = new AbortController()

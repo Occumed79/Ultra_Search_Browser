@@ -25,12 +25,14 @@ export interface CloudflareEnvironment {
 
 interface CloudflareScore {
   id?: unknown
+  index?: unknown
   score?: unknown
+  relevance_score?: unknown
 }
 
 const DEFAULT_RERANK_MODEL = '@cf/baai/bge-reranker-base'
-const RERANK_TIMEOUT_MS = 5_000
-const MAX_RERANK_CANDIDATES = 40
+const RERANK_TIMEOUT_MS = 7_000
+const MAX_RERANK_CANDIDATES = 36
 
 function configuredToken(env: CloudflareEnvironment): string {
   return env.CLOUDFLARE_API_TOKEN?.trim() || env.CLOUDFLARE_AUTH_TOKEN?.trim() || ''
@@ -51,22 +53,27 @@ function normalizeScore(value: number): number {
 
 export function parseCloudflareRerankScores(value: unknown, allowedCount: number): Map<number, number> {
   const envelope = value as {
-    result?: { response?: CloudflareScore[] } | CloudflareScore[]
+    result?: { response?: CloudflareScore[]; data?: CloudflareScore[] } | CloudflareScore[]
     response?: CloudflareScore[]
+    data?: CloudflareScore[]
   }
   const result = envelope?.result
   const rawScores = Array.isArray(result)
     ? result
     : Array.isArray(result?.response)
       ? result.response
-      : Array.isArray(envelope?.response)
-        ? envelope.response
-        : []
+      : Array.isArray(result?.data)
+        ? result.data
+        : Array.isArray(envelope?.response)
+          ? envelope.response
+          : Array.isArray(envelope?.data)
+            ? envelope.data
+            : []
   const scores = new Map<number, number>()
 
   for (const item of rawScores) {
-    const id = Number(item.id)
-    const rawScore = Number(item.score)
+    const id = Number(item.id ?? item.index)
+    const rawScore = Number(item.score ?? item.relevance_score)
     if (!Number.isInteger(id) || id < 0 || id >= allowedCount || !Number.isFinite(rawScore)) continue
     scores.set(id, Number(normalizeScore(rawScore).toFixed(4)))
   }
@@ -75,12 +82,16 @@ export function parseCloudflareRerankScores(value: unknown, allowedCount: number
 }
 
 function contextText(result: ScrapedResult): string {
-  return [result.title, result.description, result.domain]
+  const evidence = result.pageValidation?.evidence?.join(' ') || ''
+  const lifecycle = result.pageValidation
+    ? `${result.pageValidation.availability}. ${result.pageValidation.lifecycle.status}. ${result.pageValidation.lifecycle.reason}`
+    : ''
+  return [result.title, result.description, result.domain, lifecycle, evidence, result.content]
     .filter(Boolean)
     .join('. ')
     .replace(/\s+/g, ' ')
     .trim()
-    .slice(0, 1_500)
+    .slice(0, 4_000)
 }
 
 export async function rerankWithCloudflare(
@@ -125,7 +136,6 @@ export async function rerankWithCloudflare(
       body: JSON.stringify({
         query,
         contexts: candidates.map(result => ({ text: contextText(result) })),
-        top_k: candidates.length,
       }),
       signal: controller.signal,
       cache: 'no-store',
@@ -138,7 +148,7 @@ export async function rerankWithCloudflare(
       throw new Error(`Cloudflare reported failure: ${JSON.stringify(payload.errors || []).slice(0, 400)}`)
     }
     const scores = parseCloudflareRerankScores(payload, candidates.length)
-    if (scores.size === 0) throw new Error('Cloudflare returned no usable reranker scores')
+    if (scores.size === 0) throw new Error(`Cloudflare returned no usable reranker scores: ${responseText.slice(0, 500)}`)
 
     const adjusted = results.map((result, index) => {
       const semanticScore = scores.get(index)

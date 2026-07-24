@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronRight,
   Clock,
   Command,
@@ -11,13 +12,14 @@ import {
   Filter,
   Link2,
   Search,
+  ShieldCheck,
   Sparkles,
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ResultActions } from '../components/result-actions'
 import { useSearch } from '../hooks/use-search'
-import type { ScrapedResult, SearchLens, UserSettings } from '../types/search'
+import type { ResultBucket, ScrapedResult, SearchLens, UserSettings } from '../types/search'
 
 const LENSES: Array<{ id: SearchLens; label: string }> = [
   { id: 'web', label: 'Web' },
@@ -40,6 +42,24 @@ const SOURCE_COLORS: Record<string, string> = {
   DuckDuckGo: 'bg-orange-500/10 text-orange-300 border-orange-500/30',
   SearXNG: 'bg-violet-500/10 text-violet-300 border-violet-500/30',
   'memory-vector': 'bg-teal-500/10 text-teal-300 border-teal-500/30',
+}
+
+const BUCKET_LABELS: Record<ResultBucket, string> = {
+  valid: 'Valid',
+  uncertain: 'Uncertain',
+  expired: 'Expired / closed',
+  dead: 'Dead',
+  rejected: 'Rejected',
+  duplicate: 'Duplicates',
+}
+
+const BUCKET_STYLES: Record<ResultBucket, string> = {
+  valid: 'border-emerald-300/20 bg-emerald-300/[0.07] text-emerald-100/75',
+  uncertain: 'border-amber-300/20 bg-amber-300/[0.06] text-amber-100/70',
+  expired: 'border-orange-300/20 bg-orange-300/[0.06] text-orange-100/70',
+  dead: 'border-red-300/20 bg-red-300/[0.06] text-red-100/65',
+  rejected: 'border-white/10 bg-white/[0.04] text-white/45',
+  duplicate: 'border-violet-300/20 bg-violet-300/[0.06] text-violet-100/65',
 }
 
 type SortMode = 'score' | 'rank' | 'source'
@@ -85,6 +105,9 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
         .filter(([, value]) => value !== undefined && value !== null && value !== '')
         .slice(0, 6)
     : []
+  const lifecycle = result.pageValidation?.lifecycle
+  const bucket = result.bucket || (result.validation?.status === 'valid' ? 'valid' : 'uncertain')
+  const verified = result.pageValidation?.availability === 'reachable'
 
   return (
     <article className="result-card animate-in" style={{ animationDelay: index * 35 + 'ms' }}>
@@ -107,6 +130,26 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
             <span className="flex items-center gap-1 text-[10px] text-white/30">
               <Clock className="h-2.5 w-2.5" />#{result.rank || index + 1}
             </span>
+            {verified && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-300/[0.07] px-2 py-0.5 text-[10px] text-emerald-100/75">
+                <ShieldCheck className="h-2.5 w-2.5" /> Page verified
+              </span>
+            )}
+            {result.bucket && (
+              <span className={'rounded-full border px-2 py-0.5 text-[10px] ' + BUCKET_STYLES[bucket]}>
+                {BUCKET_LABELS[bucket]}
+              </span>
+            )}
+            {lifecycle && (
+              <span className="rounded-full border border-cyan-300/15 bg-cyan-300/[0.05] px-2 py-0.5 text-[10px] text-cyan-100/65">
+                {lifecycle.status}
+              </span>
+            )}
+            {result.entity && result.entity.confirmationCount > 1 && (
+              <span className="rounded-full border border-violet-300/15 bg-violet-300/[0.05] px-2 py-0.5 text-[10px] text-violet-100/65">
+                {result.entity.confirmationCount} sources confirm
+              </span>
+            )}
             {domainPreference && (
               <span className="rounded-full border border-teal-500/20 bg-teal-500/10 px-2 py-0.5 text-[10px] text-teal-300">
                 {domainPreference}
@@ -114,7 +157,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
             )}
             {result.extractionDiagnostics?.extractionSucceeded && (
               <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.08] px-2 py-0.5 text-[10px] text-cyan-100/70">
-                {result.extractionDiagnostics.extractionType.toUpperCase()} enriched
+                {result.extractionDiagnostics.extractionType.toUpperCase()} inspected
               </span>
             )}
           </div>
@@ -128,6 +171,24 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
 
           {settings.showDescriptions && result.description && (
             <p className="mt-1.5 line-clamp-3 text-[13px] text-white/40">{result.description}</p>
+          )}
+
+          {(result.validation?.reason || lifecycle?.reason) && (
+            <div className="mt-2 rounded-lg border border-white/[0.07] bg-black/15 px-3 py-2 text-[11px] leading-relaxed text-white/50">
+              <span className="font-medium text-white/65">Why it survived:</span>{' '}
+              {result.validation?.reason || lifecycle?.reason}
+            </div>
+          )}
+
+          {result.pageValidation?.evidence && result.pageValidation.evidence.length > 0 && (
+            <details className="mt-2 rounded-lg border border-teal-300/10 bg-teal-300/[0.025] px-3 py-2">
+              <summary className="cursor-pointer text-[11px] text-teal-100/55">View page evidence</summary>
+              <div className="mt-2 space-y-2">
+                {result.pageValidation.evidence.map((evidence, evidenceIndex) => (
+                  <p key={evidenceIndex} className="text-[11px] leading-relaxed text-white/40">{evidence}</p>
+                ))}
+              </div>
+            </details>
           )}
 
           {intelligenceEntries.length > 0 && (
@@ -169,6 +230,8 @@ export default function Home() {
     setLens,
     intelligence,
     scrapedResults,
+    resultBuckets,
+    validationProgress,
     isLoading,
     isEnriching,
     enrichmentError,
@@ -213,6 +276,13 @@ export default function Home() {
     })
   }, [filterSource, scrapedResults, sortMode])
 
+  const excludedBuckets = useMemo(() => (
+    (['uncertain', 'expired', 'dead', 'rejected', 'duplicate'] as ResultBucket[])
+      .map(bucket => ({ bucket, results: resultBuckets[bucket] }))
+      .filter(item => item.results.length > 0)
+  ), [resultBuckets])
+  const excludedCount = excludedBuckets.reduce((total, item) => total + item.results.length, 0)
+
   async function copySearchLink() {
     const value = window.location.href
     try {
@@ -240,7 +310,7 @@ export default function Home() {
 
     if (format === 'json') {
       content = JSON.stringify(
-        { metadata: { query, lens, timestamp, resultCount: visibleResults.length }, results: visibleResults },
+        { metadata: { query, lens, timestamp, resultCount: visibleResults.length }, results: visibleResults, buckets: resultBuckets },
         null,
         2
       )
@@ -248,11 +318,11 @@ export default function Home() {
     } else {
       const escape = (value: unknown) => '"' + String(value ?? '').replaceAll('"', '""') + '"'
       const rows = visibleResults.map(result =>
-        [result.title, result.url, result.description, result.source, result.score, result.rank]
+        [result.title, result.url, result.description, result.source, result.score, result.rank, result.bucket, result.pageValidation?.lifecycle.status]
           .map(escape)
           .join(',')
       )
-      content = ['Title,URL,Description,Source,Score,Rank', ...rows].join('\n')
+      content = ['Title,URL,Description,Source,Score,Rank,Bucket,Status', ...rows].join('\n')
       type = 'text/csv'
     }
 
@@ -325,10 +395,10 @@ export default function Home() {
           <section className="mt-6">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
-                <span>{visibleResults.length} results · {searchTime.toFixed(0)}ms</span>
+                <span>{visibleResults.length} verified results · {searchTime.toFixed(0)}ms initial search</span>
                 {isEnriching && (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-1 text-[10px] text-cyan-100/65">
-                    <Sparkles className="h-3 w-3 animate-pulse" /> Enriching top results
+                    <Sparkles className="h-3 w-3 animate-pulse" /> Opening and validating pages
                   </span>
                 )}
               </div>
@@ -342,6 +412,30 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
+            {validationProgress && (
+              <div className="glass-surface animate-in mb-4 rounded-xl p-3">
+                <div className="mb-2 flex items-center justify-between text-[11px] text-white/50">
+                  <span className="capitalize">{validationProgress.phase.replaceAll('-', ' ')}</span>
+                  <span>{validationProgress.checked}/{validationProgress.total} pages checked</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+                  <div
+                    className="h-full rounded-full bg-teal-300/60 transition-all duration-300"
+                    style={{ width: `${validationProgress.total ? Math.min(100, validationProgress.checked / validationProgress.total * 100) : 0}%` }}
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-white/40">
+                  <span>{validationProgress.reachable} reachable</span>
+                  <span>{validationProgress.valid} valid</span>
+                  <span>{validationProgress.uncertain} uncertain</span>
+                  <span>{validationProgress.expired} expired/closed</span>
+                  <span>{validationProgress.dead} dead</span>
+                  <span>{validationProgress.rejected} junk</span>
+                  <span>{validationProgress.duplicates} duplicates</span>
+                </div>
+              </div>
+            )}
 
             {showFilters && (
               <div className="glass-surface animate-in mb-4 flex flex-wrap items-center gap-3 rounded-xl p-3">
@@ -393,7 +487,7 @@ export default function Home() {
             {enrichmentError && (
               <div className="mb-4 flex gap-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3 text-xs text-amber-100/65">
                 <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
-                Advanced enrichment did not finish, so the fast search results remain available.
+                Deep validation did not finish, so the fast search results remain available.
               </div>
             )}
 
@@ -416,8 +510,45 @@ export default function Home() {
               ))}
             </div>
 
+            {excludedCount > 0 && (
+              <details className="glass-surface mt-5 rounded-xl p-3">
+                <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-white/55">
+                  <ChevronDown className="h-4 w-4" />
+                  {excludedCount} results withheld from the verified list
+                  <span className="ml-auto text-[10px] text-white/30">review buckets</span>
+                </summary>
+                <div className="mt-3 space-y-4">
+                  {excludedBuckets.map(({ bucket, results }) => (
+                    <div key={bucket}>
+                      <div className="mb-2 flex items-center gap-2">
+                        <span className={'rounded-full border px-2 py-1 text-[10px] ' + BUCKET_STYLES[bucket]}>
+                          {BUCKET_LABELS[bucket]} · {results.length}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        {results.slice(0, 12).map(result => (
+                          <a
+                            key={`${bucket}-${result.url}`}
+                            href={result.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block rounded-lg border border-white/[0.06] bg-black/10 px-3 py-2 hover:border-white/15"
+                          >
+                            <p className="line-clamp-1 text-[11px] text-white/60">{result.title}</p>
+                            <p className="mt-1 line-clamp-2 text-[10px] text-white/35">
+                              {result.pageValidation?.lifecycle.reason || result.pageValidation?.reason || result.validation?.reason}
+                            </p>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
             {!isLoading && visibleResults.length === 0 && (
-              <div className="py-12 text-center text-sm text-white/40">No results found.</div>
+              <div className="py-12 text-center text-sm text-white/40">No verified results found.</div>
             )}
           </section>
         )}

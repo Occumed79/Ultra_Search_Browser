@@ -3,6 +3,10 @@ export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing
 
 export type SearchSource = "google" | "bing" | "duckduckgo" | "searxng" | "memory" | "brave" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
 
+export type ResultBucket = "valid" | "uncertain" | "expired" | "dead" | "rejected" | "duplicate";
+export type ResultLifecycleStatus = "active" | "current" | "open" | "expired" | "closed" | "cancelled" | "awarded" | "stale" | "unknown" | "dead" | "junk" | "duplicate";
+export type PageAvailability = "reachable" | "dead" | "blocked" | "login" | "generic" | "search-page" | "thin" | "unsupported" | "error";
+
 // ─── Legacy generic search result (kept for backward compat) ───
 export interface SearchResult {
   id: string;
@@ -45,6 +49,8 @@ export interface ScrapedResult {
   source: string;
   rank: number;
   score: number;
+  content?: string;
+  bucket?: ResultBucket;
   resultType?: "web" | "pdf" | "government" | "procurement" | "pricing" | "technical" | "news" | "legal" | "medical" | "academic" | "financial";
   intelligence?: ProcurementIntelligence | ProviderIntelligence | PricingIntelligence | LegalIntelligence | MedicalIntelligence | AcademicIntelligence | FinancialIntelligence;
   spamScore?: number;
@@ -74,6 +80,60 @@ export interface ScrapedResult {
     extractedTextLength: number;
     extractionError?: string;
   };
+  pageValidation?: {
+    checkedAt: string;
+    requestedUrl: string;
+    finalUrl: string;
+    httpStatus?: number;
+    contentType?: string;
+    availability: PageAvailability;
+    reason: string;
+    evidence: string[];
+    extractedTextLength: number;
+    contentHash?: string;
+    cached: boolean;
+    lifecycle: {
+      status: ResultLifecycleStatus;
+      reason: string;
+      confidence: number;
+      dates: Array<{
+        kind: "posted" | "modified" | "due" | "closing" | "expiration" | "award" | "unknown";
+        value: string;
+        iso?: string;
+        context: string;
+      }>;
+    };
+  };
+  entity?: {
+    fingerprint: string;
+    confirmationCount: number;
+    alternateUrls: string[];
+    alternateSources: string[];
+    officialSource: boolean;
+    duplicateOf?: string;
+  };
+}
+
+export interface SearchResultBuckets {
+  valid: ScrapedResult[];
+  uncertain: ScrapedResult[];
+  expired: ScrapedResult[];
+  dead: ScrapedResult[];
+  rejected: ScrapedResult[];
+  duplicate: ScrapedResult[];
+}
+
+export interface SearchValidationProgress {
+  phase: "idle" | "opening-pages" | "reviewing-evidence" | "deduplicating" | "complete";
+  total: number;
+  checked: number;
+  reachable: number;
+  valid: number;
+  uncertain: number;
+  expired: number;
+  dead: number;
+  rejected: number;
+  duplicates: number;
 }
 
 // ─── Intelligence Objects (Structured Data) ───
