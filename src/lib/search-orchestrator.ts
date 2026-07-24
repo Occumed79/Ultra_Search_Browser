@@ -1,5 +1,6 @@
 import { applySpamPenalty, calculateCombinedSpamScore } from './anti-spam'
 import { parseBangs } from './bangs'
+import { rerankWithCloudflare, type CloudflareRerankDiagnostics } from './cloudflare-reranker'
 import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
 import { expandQuery, scoreSignals } from './intelligence'
 import { searchMarginalia } from './marginalia'
@@ -9,6 +10,7 @@ import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-sear
 import { searchGoogleScrape, type SearchEngineOptions } from './search'
 import { buildSearchOrchestrationPlan, type QueryPurpose, type RetrievalTask } from './search-planner'
 import { parseSearchOperators, type OperatorsResult } from './search-operators'
+import { planSemanticIntent, type SemanticIntentPlan } from './semantic-intent'
 import { filterSafeResults, type LiveSearchSource, type SearchPlan } from './search-settings'
 import { rerankResults } from './semantic-search'
 import { searchSearXNG } from './searxng'
@@ -36,6 +38,8 @@ export interface SourceRunDiagnostic {
 export interface SearchOrchestrationDiagnostics {
   normalizedQuery: string
   queryVariants: Array<{ query: string; purpose: QueryPurpose }>
+  variantBudget: number
+  taskBudget: number
   attemptedLiveTasks: number
   successfulLiveTasks: number
   failedLiveTasks: number
@@ -43,6 +47,8 @@ export interface SearchOrchestrationDiagnostics {
   memoryVectorMatches: number
   smallWebMatches: number
   marginaliaMatches: number
+  semanticIntent: SemanticIntentPlan
+  cloudflareRerank: CloudflareRerankDiagnostics
   sourceRuns: SourceRunDiagnostic[]
 }
 
@@ -175,6 +181,7 @@ function purposeBonus(purposes: Set<QueryPurpose>): number {
     + (purposes.has('document') ? 10 : 0)
     + (purposes.has('freshness') ? 8 : 0)
     + (purposes.has('portal') ? 8 : 0)
+    + (purposes.has('ai-intent') ? 7 : 0)
     + (purposes.has('semantic') ? 4 : 0)
 }
 
@@ -248,7 +255,16 @@ export async function orchestrateSearch(
   const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
   const lens = resolveLens(requestedLens, bangs.forcedVertical)
   const expanded = expandQuery(normalizedQuery, lens)
-  const orchestration = buildSearchOrchestrationPlan(normalizedQuery, lens, expanded, operators, plan)
+  const semanticIntent = await planSemanticIntent(normalizedQuery, lens)
+  const orchestration = buildSearchOrchestrationPlan(
+    normalizedQuery,
+    lens,
+    expanded,
+    operators,
+    plan,
+    new Date().getFullYear(),
+    semanticIntent
+  )
   const options: SearchEngineOptions = {
     safeSearch: plan.safeSearch,
     preferredLanguage: plan.preferredLanguage,
@@ -388,6 +404,9 @@ export async function orchestrateSearch(
     console.warn('Local semantic reranking failed:', error)
   }
 
+  const cloudflare = await rerankWithCloudflare(normalizedQuery, results)
+  results = cloudflare.results
+
   results = results.map(result => {
     const spam = calculateCombinedSpamScore(result.url, `${result.title} ${result.description}`)
     return {
@@ -425,6 +444,8 @@ export async function orchestrateSearch(
     diagnostics: {
       normalizedQuery,
       queryVariants: orchestration.variants.map(({ query, purpose }) => ({ query, purpose })),
+      variantBudget: orchestration.variantBudget,
+      taskBudget: orchestration.taskBudget,
       attemptedLiveTasks: orchestration.tasks.length,
       successfulLiveTasks: liveSettled.filter(item => item.status === 'fulfilled').length,
       failedLiveTasks: liveSettled.filter(item => item.status === 'rejected').length,
@@ -432,6 +453,8 @@ export async function orchestrateSearch(
       memoryVectorMatches: memoryVector.length,
       smallWebMatches: smallWebEntries.length,
       marginaliaMatches: marginalia.results.length,
+      semanticIntent,
+      cloudflareRerank: cloudflare.diagnostics,
       sourceRuns,
     },
   }

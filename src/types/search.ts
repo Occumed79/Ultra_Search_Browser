@@ -55,6 +55,11 @@ export interface ScrapedResult {
     purposes: string[];
     overlap: number;
   };
+  semanticRerank?: {
+    provider: "cloudflare";
+    model: string;
+    score: number;
+  };
   validation?: {
     status: "valid" | "uncertain" | "rejected";
     relevance: number;

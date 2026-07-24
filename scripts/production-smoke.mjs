@@ -39,7 +39,7 @@ async function waitForDeployment() {
       if (
         response.ok
         && data.status === 'ok'
-        && ['orchestrated-v2', 'orchestrated-v3-smart-filter'].includes(data.searchPipeline)
+        && ['orchestrated-v2', 'orchestrated-v3-smart-filter', 'orchestrated-v4-semantic-superfilter'].includes(data.searchPipeline)
         && (!EXPECTED_COMMIT || commitMatches(data.commit, EXPECTED_COMMIT))
       ) {
         return data
@@ -55,7 +55,13 @@ async function waitForDeployment() {
   throw new Error(`Render did not serve the expected deployment before timeout. Last state: ${lastState}`)
 }
 
-async function runSearch({ query, lens, expectExternalSmartFilter }) {
+async function runSearch({
+  query,
+  lens,
+  expectExternalSmartFilter,
+  expectGemini,
+  expectCloudflare,
+}) {
   const startedAt = Date.now()
   const response = await fetch(`${APP_URL}/api/search`, {
     method: 'POST',
@@ -75,7 +81,7 @@ async function runSearch({ query, lens, expectExternalSmartFilter }) {
         region: 'us',
       },
     }),
-    signal: AbortSignal.timeout(55_000),
+    signal: AbortSignal.timeout(75_000),
   })
   const data = await readJson(response)
   const runtimeMs = Date.now() - startedAt
@@ -107,8 +113,25 @@ async function runSearch({ query, lens, expectExternalSmartFilter }) {
     }
   }
 
+  const semanticIntent = data.diagnostics.semanticIntent
+  if (!semanticIntent) throw new Error(`${lens} search did not expose semantic-intent diagnostics.`)
+  if (expectGemini && semanticIntent.usedExternal !== true) {
+    throw new Error(`${lens} search did not successfully use Gemini intent planning: ${JSON.stringify(semanticIntent).slice(0, 1_500)}`)
+  }
+  if (expectGemini && !data.diagnostics.queryVariants.some(variant => variant.purpose === 'ai-intent')) {
+    throw new Error(`${lens} search used Gemini but emitted no AI-intent query variants.`)
+  }
+
+  const cloudflare = data.diagnostics.cloudflareRerank
+  if (!cloudflare) throw new Error(`${lens} search did not expose Cloudflare reranker diagnostics.`)
+  if (expectCloudflare && cloudflare.used !== true) {
+    throw new Error(`${lens} search did not successfully use Cloudflare reranking: ${JSON.stringify(cloudflare).slice(0, 1_500)}`)
+  }
+
   console.log(`\n[${lens}] ${data.results.length} results in ${runtimeMs}ms`)
-  console.log(`[${lens}] ${data.diagnostics.attemptedLiveTasks} live tasks; ${data.diagnostics.successfulLiveTasks} succeeded; ${data.diagnostics.failedLiveTasks} failed`)
+  console.log(`[${lens}] ${data.diagnostics.attemptedLiveTasks}/${data.diagnostics.taskBudget} live tasks; ${data.diagnostics.successfulLiveTasks} succeeded; ${data.diagnostics.failedLiveTasks} failed`)
+  console.log(`[${lens}] Gemini: used=${semanticIntent.usedExternal}; model=${semanticIntent.model || 'deterministic'}; complexity=${semanticIntent.complexity}`)
+  console.log(`[${lens}] Cloudflare: used=${cloudflare.used}; model=${cloudflare.model}; scored=${cloudflare.scoredCount}`)
   console.log(`[${lens}] smart filter: ${data.diagnostics.smartFilter.mode}; externalUsed=${data.diagnostics.smartFilter.externalUsed}`)
   console.log(`[${lens}] provider attempts: ${JSON.stringify(data.diagnostics.smartFilter.providerAttempts || [])}`)
   console.log(`[${lens}] query variants: ${data.diagnostics.queryVariants.map(item => `${item.purpose}: ${item.query}`).join(' | ')}`)
@@ -134,12 +157,32 @@ async function main() {
     console.log(`Groq fallback model: ${health.capabilities.groqSmartModel}`)
     console.log(`Groq review model: ${health.capabilities.groqReviewModel}`)
   }
+  if (health.capabilities?.geminiIntentPlanner === true && !health.capabilities.geminiIntentModel) {
+    throw new Error('Gemini is configured but intent model metadata is missing.')
+  }
+  if (health.capabilities?.cloudflareReranker === true && !health.capabilities.cloudflareRerankModel) {
+    throw new Error('Cloudflare is configured but reranker model metadata is missing.')
+  }
 
   const expectExternalSmartFilter = health.capabilities?.cerebrasSmartFilter === true
     || health.capabilities?.groqSmartFilter === true
+  const expectGemini = health.capabilities?.geminiIntentPlanner === true
+  const expectCloudflare = health.capabilities?.cloudflareReranker === true
 
-  await runSearch({ query: 'occupational health services', lens: 'web', expectExternalSmartFilter })
-  await runSearch({ query: 'request for proposal occupational health services', lens: 'procurement', expectExternalSmartFilter })
+  await runSearch({
+    query: 'occupational health services',
+    lens: 'web',
+    expectExternalSmartFilter,
+    expectGemini,
+    expectCloudflare,
+  })
+  await runSearch({
+    query: 'request for proposal occupational health services',
+    lens: 'procurement',
+    expectExternalSmartFilter,
+    expectGemini,
+    expectCloudflare,
+  })
 
   console.log('\nProduction smoke test passed.')
 }
