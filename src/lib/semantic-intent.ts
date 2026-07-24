@@ -46,7 +46,12 @@ interface GeminiIntentPayload {
 }
 
 const GEMINI_TIMEOUT_MS = 7_000
-const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash-lite'
+const CURRENT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
+const RETIRED_GEMINI_MODELS = new Set([
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash-lite-preview-09-2025',
+  'gemini-3.1-flash-lite-preview',
+])
 const VALID_LENSES = new Set<SearchLens>([
   'web', 'pdf', 'government', 'procurement', 'pricing', 'provider',
   'technical', 'news', 'legal', 'medical', 'academic', 'financial',
@@ -77,10 +82,19 @@ function normalizeArray(value: unknown, limit: number, maxLength = 180): string[
   return output
 }
 
+export function normalizeGeminiModel(value: string | undefined): string {
+  const requested = value?.trim() || CURRENT_GEMINI_MODEL
+  return RETIRED_GEMINI_MODELS.has(requested.toLowerCase())
+    ? CURRENT_GEMINI_MODEL
+    : requested
+}
+
 function configuredModel(env: SemanticIntentEnvironment): string {
-  return env.GEMINI_INTENT_MODEL?.trim()
+  return normalizeGeminiModel(
+    env.GEMINI_INTENT_MODEL?.trim()
     || env.GEMINI_MODEL?.trim()
-    || DEFAULT_GEMINI_MODEL
+    || CURRENT_GEMINI_MODEL
+  )
 }
 
 function deterministicConcepts(query: string): string[] {
@@ -242,7 +256,6 @@ export async function planSemanticIntent(
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: plannerPrompt(query, lens) }] }],
           generationConfig: {
-            temperature: 0.1,
             maxOutputTokens: 1_600,
             responseMimeType: 'application/json',
             responseSchema: geminiResponseSchema(),
