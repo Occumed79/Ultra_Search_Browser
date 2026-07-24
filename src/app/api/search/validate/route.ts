@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
+import { insertSearchResult } from '../../../../lib/search-storage'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
 
 export const dynamic = 'force-dynamic'
@@ -20,6 +21,46 @@ interface ValidationRequest {
 
 function sseEvent(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`
+}
+
+export function verifiedResultsOnly(results: ScrapedResult[]): ScrapedResult[] {
+  return results.filter(result =>
+    result.bucket === 'valid'
+    && result.validation?.status === 'valid'
+    && result.pageValidation?.availability === 'reachable'
+    && ['open', 'active', 'current', 'unknown'].includes(result.pageValidation.lifecycle.status)
+  )
+}
+
+async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens) {
+  const persisted = await Promise.allSettled(results.slice(0, 30).map(result => insertSearchResult({
+    url: result.url,
+    normalized_url: result.url,
+    domain: result.domain,
+    title: result.title,
+    snippet: result.description,
+    source_engine: result.source,
+    rank: result.rank,
+    score: result.score,
+    final_score: result.score,
+    extraction_status: 'verified-page',
+    extracted_text: result.pageValidation?.evidence.join('\n') || result.description,
+    metadata: {
+      lens,
+      verificationStatus: 'valid',
+      verifiedAt: result.pageValidation?.checkedAt || new Date().toISOString(),
+      retrieval: result.retrieval,
+      validation: result.validation,
+      pageValidation: result.pageValidation,
+      entity: result.entity,
+    },
+  })))
+
+  return {
+    attempted: results.length,
+    persisted: persisted.filter(item => item.status === 'fulfilled' && item.value).length,
+    failed: persisted.filter(item => item.status === 'rejected').length,
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -65,17 +106,24 @@ export async function POST(request: NextRequest) {
             write(event.type, event)
           },
         })
-        const persistentMemory = await indexResultsInPersistentMemory(
-          outcome.results,
-          lens,
-          Math.min(16, outcome.results.length),
-          4_000
-        )
+        const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
+        const [persistentMemory, verifiedPersistence] = await Promise.all([
+          indexResultsInPersistentMemory(
+            verifiedResults,
+            lens,
+            Math.min(16, verifiedResults.length),
+            4_000
+          ),
+          persistVerifiedResults(verifiedResults, lens),
+        ])
         write('complete', {
           ...outcome,
+          results: verifiedResults,
           diagnostics: {
             ...outcome.diagnostics,
+            verifiedOnly: true,
             persistentMemory,
+            verifiedPersistence,
           },
         })
       } catch (error) {
