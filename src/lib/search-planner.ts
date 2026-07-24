@@ -1,9 +1,10 @@
 import type { ExpandedQuery } from './intelligence'
 import type { OperatorsResult } from './search-operators'
+import type { SemanticIntentPlan } from './semantic-intent'
 import type { LiveSearchSource, SearchPlan } from './search-settings'
 import type { SearchLens } from '../types/search'
 
-export type QueryPurpose = 'broad' | 'semantic' | 'official' | 'document' | 'freshness' | 'portal'
+export type QueryPurpose = 'broad' | 'semantic' | 'ai-intent' | 'official' | 'document' | 'freshness' | 'portal'
 
 export interface QueryVariant {
   query: string
@@ -20,14 +21,24 @@ export interface RetrievalTask {
 export interface SearchOrchestrationPlan {
   variants: QueryVariant[]
   tasks: RetrievalTask[]
+  variantBudget: number
+  taskBudget: number
 }
 
 const TARGETED_SOURCE_ORDER: LiveSearchSource[] = ['searxng', 'bing', 'duckduckgo', 'google']
-const MAX_QUERY_VARIANTS = 7
-const MAX_LIVE_TASKS = 14
+const DEFAULT_QUERY_VARIANTS = 7
+const DEFAULT_LIVE_TASKS = 14
 
 function normalizeQuery(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+export function semanticBudgets(intent?: SemanticIntentPlan): { variants: number; tasks: number } {
+  if (!intent || !intent.usedExternal || intent.complexity === 'simple') {
+    return { variants: DEFAULT_QUERY_VARIANTS, tasks: DEFAULT_LIVE_TASKS }
+  }
+  if (intent.complexity === 'moderate') return { variants: 10, tasks: 22 }
+  return { variants: 12, tasks: 28 }
 }
 
 function addVariant(
@@ -35,11 +46,12 @@ function addVariant(
   seen: Set<string>,
   query: string | undefined,
   purpose: QueryPurpose,
-  priority: number
+  priority: number,
+  maxVariants: number
 ) {
   const normalized = normalizeQuery(query || '')
   const key = normalized.toLowerCase()
-  if (!normalized || seen.has(key) || variants.length >= MAX_QUERY_VARIANTS) return
+  if (!normalized || seen.has(key) || variants.length >= maxVariants) return
   seen.add(key)
   variants.push({ query: normalized, purpose, priority })
 }
@@ -80,17 +92,23 @@ export function buildQueryVariants(
   lens: SearchLens,
   expanded: ExpandedQuery,
   operators: OperatorsResult,
-  currentYear = new Date().getFullYear()
+  currentYear = new Date().getFullYear(),
+  semanticIntent?: SemanticIntentPlan
 ): QueryVariant[] {
   const variants: QueryVariant[] = []
   const seen = new Set<string>()
   const explicitQuery = restoreExplicitOperators(query, operators)
+  const budgets = semanticBudgets(semanticIntent)
 
   // Every selected engine receives the user's complete sentence unchanged.
-  addVariant(variants, seen, explicitQuery, 'broad', 100)
+  addVariant(variants, seen, explicitQuery, 'broad', 100, budgets.variants)
   // A protected phrase pass prevents engines from silently reducing a
   // multi-word intent to one broad token such as "occupational".
-  addVariant(variants, seen, protectedFullQuery(query, operators), 'semantic', 95)
+  addVariant(variants, seen, protectedFullQuery(query, operators), 'semantic', 95, budgets.variants)
+
+  for (const candidate of semanticIntent?.searchVariants || []) {
+    addVariant(variants, seen, candidate, 'ai-intent', 92, budgets.variants)
+  }
 
   const semantic = findFirst(
     expanded.expansions,
@@ -102,7 +120,7 @@ export function buildQueryVariants(
           ? /clinic|provider|occupational medicine|services offered/i
           : /information|overview|research|report|guide|official/i
   ) || expanded.expansions[0]
-  addVariant(variants, seen, semantic, 'semantic', 90)
+  addVariant(variants, seen, semantic, 'semantic', 90, budgets.variants)
 
   const official = findFirst(expanded.withOperators, /site:\.(?:gov|us)\b/i)
     || findFirst(expanded.expansions, /site:\.(?:gov|us)\b/i)
@@ -121,20 +139,20 @@ export function buildQueryVariants(
   )
 
   if (['government', 'procurement', 'legal', 'medical', 'academic'].includes(lens)) {
-    addVariant(variants, seen, official, 'official', 85)
+    addVariant(variants, seen, official, 'official', 85, budgets.variants)
   }
   if (['pdf', 'government', 'procurement', 'pricing', 'academic', 'financial'].includes(lens)) {
-    addVariant(variants, seen, document, 'document', 80)
+    addVariant(variants, seen, document, 'document', 80, budgets.variants)
   }
   if (lens === 'procurement' || lens === 'news') {
-    addVariant(variants, seen, freshness, 'freshness', 75)
+    addVariant(variants, seen, freshness, 'freshness', 75, budgets.variants)
   }
   if (lens === 'procurement') {
-    addVariant(variants, seen, portal, 'portal', 70)
+    addVariant(variants, seen, portal, 'portal', 70, budgets.variants)
   }
 
   for (const candidate of [...expanded.withOperators, ...expanded.expansions]) {
-    addVariant(variants, seen, candidate, 'semantic', 50)
+    addVariant(variants, seen, candidate, 'semantic', 50, budgets.variants)
   }
 
   return variants.sort((left, right) => right.priority - left.priority)
@@ -145,13 +163,17 @@ function orderedTargetedSources(selected: LiveSearchSource[]): LiveSearchSource[
   return TARGETED_SOURCE_ORDER.filter(source => selectedSet.has(source))
 }
 
-export function buildRetrievalTasks(variants: QueryVariant[], plan: SearchPlan): RetrievalTask[] {
+export function buildRetrievalTasks(
+  variants: QueryVariant[],
+  plan: SearchPlan,
+  maxLiveTasks = DEFAULT_LIVE_TASKS
+): RetrievalTask[] {
   if (variants.length === 0 || plan.liveSources.length === 0) return []
 
   const tasks: RetrievalTask[] = []
   const seen = new Set<string>()
   const addTask = (source: LiveSearchSource, variant: QueryVariant) => {
-    if (tasks.length >= MAX_LIVE_TASKS) return
+    if (tasks.length >= maxLiveTasks) return
     const key = `${source}:${variant.query.toLowerCase()}`
     if (seen.has(key)) return
     seen.add(key)
@@ -174,6 +196,11 @@ export function buildRetrievalTasks(variants: QueryVariant[], plan: SearchPlan):
     for (const source of sources) addTask(source, variant)
   }
 
+  for (const variant of variants.filter(item => item.purpose === 'semantic' && !broadVariants.includes(item))) {
+    const source = targetedSources[tasks.length % Math.max(1, targetedSources.length)]
+    if (source) addTask(source, variant)
+  }
+
   return tasks
 }
 
@@ -183,11 +210,15 @@ export function buildSearchOrchestrationPlan(
   expanded: ExpandedQuery,
   operators: OperatorsResult,
   plan: SearchPlan,
-  currentYear = new Date().getFullYear()
+  currentYear = new Date().getFullYear(),
+  semanticIntent?: SemanticIntentPlan
 ): SearchOrchestrationPlan {
-  const variants = buildQueryVariants(query, lens, expanded, operators, currentYear)
+  const budgets = semanticBudgets(semanticIntent)
+  const variants = buildQueryVariants(query, lens, expanded, operators, currentYear, semanticIntent)
   return {
     variants,
-    tasks: buildRetrievalTasks(variants, plan),
+    tasks: buildRetrievalTasks(variants, plan, budgets.tasks),
+    variantBudget: budgets.variants,
+    taskBudget: budgets.tasks,
   }
 }
