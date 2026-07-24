@@ -46,13 +46,28 @@ async function getAdapter(): Promise<VectorStoreAdapter | null> {
 
 function documentText(result: ScrapedResult): string {
   const intelligence = result.intelligence ? JSON.stringify(result.intelligence) : ''
-  return [result.title, result.description, intelligence].filter(Boolean).join('\n').slice(0, 40_000)
+  const evidence = result.pageValidation?.evidence.join('\n') || ''
+  return [result.title, result.description, evidence, intelligence].filter(Boolean).join('\n').slice(0, 40_000)
+}
+
+export function isVerifiedMemoryCandidate(result: ScrapedResult): boolean {
+  const lifecycle = result.pageValidation?.lifecycle.status
+  return Boolean(
+    result.url
+    && result.title
+    && result.bucket === 'valid'
+    && result.validation?.status === 'valid'
+    && result.pageValidation?.availability === 'reachable'
+    && lifecycle
+    && ['open', 'active', 'current', 'unknown'].includes(lifecycle)
+  )
 }
 
 export interface MemoryIndexingDiagnostics {
   enabled: boolean
   attempted: number
   indexed: number
+  rejectedUnverified?: number
   error?: string
 }
 
@@ -62,14 +77,28 @@ export async function indexResultsInPersistentMemory(
   limit = DEFAULT_INDEX_LIMIT,
   timeoutMs = DEFAULT_INDEX_TIMEOUT_MS
 ): Promise<MemoryIndexingDiagnostics> {
-  if (!process.env.DATABASE_URL) return { enabled: false, attempted: 0, indexed: 0 }
+  const candidates = results
+    .filter(isVerifiedMemoryCandidate)
+    .slice(0, Math.max(0, limit))
+  const rejectedUnverified = Math.max(0, results.length - candidates.length)
+
+  if (!process.env.DATABASE_URL) {
+    return { enabled: false, attempted: candidates.length, indexed: 0, rejectedUnverified }
+  }
+  if (candidates.length === 0) {
+    return { enabled: true, attempted: 0, indexed: 0, rejectedUnverified }
+  }
 
   const adapter = await getAdapter()
-  if (!adapter) return { enabled: false, attempted: 0, indexed: 0, error: 'pgvector adapter unavailable' }
-
-  const candidates = results
-    .filter(result => Boolean(result.url && result.title))
-    .slice(0, Math.max(0, limit))
+  if (!adapter) {
+    return {
+      enabled: false,
+      attempted: candidates.length,
+      indexed: 0,
+      rejectedUnverified,
+      error: 'pgvector adapter unavailable',
+    }
+  }
 
   try {
     const documents = await withTimeout(
@@ -87,6 +116,10 @@ export async function indexResultsInPersistentMemory(
             lens,
             rank: result.rank,
             score: result.score,
+            verificationStatus: 'valid',
+            verifiedAt: result.pageValidation?.checkedAt,
+            lifecycleStatus: result.pageValidation?.lifecycle.status,
+            contentHash: result.pageValidation?.contentHash,
           },
         }
         return document
@@ -96,10 +129,21 @@ export async function indexResultsInPersistentMemory(
     )
 
     await withTimeout(adapter.addDocuments(documents), timeoutMs, 'persistent memory indexing')
-    return { enabled: true, attempted: candidates.length, indexed: documents.length }
+    return {
+      enabled: true,
+      attempted: candidates.length,
+      indexed: documents.length,
+      rejectedUnverified,
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     console.warn('Persistent memory indexing failed:', error)
-    return { enabled: true, attempted: candidates.length, indexed: 0, error: message }
+    return {
+      enabled: true,
+      attempted: candidates.length,
+      indexed: 0,
+      rejectedUnverified,
+      error: message,
+    }
   }
 }
