@@ -4,6 +4,7 @@ import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
 import { buildGroundedSummary, buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
+import { applySmartFilter } from '../../../lib/smart-filter'
 import type { SearchLens } from '../../../types/search'
 
 const VALID_LENSES = new Set<SearchLens>([
@@ -56,7 +57,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    orchestration.results = await applyResultFeedbackRanking(orchestration.results)
+    const smartFilter = await applySmartFilter(
+      orchestration.normalizedQuery,
+      orchestration.lens,
+      orchestration.results,
+      plan.resultsPerPage,
+      { useLocalTransformer: false }
+    )
+    orchestration.results = await applyResultFeedbackRanking(smartFilter.results)
 
     const note = orchestration.failures.length > 0
       ? `${orchestration.failures.length} retrieval tasks failed or returned unreadable pages; successful sources were preserved.`
@@ -93,6 +101,7 @@ export async function POST(request: NextRequest) {
           variants: orchestration.diagnostics.queryVariants,
           failures: orchestration.failures,
           enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+          smartFilter: smartFilter.diagnostics,
         },
       })
 
@@ -113,7 +122,8 @@ export async function POST(request: NextRequest) {
               extraction_status: 'search-result',
               metadata: {
                 lens: orchestration.lens,
-                retrieval: (result as typeof result & { retrieval?: unknown }).retrieval,
+                retrieval: result.retrieval,
+                validation: result.validation,
               },
             })
             return { url: result.url, id }
@@ -153,6 +163,7 @@ export async function POST(request: NextRequest) {
         enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
+        smartFilter: smartFilter.diagnostics,
         ...orchestration.diagnostics,
       },
     })
