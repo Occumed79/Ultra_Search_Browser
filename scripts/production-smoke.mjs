@@ -39,7 +39,7 @@ async function waitForDeployment() {
       if (
         response.ok
         && data.status === 'ok'
-        && data.searchPipeline === 'orchestrated-v2'
+        && ['orchestrated-v2', 'orchestrated-v3-smart-filter'].includes(data.searchPipeline)
         && (!EXPECTED_COMMIT || commitMatches(data.commit, EXPECTED_COMMIT))
       ) {
         return data
@@ -55,7 +55,7 @@ async function waitForDeployment() {
   throw new Error(`Render did not serve the expected deployment before timeout. Last state: ${lastState}`)
 }
 
-async function runSearch({ query, lens }) {
+async function runSearch({ query, lens, expectExternalSmartFilter }) {
   const startedAt = Date.now()
   const response = await fetch(`${APP_URL}/api/search`, {
     method: 'POST',
@@ -75,7 +75,7 @@ async function runSearch({ query, lens }) {
         region: 'us',
       },
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(55_000),
   })
   const data = await readJson(response)
   const runtimeMs = Date.now() - startedAt
@@ -92,9 +92,16 @@ async function runSearch({ query, lens }) {
   if (!Array.isArray(data.diagnostics.queryVariants) || data.diagnostics.queryVariants.length < 2) {
     throw new Error(`${lens} search did not generate multiple query variants.`)
   }
+  if (!data.diagnostics.smartFilter) {
+    throw new Error(`${lens} search did not expose smart-filter diagnostics.`)
+  }
+  if (expectExternalSmartFilter && data.diagnostics.smartFilter.externalUsed !== true) {
+    throw new Error(`${lens} search did not successfully use Cerebras or Groq: ${JSON.stringify(data.diagnostics.smartFilter).slice(0, 1_500)}`)
+  }
 
   console.log(`\n[${lens}] ${data.results.length} results in ${runtimeMs}ms`)
   console.log(`[${lens}] ${data.diagnostics.attemptedLiveTasks} live tasks; ${data.diagnostics.successfulLiveTasks} succeeded; ${data.diagnostics.failedLiveTasks} failed`)
+  console.log(`[${lens}] smart filter: ${data.diagnostics.smartFilter.mode}; externalUsed=${data.diagnostics.smartFilter.externalUsed}`)
   console.log(`[${lens}] query variants: ${data.diagnostics.queryVariants.map(item => `${item.purpose}: ${item.query}`).join(' | ')}`)
   for (const result of data.results.slice(0, 3)) {
     console.log(`[${lens}] - ${result.title} — ${result.url}`)
@@ -111,8 +118,11 @@ async function main() {
   console.log(`Production deployment ready: ${health.commit}`)
   console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
 
-  await runSearch({ query: 'occupational health services', lens: 'web' })
-  await runSearch({ query: 'request for proposal occupational health services', lens: 'procurement' })
+  const expectExternalSmartFilter = health.capabilities?.cerebrasSmartFilter === true
+    || health.capabilities?.groqSmartFilter === true
+
+  await runSearch({ query: 'occupational health services', lens: 'web', expectExternalSmartFilter })
+  await runSearch({ query: 'request for proposal occupational health services', lens: 'procurement', expectExternalSmartFilter })
 
   console.log('\nProduction smoke test passed.')
 }
