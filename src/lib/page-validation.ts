@@ -50,27 +50,51 @@ const PAGE_TIMEOUT_MS = 7_500
 const MAX_RESPONSE_BYTES = 6 * 1024 * 1024
 const MAX_EXTRACTED_TEXT = 120_000
 const PAGE_CACHE_TTL_MS = 10 * 60 * 1000
+const MAX_REDIRECTS = 5
 const cache = new Map<string, CacheEntry>()
+
+const REQUEST_HEADERS = {
+  'User-Agent': 'UltraSearchBrowser/1.0 evidence-validator (+https://ultra-search-browser.onrender.com)',
+  Accept: 'text/html,application/xhtml+xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain;q=0.9,*/*;q=0.2',
+  'Accept-Language': 'en-US,en;q=0.8',
+}
 
 function clean(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
+}
+
+function isPrivateIpv4(host: string): boolean {
+  return host === '0.0.0.0'
+    || host === '127.0.0.1'
+    || /^127\./.test(host)
+    || /^10\./.test(host)
+    || /^192\.168\./.test(host)
+    || /^172\.(?:1[6-9]|2\d|3[01])\./.test(host)
+    || /^169\.254\./.test(host)
+    || /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
+}
+
+function isPrivateIpv6(host: string): boolean {
+  const normalized = host.replace(/^\[/, '').replace(/\]$/, '').toLowerCase()
+  return normalized === '::1'
+    || normalized === '::'
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || /^fe[89ab]/.test(normalized)
 }
 
 function safeUrl(value: string): URL | undefined {
   try {
     const parsed = new URL(value)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+    if (parsed.username || parsed.password) return undefined
     const host = parsed.hostname.toLowerCase()
     if (
       host === 'localhost'
+      || host.endsWith('.localhost')
       || host.endsWith('.local')
-      || host === '0.0.0.0'
-      || host === '127.0.0.1'
-      || host === '::1'
-      || /^10\./.test(host)
-      || /^192\.168\./.test(host)
-      || /^172\.(?:1[6-9]|2\d|3[01])\./.test(host)
-      || /^169\.254\./.test(host)
+      || isPrivateIpv4(host)
+      || isPrivateIpv6(host)
     ) return undefined
     return parsed
   } catch {
@@ -187,6 +211,33 @@ async function extractResponse(response: Response, type: 'pdf' | 'docx' | 'html'
   return extraction.document
 }
 
+async function fetchWithSafeRedirects(
+  initialUrl: URL,
+  fetchImpl: typeof fetch,
+  signal: AbortSignal
+): Promise<{ response: Response; finalUrl: string }> {
+  let current = initialUrl
+  for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
+    const response = await fetchImpl(current.toString(), {
+      method: 'GET',
+      redirect: 'manual',
+      headers: REQUEST_HEADERS,
+      signal,
+      cache: 'no-store',
+    })
+    if (![301, 302, 303, 307, 308].includes(response.status)) {
+      return { response, finalUrl: current.toString() }
+    }
+
+    const location = response.headers.get('location')
+    if (!location) throw new Error(`Redirect HTTP ${response.status} did not include a Location header`)
+    const next = safeUrl(new URL(location, current).toString())
+    if (!next) throw new Error('Redirect target is invalid or points to a private/local address')
+    current = next
+  }
+  throw new Error(`Destination exceeded ${MAX_REDIRECTS} redirects`)
+}
+
 function failureResult(
   result: ScrapedResult,
   availability: PageAvailability,
@@ -238,25 +289,18 @@ export async function validateCandidatePage(
   const fetchImpl = options.fetchImpl ?? fetch
 
   try {
-    const response = await fetchImpl(requested.toString(), {
-      method: 'GET',
-      redirect: 'follow',
-      headers: {
-        'User-Agent': 'UltraSearchBrowser/1.0 evidence-validator (+https://ultra-search-browser.onrender.com)',
-        Accept: 'text/html,application/xhtml+xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain;q=0.9,*/*;q=0.2',
-        'Accept-Language': 'en-US,en;q=0.8',
-      },
-      signal: controller.signal,
-      cache: 'no-store',
-    })
-
-    const finalUrl = response.url || result.url
+    const fetched = await fetchWithSafeRedirects(requested, fetchImpl, controller.signal)
+    const response = fetched.response
+    const finalUrl = fetched.finalUrl
     const contentType = response.headers.get('content-type') || ''
     if (response.status === 404 || response.status === 410) {
       return failureResult(result, 'dead', `The destination returned HTTP ${response.status}.`, 'dead', response.status, finalUrl, contentType)
     }
-    if (response.status === 401 || response.status === 403) {
-      return failureResult(result, 'blocked', `The destination returned HTTP ${response.status}.`, 'unknown', response.status, finalUrl, contentType)
+    if (response.status === 401) {
+      return failureResult(result, 'login', 'The destination requires authentication (HTTP 401).', 'junk', response.status, finalUrl, contentType)
+    }
+    if (response.status === 403) {
+      return failureResult(result, 'error', 'The destination denied automated access (HTTP 403), so it could not be verified.', 'unknown', response.status, finalUrl, contentType)
     }
     if (!response.ok) {
       return failureResult(result, 'error', `The destination returned HTTP ${response.status}.`, 'unknown', response.status, finalUrl, contentType)
