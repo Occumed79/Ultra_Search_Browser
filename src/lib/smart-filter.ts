@@ -1,7 +1,6 @@
 import {
   cosineSimilarity,
-  generateEmbedding,
-  isLocalEmbeddingsEnabled,
+  generateLocalEmbedding,
 } from './embeddings'
 import { lensCompatibilityAdjustment } from './ranking-signals'
 import { scoreLexicalRelevance } from './semantic-search'
@@ -193,11 +192,11 @@ async function semanticScores(
   limit: number
 ): Promise<Map<string, number>> {
   const scores = new Map<string, number>()
-  const queryEmbedding = await generateEmbedding(query)
+  const queryEmbedding = await generateLocalEmbedding(query)
 
   for (const result of results.slice(0, limit)) {
     const candidate = `${result.title}. ${result.description}. ${result.domain}`
-    const embedding = await generateEmbedding(candidate)
+    const embedding = await generateLocalEmbedding(candidate)
     const similarity = cosineSimilarity(queryEmbedding, embedding)
     scores.set(result.url, Math.max(0, Math.min(1, (similarity + 1) / 2)))
   }
@@ -213,13 +212,13 @@ export async function applySmartFilter(
   options: SmartFilterOptions = {}
 ): Promise<{ results: ScrapedResult[]; diagnostics: SmartFilterDiagnostics }> {
   const intent = analyzeSearchIntent(query)
-  const localModelEnabled = isLocalEmbeddingsEnabled()
-  const shouldUseModel = options.useLocalTransformer === true && localModelEnabled
+  const localModelEnabled = options.useLocalTransformer === true
+    && process.env.DISABLE_LOCAL_SMART_FILTER !== 'true'
   let localModelUsed = false
   let modelFailure: string | undefined
   let semanticByUrl = new Map<string, number>()
 
-  if (shouldUseModel && results.length > 0) {
+  if (localModelEnabled && results.length > 0) {
     try {
       semanticByUrl = await semanticScores(
         query,
