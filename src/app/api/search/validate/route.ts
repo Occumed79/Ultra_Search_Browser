@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
+import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
 
 export const dynamic = 'force-dynamic'
@@ -64,7 +65,19 @@ export async function POST(request: NextRequest) {
             write(event.type, event)
           },
         })
-        write('complete', outcome)
+        const persistentMemory = await indexResultsInPersistentMemory(
+          outcome.results,
+          lens,
+          Math.min(16, outcome.results.length),
+          4_000
+        )
+        write('complete', {
+          ...outcome,
+          diagnostics: {
+            ...outcome.diagnostics,
+            persistentMemory,
+          },
+        })
       } catch (error) {
         write('error', {
           error: 'Deep validation failed',
