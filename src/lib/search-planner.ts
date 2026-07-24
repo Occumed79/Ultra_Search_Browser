@@ -192,7 +192,11 @@ export function buildRetrievalTasks(
     variant => !broadVariants.includes(variant) && variant.purpose !== 'semantic'
   )
   for (const variant of targetedVariants) {
-    const sources = targetedSources.length > 1 ? targetedSources.slice(0, 2) : targetedSources
+    const sources = variant.purpose === 'ai-intent'
+      ? plan.liveSources
+      : targetedSources.length > 1
+        ? targetedSources.slice(0, 2)
+        : targetedSources
     for (const source of sources) addTask(source, variant)
   }
 
