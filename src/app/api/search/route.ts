@@ -62,7 +62,10 @@ export async function POST(request: NextRequest) {
       orchestration.lens,
       orchestration.results,
       plan.resultsPerPage,
-      { useLocalTransformer: false }
+      {
+        useLocalTransformer: false,
+        useExternalProviders: true,
+      }
     )
     orchestration.results = await applyResultFeedbackRanking(smartFilter.results)
 

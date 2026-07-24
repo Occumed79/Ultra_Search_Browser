@@ -1,3 +1,5 @@
+import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+
 export const dynamic = 'force-dynamic'
 
 function deployedCommit(): string {
@@ -10,15 +12,19 @@ function deployedCommit(): string {
 }
 
 function healthPayload() {
+  const providers = externalSmartFilterCapabilities()
+
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v2',
+    searchPipeline: 'orchestrated-v3-smart-filter',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
       searxng: Boolean(process.env.SEARXNG_URL),
       localEmbeddings: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
+      cerebrasSmartFilter: providers.cerebras.configured,
+      groqSmartFilter: providers.groq.configured,
       ocr: process.env.ENABLE_OCR === 'true',
       marginalia: process.env.ENABLE_MARGINALIA !== 'false',
     },
