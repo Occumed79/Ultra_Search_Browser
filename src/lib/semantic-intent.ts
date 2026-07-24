@@ -174,10 +174,9 @@ export function parseGeminiIntentPayload(
   }
 }
 
-function responseSchema() {
+export function geminiResponseSchema() {
   return {
     type: 'object',
-    additionalProperties: false,
     properties: {
       interpretation: { type: 'string' },
       requiredConcepts: { type: 'array', items: { type: 'string' } },
@@ -246,7 +245,7 @@ export async function planSemanticIntent(
             temperature: 0.1,
             maxOutputTokens: 1_600,
             responseMimeType: 'application/json',
-            responseSchema: responseSchema(),
+            responseSchema: geminiResponseSchema(),
           },
         }),
         signal: controller.signal,
