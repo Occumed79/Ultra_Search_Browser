@@ -185,16 +185,41 @@ export interface AIInsight {
   summary: string;
   keyPoints: string[];
   relatedTopics: string[];
+  confidence: number;
+  sources: string[];
+}
+
+export interface SearchHistoryItem {
+  id: string;
+  query: string;
+  timestamp: string;
+  filters: SearchFilters;
+  resultCount: number;
+  starred: boolean;
+}
+
+export interface BookmarkItem {
+  id: string;
+  title: string;
+  url: string;
+  description: string;
+  tags: string[];
+  createdAt: string;
+  folder: string;
 }
 
 export interface SearchSuggestion {
   text: string;
-  type: "related" | "ai" | "history";
+  type: "trending" | "related" | "history" | "ai";
   score: number;
 }
 
+export type ViewMode = "grid" | "list" | "compact" | "cards";
+
+export type ThemeMode = "light" | "dark" | "system" | "oled" | "sepia";
+
 export interface UserSettings {
-  theme: "light" | "dark" | "system" | "oled" | "sepia";
+  theme: ThemeMode;
   defaultSources: SearchSource[];
   resultsPerPage: number;
   autoSummarize: boolean;
