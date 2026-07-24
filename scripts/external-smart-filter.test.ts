@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  externalSmartFilterCapabilities,
   mergeProviderDecisions,
   parseProviderPayload,
 } from '../src/lib/external-smart-filter'
@@ -28,6 +29,25 @@ test('accepts fenced JSON from providers using JSON object mode', () => {
 
   assert.equal(parsed.interpretation, 'Technical documentation')
   assert.equal(parsed.decisions.get(2)?.status, 'uncertain')
+})
+
+test('Groq fallback and reviewer use independent model variables', () => {
+  const capabilities = externalSmartFilterCapabilities({
+    GROQ_API_KEY: 'test-key',
+    GROQ_SMART_MODEL: 'openai/gpt-oss-20b',
+    GROQ_REVIEW_MODEL: 'openai/gpt-oss-120b',
+  })
+
+  assert.equal(capabilities.groq.configured, true)
+  assert.equal(capabilities.groq.smartModel, 'openai/gpt-oss-20b')
+  assert.equal(capabilities.groq.reviewModel, 'openai/gpt-oss-120b')
+})
+
+test('Groq roles receive distinct defaults when only the key is configured', () => {
+  const capabilities = externalSmartFilterCapabilities({ GROQ_API_KEY: 'test-key' })
+
+  assert.equal(capabilities.groq.smartModel, 'openai/gpt-oss-20b')
+  assert.equal(capabilities.groq.reviewModel, 'openai/gpt-oss-120b')
 })
 
 test('agreement averages provider confidence', () => {

@@ -1,6 +1,7 @@
 import type { ScrapedResult, SearchLens } from '../types/search'
 
 export type ExternalSmartFilterProvider = 'cerebras' | 'groq'
+export type ExternalProviderRole = 'primary' | 'fallback' | 'review'
 export type ExternalDecisionStatus = 'valid' | 'uncertain' | 'rejected'
 
 export interface ExternalCandidateDecision {
@@ -12,6 +13,7 @@ export interface ExternalCandidateDecision {
 
 export interface ExternalProviderAttempt {
   provider: ExternalSmartFilterProvider
+  role: ExternalProviderRole
   model: string
   status: 'success' | 'failed' | 'skipped'
   runtimeMs: number
@@ -44,9 +46,16 @@ export interface LocalDecisionSummary {
 
 interface ProviderConfig {
   provider: ExternalSmartFilterProvider
+  role: ExternalProviderRole
   apiKey: string
   endpoint: string
   model: string
+}
+
+interface ProviderPoolConfig {
+  cerebrasPrimary?: ProviderConfig
+  groqFallback?: ProviderConfig
+  groqReviewer?: ProviderConfig
 }
 
 interface ProviderPayload {
@@ -64,51 +73,79 @@ interface ProviderResult {
   decisions: Map<number, ExternalCandidateDecision>
 }
 
+interface ProviderEnvironment {
+  [key: string]: string | undefined
+  CEREBRAS_API_KEY?: string
+  CEREBRAS_SMART_MODEL?: string
+  GROQ_API_KEY?: string
+  GROQ_SMART_MODEL?: string
+  GROQ_REVIEW_MODEL?: string
+}
+
 const PROVIDER_TIMEOUT_MS = 5_000
 const MAX_PRIMARY_CANDIDATES = 30
 const MAX_REVIEW_CANDIDATES = 12
+const DEFAULT_CEREBRAS_MODEL = 'gpt-oss-120b'
+const DEFAULT_GROQ_SMART_MODEL = 'openai/gpt-oss-20b'
+const DEFAULT_GROQ_REVIEW_MODEL = 'openai/gpt-oss-120b'
 
-function providerConfigs(): ProviderConfig[] {
-  const providers: ProviderConfig[] = []
-  const cerebrasKey = process.env.CEREBRAS_API_KEY?.trim()
-  const groqKey = process.env.GROQ_API_KEY?.trim()
+function clean(value: string | undefined): string {
+  return value?.trim() || ''
+}
+
+export function externalSmartFilterCapabilities(
+  environment: ProviderEnvironment = process.env
+) {
+  const cerebrasKey = clean(environment.CEREBRAS_API_KEY)
+  const groqKey = clean(environment.GROQ_API_KEY)
+
+  return {
+    cerebras: {
+      configured: Boolean(cerebrasKey),
+      model: clean(environment.CEREBRAS_SMART_MODEL) || DEFAULT_CEREBRAS_MODEL,
+    },
+    groq: {
+      configured: Boolean(groqKey),
+      smartModel: clean(environment.GROQ_SMART_MODEL) || DEFAULT_GROQ_SMART_MODEL,
+      reviewModel: clean(environment.GROQ_REVIEW_MODEL) || DEFAULT_GROQ_REVIEW_MODEL,
+    },
+  }
+}
+
+function providerPoolConfig(environment: ProviderEnvironment = process.env): ProviderPoolConfig {
+  const capabilities = externalSmartFilterCapabilities(environment)
+  const cerebrasKey = clean(environment.CEREBRAS_API_KEY)
+  const groqKey = clean(environment.GROQ_API_KEY)
+  const pool: ProviderPoolConfig = {}
 
   if (cerebrasKey) {
-    providers.push({
+    pool.cerebrasPrimary = {
       provider: 'cerebras',
+      role: 'primary',
       apiKey: cerebrasKey,
       endpoint: 'https://api.cerebras.ai/v1/chat/completions',
-      model: process.env.CEREBRAS_SMART_MODEL?.trim() || 'gpt-oss-120b',
-    })
+      model: capabilities.cerebras.model,
+    }
   }
 
   if (groqKey) {
-    providers.push({
+    pool.groqFallback = {
       provider: 'groq',
+      role: 'fallback',
       apiKey: groqKey,
       endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-      model: process.env.GROQ_SMART_MODEL?.trim()
-        || process.env.GROQ_REVIEW_MODEL?.trim()
-        || 'openai/gpt-oss-20b',
-    })
+      model: capabilities.groq.smartModel,
+    }
+    pool.groqReviewer = {
+      provider: 'groq',
+      role: 'review',
+      apiKey: groqKey,
+      endpoint: 'https://api.groq.com/openai/v1/chat/completions',
+      model: capabilities.groq.reviewModel,
+    }
   }
 
-  return providers
-}
-
-export function externalSmartFilterCapabilities() {
-  return {
-    cerebras: {
-      configured: Boolean(process.env.CEREBRAS_API_KEY?.trim()),
-      model: process.env.CEREBRAS_SMART_MODEL?.trim() || 'gpt-oss-120b',
-    },
-    groq: {
-      configured: Boolean(process.env.GROQ_API_KEY?.trim()),
-      model: process.env.GROQ_SMART_MODEL?.trim()
-        || process.env.GROQ_REVIEW_MODEL?.trim()
-        || 'openai/gpt-oss-20b',
-    },
-  }
+  return pool
 }
 
 function responseSchema() {
@@ -214,6 +251,24 @@ function promptForCandidates(
   })
 }
 
+function systemInstruction(role: ExternalProviderRole): string {
+  const roleInstruction = role === 'review'
+    ? 'Act as an independent reviewer. Resolve ambiguous classifications and disagreements using the supplied evidence only.'
+    : 'Act as the primary relevance gate for the supplied candidate batch.'
+
+  return [
+    'You are the relevance gate inside a metasearch super-filter.',
+    roleInstruction,
+    'Judge each candidate against the user’s complete intent, not one isolated keyword.',
+    'VALID means the title, URL, and snippet provide strong evidence that the page answers the full query.',
+    'UNCERTAIN means the page may answer it but the supplied evidence is incomplete.',
+    'REJECTED means irrelevant, a generic homepage, a wrong word meaning, a job/product collision, junk, an aggregator with no substantive answer, or visibly closed/expired/archived.',
+    'Never invent page contents, dates, or status. Use only the supplied candidate evidence.',
+    'Return one decision for every supplied candidate ID.',
+    'Respond only with JSON matching the requested structure.',
+  ].join(' ')
+}
+
 async function callProvider(
   config: ProviderConfig,
   query: string,
@@ -231,19 +286,7 @@ async function callProvider(
     temperature: 0,
     max_completion_tokens: 5_000,
     messages: [
-      {
-        role: 'system',
-        content: [
-          'You are the relevance gate inside a metasearch super-filter.',
-          'Judge each candidate against the user’s complete intent, not one isolated keyword.',
-          'VALID means the title, URL, and snippet provide strong evidence that the page answers the full query.',
-          'UNCERTAIN means the page may answer it but the supplied evidence is incomplete.',
-          'REJECTED means irrelevant, a generic homepage, a wrong word meaning, a job/product collision, junk, an aggregator with no substantive answer, or visibly closed/expired/archived.',
-          'Never invent page contents, dates, or status. Use only the supplied candidate evidence.',
-          'Return one decision for every supplied candidate ID.',
-          'Respond only with JSON matching the requested structure.',
-        ].join(' '),
-      },
+      { role: 'system', content: systemInstruction(config.role) },
       {
         role: 'user',
         content: promptForCandidates(query, lens, intent, results, candidateIds, localDecisions),
@@ -252,7 +295,9 @@ async function callProvider(
     response_format: strictSchema ? responseSchema() : { type: 'json_object' },
   }
 
-  if (config.model.includes('gpt-oss')) body.reasoning_effort = 'low'
+  if (config.model.includes('gpt-oss')) {
+    body.reasoning_effort = config.role === 'review' ? 'medium' : 'low'
+  }
 
   try {
     const response = await fetch(config.endpoint, {
@@ -342,6 +387,7 @@ async function attemptProvider(
     const result = await callProvider(config, query, lens, intent, results, candidateIds, localDecisions)
     attempts.push({
       provider: config.provider,
+      role: config.role,
       model: config.model,
       status: 'success',
       runtimeMs: Date.now() - startedAt,
@@ -351,6 +397,7 @@ async function attemptProvider(
   } catch (error) {
     attempts.push({
       provider: config.provider,
+      role: config.role,
       model: config.model,
       status: 'failed',
       runtimeMs: Date.now() - startedAt,
@@ -368,25 +415,32 @@ export async function runExternalSmartFilterPool(
   results: ScrapedResult[],
   localDecisions: LocalDecisionSummary[]
 ): Promise<ExternalSmartFilterOutcome> {
-  const configs = providerConfigs()
+  const pool = providerPoolConfig()
   const attempts: ExternalProviderAttempt[] = []
-  if (!configs.length || !results.length) {
-    return { configured: configs.length > 0, used: false, decisions: new Map(), attempts }
+  const configured = Boolean(pool.cerebrasPrimary || pool.groqFallback || pool.groqReviewer)
+  if (!configured || !results.length) {
+    return { configured, used: false, decisions: new Map(), attempts }
   }
 
   const candidateIds = results.slice(0, MAX_PRIMARY_CANDIDATES).map((_, index) => index)
-  const cerebras = configs.find(config => config.provider === 'cerebras')
-  const groq = configs.find(config => config.provider === 'groq')
 
-  if (cerebras) {
+  if (pool.cerebrasPrimary) {
     const primary = await attemptProvider(
-      cerebras, query, lens, intent, results, candidateIds, localDecisions, attempts
+      pool.cerebrasPrimary,
+      query,
+      lens,
+      intent,
+      results,
+      candidateIds,
+      localDecisions,
+      attempts
     )
+
     if (primary) {
       const merged = new Map(primary.decisions)
       let mode: ExternalSmartFilterOutcome['mode'] = 'cerebras'
 
-      if (groq) {
+      if (pool.groqReviewer) {
         const reviewIds = candidateIds
           .filter(id => {
             const decision = primary.decisions.get(id)
@@ -396,8 +450,16 @@ export async function runExternalSmartFilterPool(
 
         if (reviewIds.length) {
           const review = await attemptProvider(
-            groq, query, lens, intent, results, reviewIds, localDecisions, attempts
+            pool.groqReviewer,
+            query,
+            lens,
+            intent,
+            results,
+            reviewIds,
+            localDecisions,
+            attempts
           )
+
           if (review) {
             mode = 'cerebras+groq'
             for (const id of reviewIds) {
@@ -422,10 +484,18 @@ export async function runExternalSmartFilterPool(
     }
   }
 
-  if (groq) {
+  if (pool.groqFallback) {
     const fallback = await attemptProvider(
-      groq, query, lens, intent, results, candidateIds, localDecisions, attempts
+      pool.groqFallback,
+      query,
+      lens,
+      intent,
+      results,
+      candidateIds,
+      localDecisions,
+      attempts
     )
+
     if (fallback) {
       return {
         configured: true,
