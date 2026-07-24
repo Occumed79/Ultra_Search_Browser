@@ -45,7 +45,7 @@ const plan: SearchPlan = {
   region: 'us',
 }
 
-test('procurement planning keeps distinct broad, official, document, freshness, and portal searches', () => {
+test('procurement planning keeps full-query, official, document, freshness, and portal searches', () => {
   const variants = buildQueryVariants(
     'occupational health services RFP',
     'procurement',
@@ -55,14 +55,15 @@ test('procurement planning keeps distinct broad, official, document, freshness, 
   )
 
   assert.equal(variants[0].purpose, 'broad')
+  assert.ok(variants.some(variant => variant.query === '"occupational health services RFP"'))
   assert.ok(variants.some(variant => variant.purpose === 'official' && /site:\.gov/i.test(variant.query)))
   assert.ok(variants.some(variant => variant.purpose === 'document' && /filetype:pdf/i.test(variant.query)))
   assert.ok(variants.some(variant => variant.purpose === 'freshness' && /2026/i.test(variant.query)))
   assert.ok(variants.some(variant => variant.purpose === 'portal' && /sam\.gov/i.test(variant.query)))
-  assert.ok(variants.length <= 6)
+  assert.ok(variants.length <= 7)
 })
 
-test('retrieval tasks fan broad queries across selected engines and cap targeted work', () => {
+test('retrieval tasks send the full and protected queries to every selected engine', () => {
   const variants = buildQueryVariants(
     'occupational health services RFP',
     'procurement',
@@ -73,9 +74,13 @@ test('retrieval tasks fan broad queries across selected engines and cap targeted
   const tasks = buildRetrievalTasks(variants, plan)
 
   const originalTasks = tasks.filter(task => task.query === 'occupational health services RFP')
+  const protectedTasks = tasks.filter(task => task.query === '"occupational health services RFP"')
   assert.deepEqual(originalTasks.map(task => task.source), ['google', 'bing', 'duckduckgo'])
+  assert.deepEqual(protectedTasks.map(task => task.source), ['google', 'bing', 'duckduckgo'])
   assert.ok(tasks.some(task => task.purpose === 'official'))
   assert.ok(tasks.some(task => task.purpose === 'document'))
+  assert.ok(tasks.some(task => task.purpose === 'freshness'))
+  assert.ok(tasks.some(task => task.purpose === 'portal'))
   assert.ok(tasks.length <= 14)
 })
 
@@ -101,4 +106,5 @@ test('explicit site, filetype, phrase, and exclusion operators survive query pla
   assert.match(variants[0].query, /filetype:pdf/)
   assert.match(variants[0].query, /"occupational health"/)
   assert.match(variants[0].query, /-archived/)
+  assert.equal(variants.filter(variant => variant.query === '"occupational health"').length, 0)
 })

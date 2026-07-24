@@ -55,6 +55,13 @@ export interface ScrapedResult {
     purposes: string[];
     overlap: number;
   };
+  validation?: {
+    status: "valid" | "uncertain" | "rejected";
+    relevance: number;
+    reason: string;
+    matchedConcepts: string[];
+    mode: "local-rules" | "local-transformer";
+  };
   extractionDiagnostics?: {
     extractionAttempted: boolean;
     extractionSucceeded: boolean;

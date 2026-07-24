@@ -23,7 +23,7 @@ export interface SearchOrchestrationPlan {
 }
 
 const TARGETED_SOURCE_ORDER: LiveSearchSource[] = ['searxng', 'bing', 'duckduckgo', 'google']
-const MAX_QUERY_VARIANTS = 6
+const MAX_QUERY_VARIANTS = 7
 const MAX_LIVE_TASKS = 14
 
 function normalizeQuery(value: string): string {
@@ -60,6 +60,21 @@ function restoreExplicitOperators(query: string, operators: OperatorsResult): st
   return normalizeQuery(pieces.join(' '))
 }
 
+function protectedFullQuery(query: string, operators: OperatorsResult): string | undefined {
+  const hasExplicitOperators = operators.includedSites.length > 0
+    || operators.excludedSites.length > 0
+    || operators.fileTypes.length > 0
+    || operators.inTitleTerms.length > 0
+    || operators.inUrlTerms.length > 0
+    || operators.exactPhrases.length > 0
+    || operators.excludedTerms.length > 0
+
+  const normalized = normalizeQuery(query).replaceAll('"', '')
+  const wordCount = normalized.split(' ').filter(Boolean).length
+  if (hasExplicitOperators || wordCount < 2 || wordCount > 14) return undefined
+  return `"${normalized}"`
+}
+
 export function buildQueryVariants(
   query: string,
   lens: SearchLens,
@@ -71,7 +86,11 @@ export function buildQueryVariants(
   const seen = new Set<string>()
   const explicitQuery = restoreExplicitOperators(query, operators)
 
+  // Every selected engine receives the user's complete sentence unchanged.
   addVariant(variants, seen, explicitQuery, 'broad', 100)
+  // A protected phrase pass prevents engines from silently reducing a
+  // multi-word intent to one broad token such as "occupational".
+  addVariant(variants, seen, protectedFullQuery(query, operators), 'semantic', 95)
 
   const semantic = findFirst(
     expanded.expansions,
@@ -139,13 +158,17 @@ export function buildRetrievalTasks(variants: QueryVariant[], plan: SearchPlan):
     tasks.push({ source, query: variant.query, purpose: variant.purpose })
   }
 
-  const broadVariants = variants.filter(variant => variant.purpose === 'broad' || variant.purpose === 'semantic').slice(0, 2)
+  const broadVariants = variants
+    .filter(variant => variant.purpose === 'broad' || variant.priority === 95)
+    .slice(0, 2)
   for (const variant of broadVariants) {
     for (const source of plan.liveSources) addTask(source, variant)
   }
 
   const targetedSources = orderedTargetedSources(plan.liveSources)
-  const targetedVariants = variants.filter(variant => !broadVariants.includes(variant))
+  const targetedVariants = variants.filter(
+    variant => !broadVariants.includes(variant) && variant.purpose !== 'semantic'
+  )
   for (const variant of targetedVariants) {
     const sources = targetedSources.length > 1 ? targetedSources.slice(0, 2) : targetedSources
     for (const source of sources) addTask(source, variant)

@@ -6,6 +6,7 @@ import { applyDomainPreferences, getDomainPreferences, type DomainPreference } f
 import { extractIntelligence } from '../../../../lib/entity-extraction'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { insertPricingFinding } from '../../../../lib/search-storage'
+import { applySmartFilter } from '../../../../lib/smart-filter'
 import { extractPricingFindings } from '../../../../lib/verticals/pricing/extract'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
 
@@ -40,6 +41,7 @@ const MAX_INPUT_RESULTS = 60
 const MAX_EXTRACTION_TARGETS = 6
 const EXTRACTION_TIMEOUT_MS = 5_500
 const MAX_EXTRACTED_TEXT_LENGTH = 100_000
+const MAX_LOCAL_SEMANTIC_TARGETS = 12
 
 interface EnrichmentRequest {
   query?: string
@@ -241,23 +243,30 @@ export async function POST(request: NextRequest) {
       }
     })
 
-    enriched.sort((left, right) => right.score - left.score)
-    enriched.forEach((result, index) => {
-      result.rank = index + 1
-    })
+    const refined = await applySmartFilter(
+      query,
+      lens,
+      enriched,
+      inputResults.length,
+      {
+        useLocalTransformer: true,
+        semanticCandidateLimit: MAX_LOCAL_SEMANTIC_TARGETS,
+      }
+    )
 
-    const persistentMemory = await indexResultsInPersistentMemory(enriched, lens, 12, 4_000)
+    const persistentMemory = await indexResultsInPersistentMemory(refined.results, lens, 12, 4_000)
 
     return NextResponse.json({
       query,
       lens,
-      results: enriched,
+      results: refined.results,
       diagnostics: {
         runtimeMs: Date.now() - startedAt,
         extractionAttempted,
         extractionSucceeded,
         pricingFindingsSaved,
         blockedDomainsRemoved,
+        smartFilter: refined.diagnostics,
         persistentMemory,
       },
     })
