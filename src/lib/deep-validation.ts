@@ -129,6 +129,26 @@ function bucketResult(result: ScrapedResult, bucket: ResultBucket): ScrapedResul
   return publicResult({ ...result, bucket })
 }
 
+function evidenceReviewCandidate(result: ScrapedResult): ScrapedResult {
+  const page = result.pageValidation
+  const evidence = page?.evidence?.join(' ') || ''
+  const lifecycle = page
+    ? `Page availability: ${page.availability}. Lifecycle status: ${page.lifecycle.status}. ${page.lifecycle.reason}`
+    : ''
+  const pageContent = result.content || ''
+  return {
+    ...result,
+    // Existing local and external smart filters consume description. Supplying
+    // the extracted public evidence here makes both provider layers judge the
+    // actual destination page without leaking the full body into the response.
+    description: [result.description, lifecycle, evidence, pageContent]
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .slice(0, 7_500),
+  }
+}
+
 export async function deepValidateResults(
   query: string,
   lens: SearchLens,
@@ -193,17 +213,31 @@ export async function deepValidateResults(
   await emit({ type: 'progress', progress: { ...progress } })
 
   const reviewable = validated.filter(result => !lifecycleBucket(result) && result.pageValidation?.availability === 'reachable')
-  let smartDiagnostics = EMPTY_SMART_DIAGNOSTICS
+  let smartDiagnostics = { ...EMPTY_SMART_DIAGNOSTICS, interpretation: query }
   let reviewedByUrl = new Map<string, ScrapedResult>()
 
   if (reviewable.length > 0) {
-    const smart = await applySmartFilter(query, lens, reviewable, reviewable.length, {
-      useLocalTransformer: true,
-      useExternalProviders: true,
-      semanticCandidateLimit: Math.min(16, reviewable.length),
-    })
+    const smart = await applySmartFilter(
+      query,
+      lens,
+      reviewable.map(evidenceReviewCandidate),
+      reviewable.length,
+      {
+        useLocalTransformer: true,
+        useExternalProviders: true,
+        semanticCandidateLimit: Math.min(16, reviewable.length),
+      }
+    )
     smartDiagnostics = smart.diagnostics
-    reviewedByUrl = new Map(smart.results.map(result => [result.url, result]))
+    const originalByUrl = new Map(reviewable.map(result => [result.url, result]))
+    reviewedByUrl = new Map(smart.results.map(reviewed => {
+      const original = originalByUrl.get(reviewed.url) || reviewed
+      return [reviewed.url, {
+        ...original,
+        score: reviewed.score,
+        validation: reviewed.validation,
+      }]
+    }))
   }
 
   const buckets = emptyBuckets()
@@ -269,7 +303,7 @@ export async function deepValidateResults(
   const displayable = [...buckets.valid, ...buckets.uncertain]
   const deduped = deduplicateEntities(displayable, lens)
   buckets.duplicate.push(...deduped.duplicates.map(result => bucketResult(result, 'duplicate')))
-  buckets.valid = deduped.results.filter(result => result.bucket === 'valid' || result.validation?.status === 'valid')
+  buckets.valid = deduped.results.filter(result => result.validation?.status === 'valid')
     .map(result => bucketResult(result, 'valid'))
   buckets.uncertain = deduped.results.filter(result => result.validation?.status !== 'valid')
     .map(result => bucketResult(result, 'uncertain'))
