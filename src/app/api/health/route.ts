@@ -1,5 +1,6 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
 export const dynamic = 'force-dynamic'
@@ -21,7 +22,7 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v4-semantic-superfilter',
+    searchPipeline: 'orchestrated-v5-evidence-stream',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -36,6 +37,12 @@ function healthPayload() {
       groqSmartFilter: providers.groq.configured,
       groqSmartModel: providers.groq.smartModel,
       groqReviewModel: providers.groq.reviewModel,
+      deepPageValidation: true,
+      streamingValidation: true,
+      lifecycleDetection: true,
+      entityDeduplication: true,
+      pageValidationMaxTargets: 24,
+      pageValidationCache: pageValidationCacheStats(),
       ocr: process.env.ENABLE_OCR === 'true',
       marginalia: process.env.ENABLE_MARGINALIA !== 'false',
     },
