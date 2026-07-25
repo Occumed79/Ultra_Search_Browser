@@ -11,33 +11,15 @@ const FORBIDDEN_HOSTS = new Set([
   'login.microsoftonline.com', 'accounts.google.com',
 ])
 
-const OFFICIAL_EVIDENCE_CANDIDATES = [
+const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
-    title: 'Occupational Health Professionals - Overview | OSHA',
-    url: 'https://www.osha.gov/occupational-health-professionals',
-    description: 'Official OSHA overview of occupational health professionals, programs, and services.',
-    domain: 'osha.gov',
+    title: 'Ultra Search Browser',
+    url: `${APP_URL}/`,
+    description: 'Ultra Search Browser is a web search application for documents, bids, pricing, providers, and public-web research.',
+    domain: new URL(APP_URL).hostname,
     source: 'production-smoke',
     rank: 1,
     score: 100,
-  },
-  {
-    title: "OSHA's Clinicians Web Page",
-    url: 'https://www.osha.gov/clinicians',
-    description: 'Official OSHA occupational-health guidance for clinicians caring for workers.',
-    domain: 'osha.gov',
-    source: 'production-smoke',
-    rank: 2,
-    score: 95,
-  },
-  {
-    title: 'Help for Employers | OSHA',
-    url: 'https://www.osha.gov/employers',
-    description: 'Official OSHA workplace safety, health, consultation, and compliance assistance resources.',
-    domain: 'osha.gov',
-    source: 'production-smoke',
-    rank: 3,
-    score: 90,
   },
 ]
 
@@ -155,10 +137,10 @@ async function runEvidenceValidation() {
     method: 'POST',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: 'occupational health professionals and services',
-      lens: 'government',
-      results: OFFICIAL_EVIDENCE_CANDIDATES,
-      maxTargets: OFFICIAL_EVIDENCE_CANDIDATES.length,
+      query: 'Ultra Search Browser web search application',
+      lens: 'web',
+      results: SELF_HOSTED_EVIDENCE_CANDIDATES,
+      maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
     }),
     signal: AbortSignal.timeout(120_000),
   })
@@ -191,7 +173,9 @@ async function runEvidenceValidation() {
 
   if (!complete) throw new Error('Evidence stream ended without completion.')
   if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
-  if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify(complete.progress)}`)
+  if (Number(complete.progress?.reachable || 0) < 1) {
+    throw new Error(`No reachable evidence: ${JSON.stringify({ progress: complete.progress, buckets: complete.buckets }).slice(0, 2_500)}`)
+  }
   if (!Array.isArray(complete.results) || complete.results.length < 1) {
     throw new Error(`No verified evidence result: ${JSON.stringify(complete.buckets).slice(0, 2_000)}`)
   }
