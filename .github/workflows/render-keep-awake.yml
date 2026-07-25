@@ -15,7 +15,7 @@ concurrency:
 jobs:
   ping-render-services:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 6
 
     steps:
       - name: Ping Render health endpoints
@@ -29,12 +29,34 @@ jobs:
           unique_targets_file="$(mktemp)"
 
           cat > "$targets_file" <<'EOF'
+          # Ultra Search Browser
           https://ultra-search-browser.onrender.com/api/health
+
+          # Network and atlas apps
           https://network-map-tool-mqib.onrender.com/api/health
           https://service-map-atlas-final.onrender.com/api/health
+
+          # Search and intelligence apps
           https://international-search.onrender.com/
           https://insight-hub-eyza.onrender.com/api/health
+          https://insight-hub2-0-fz26.onrender.com/api/healthz
+          https://occu-med-insight-hub.onrender.com/api/healthz
+          https://price-search-tool.onrender.com/
+          https://price-search-api.onrender.com/api/healthz
+          https://provider-intelligence-hub-api.onrender.com/api/healthz
+          https://hiring-trend-dashboard.onrender.com/api/health
+
+          # Employee, assessment, and workflow apps
+          https://employee-lookup.onrender.com/api/health
+          https://employee-lookup-api.onrender.com/api/health
+          https://human-systems-intelligence.onrender.com/api/health
+          https://exam-review-report.onrender.com/
+          https://packetpath-docusign-replacement.onrender.com/api/health
+
+          # Operations and document apps
           https://lab-supplies-order-api.onrender.com/health
+          https://pricing-agreement-generator.onrender.com/
+          https://source-vault.onrender.com/
           EOF
 
           if [[ -n "${EXTRA_RENDER_URLS:-}" ]]; then
@@ -45,13 +67,12 @@ jobs:
           fi
 
           sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$targets_file" \
-            | sed '/^$/d' \
+            | sed '/^$/d;/^#/d' \
             | sort -u \
             > "$unique_targets_file"
 
-          failures=0
-
-          while IFS= read -r url; do
+          ping_url() {
+            local url="$1"
             echo "Pinging ${url}"
 
             if curl \
@@ -59,20 +80,21 @@ jobs:
               --silent \
               --show-error \
               --location \
-              --max-time 50 \
+              --max-time 55 \
               --retry 2 \
               --retry-delay 5 \
               --retry-all-errors \
-              --user-agent "Occu-Med-Render-Keep-Awake/1.0" \
+              --user-agent "Occu-Med-Render-Keep-Awake/2.0" \
               "$url" \
               > /dev/null; then
               echo "Healthy: ${url}"
             else
-              echo "::warning::Ping failed for ${url}"
-              failures=$((failures + 1))
+              echo "::warning::Ping failed for ${url}; the inbound request was still attempted."
             fi
-          done < "$unique_targets_file"
+          }
 
-          if (( failures > 0 )); then
-            echo "::warning::${failures} Render endpoint(s) did not respond successfully, but every configured service was attempted."
-          fi
+          export -f ping_url
+
+          # Run a few requests concurrently so one cold or unavailable service
+          # cannot delay the rest of the keep-awake cycle.
+          xargs -r -P 6 -n 1 bash -c 'ping_url "$1"' _ < "$unique_targets_file" || true
