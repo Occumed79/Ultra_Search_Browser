@@ -1,4 +1,4 @@
-name: Keep Render Awake
+name: Keep Render Services Awake
 
 on:
   schedule:
@@ -15,19 +15,27 @@ concurrency:
 jobs:
   ping-render-services:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 8
 
     steps:
       - name: Ping Render health endpoints
         env:
-          PRIMARY_HEALTH_URL: https://ultra-search-browser.onrender.com/api/health
           EXTRA_RENDER_URLS: ${{ vars.RENDER_KEEP_AWAKE_URLS }}
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           targets_file="$(mktemp)"
-          printf '%s\n' "$PRIMARY_HEALTH_URL" > "$targets_file"
+          unique_targets_file="$(mktemp)"
+
+          cat > "$targets_file" <<'EOF'
+          https://ultra-search-browser.onrender.com/api/health
+          https://network-map-tool-mqib.onrender.com/api/health
+          https://service-map-atlas-final.onrender.com/api/health
+          https://international-search.onrender.com/
+          https://insight-hub-eyza.onrender.com/api/health
+          https://lab-supplies-order-api.onrender.com/health
+          EOF
 
           if [[ -n "${EXTRA_RENDER_URLS:-}" ]]; then
             printf '%s\n' "$EXTRA_RENDER_URLS" \
@@ -36,19 +44,35 @@ jobs:
               >> "$targets_file"
           fi
 
-          sort -u "$targets_file" | while IFS= read -r url; do
+          sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "$targets_file" \
+            | sed '/^$/d' \
+            | sort -u \
+            > "$unique_targets_file"
+
+          failures=0
+
+          while IFS= read -r url; do
             echo "Pinging ${url}"
-            curl \
+
+            if curl \
               --fail \
               --silent \
               --show-error \
               --location \
-              --max-time 45 \
+              --max-time 50 \
               --retry 2 \
               --retry-delay 5 \
               --retry-all-errors \
-              --user-agent "Ultra-Search-Render-Keep-Awake/1.0" \
+              --user-agent "Occu-Med-Render-Keep-Awake/1.0" \
               "$url" \
-              > /dev/null
-            echo "Healthy: ${url}"
-          done
+              > /dev/null; then
+              echo "Healthy: ${url}"
+            else
+              echo "::warning::Ping failed for ${url}"
+              failures=$((failures + 1))
+            fi
+          done < "$unique_targets_file"
+
+          if (( failures > 0 )); then
+            echo "::warning::${failures} Render endpoint(s) did not respond successfully, but every configured service was attempted."
+          fi
