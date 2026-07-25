@@ -13,9 +13,9 @@ const FORBIDDEN_HOSTS = new Set([
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
-    title: 'Ultra Search Browser',
-    url: `${APP_URL}/`,
-    description: 'Ultra Search Browser is a web search application for documents, bids, pricing, providers, and public-web research.',
+    title: 'Ultra Search Browser Production Validation Evidence',
+    url: `${APP_URL}/search-validation-evidence.txt`,
+    description: 'Static Ultra Search Browser production evidence for page retrieval, extraction, semantic review, lifecycle classification, streaming progress, and verified-only output.',
     domain: new URL(APP_URL).hostname,
     source: 'production-smoke',
     rank: 1,
@@ -137,7 +137,7 @@ async function runEvidenceValidation() {
     method: 'POST',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: 'Ultra Search Browser web search application',
+      query: 'Ultra Search Browser production validation evidence',
       lens: 'web',
       results: SELF_HOSTED_EVIDENCE_CANDIDATES,
       maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
