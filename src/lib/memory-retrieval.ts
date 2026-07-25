@@ -119,21 +119,23 @@ export async function keywordSearchStoredResults(
     const params = vertical ? [tsQuery, limit, vertical] : [tsQuery, limit]
     const response = await query(sql, params)
     if (response?.rows) {
-      return response.rows.map((row: Record<string, unknown>, index: number) => ({
-        id: typeof row.id === 'string' ? row.id : undefined,
-        title: typeof row.title === 'string' ? row.title : '',
-        url: typeof row.url === 'string' ? row.url : '',
-        description: typeof row.snippet === 'string' ? row.snippet : '',
-        domain: typeof row.domain === 'string'
-          ? row.domain
-          : typeof row.url === 'string'
-            ? new URL(row.url).hostname
-            : '',
-        source: 'memory-keyword',
-        rank: index + 1,
-        score: Number(row.score || 0),
-        bucket: 'valid',
-      })).filter(result => Boolean(result.url && result.title))
+      return response.rows
+        .map((row: Record<string, unknown>, index: number): ScrapedResult => ({
+          id: typeof row.id === 'string' ? row.id : undefined,
+          title: typeof row.title === 'string' ? row.title : '',
+          url: typeof row.url === 'string' ? row.url : '',
+          description: typeof row.snippet === 'string' ? row.snippet : '',
+          domain: typeof row.domain === 'string'
+            ? row.domain
+            : typeof row.url === 'string'
+              ? new URL(row.url).hostname
+              : '',
+          source: 'memory-keyword',
+          rank: index + 1,
+          score: Number(row.score || 0),
+          bucket: 'valid',
+        }))
+        .filter(result => Boolean(result.url && result.title))
     }
   } catch (error) {
     console.warn('Verified full-text memory search failed, falling back to ILIKE:', error)
@@ -162,21 +164,23 @@ export async function keywordSearchStoredResults(
     const params = vertical ? [like, vertical, limit] : [like, limit]
     const response = await query(sql, params)
     if (response?.rows) {
-      return response.rows.map((row: Record<string, unknown>, index: number) => ({
-        id: typeof row.id === 'string' ? row.id : undefined,
-        title: typeof row.title === 'string' ? row.title : '',
-        url: typeof row.url === 'string' ? row.url : '',
-        description: typeof row.snippet === 'string' ? row.snippet : '',
-        domain: typeof row.domain === 'string'
-          ? row.domain
-          : typeof row.url === 'string'
-            ? new URL(row.url).hostname
-            : '',
-        source: 'memory-keyword',
-        rank: index + 1,
-        score: 1,
-        bucket: 'valid',
-      })).filter(result => Boolean(result.url && result.title))
+      return response.rows
+        .map((row: Record<string, unknown>, index: number): ScrapedResult => ({
+          id: typeof row.id === 'string' ? row.id : undefined,
+          title: typeof row.title === 'string' ? row.title : '',
+          url: typeof row.url === 'string' ? row.url : '',
+          description: typeof row.snippet === 'string' ? row.snippet : '',
+          domain: typeof row.domain === 'string'
+            ? row.domain
+            : typeof row.url === 'string'
+              ? new URL(row.url).hostname
+              : '',
+          source: 'memory-keyword',
+          rank: index + 1,
+          score: 1,
+          bucket: 'valid',
+        }))
+        .filter(result => Boolean(result.url && result.title))
     }
   } catch (error) {
     console.warn('Verified ILIKE memory search failed:', error)
@@ -218,7 +222,7 @@ export async function vectorSearchStoredResults(
           && similarity >= MIN_VECTOR_MEMORY_SIMILARITY
       })
       .slice(0, limit)
-      .map((document, index) => ({
+      .map((document, index): ScrapedResult => ({
         title: document.metadata.title || '',
         url: document.metadata.url || document.id || '',
         description: document.text || '',
