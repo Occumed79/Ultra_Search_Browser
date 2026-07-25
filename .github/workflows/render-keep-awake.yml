@@ -35,6 +35,7 @@ jobs:
           # Network and atlas apps
           https://network-map-tool-mqib.onrender.com/api/health
           https://service-map-atlas-final.onrender.com/api/health
+          https://occu-med-global-address-geocoder.onrender.com/
 
           # Search and intelligence apps
           https://international-search.onrender.com/
