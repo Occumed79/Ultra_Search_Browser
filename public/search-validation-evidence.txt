@@ -1,0 +1,5 @@
+Ultra Search Browser production validation evidence.
+
+Ultra Search Browser is a public-web metasearch and evidence-validation application. It searches multiple sources, preserves the complete user query, rejects search-engine navigation and authentication links, opens destination pages, extracts readable HTML, PDF, and DOCX content, detects expired or closed opportunities, groups duplicate entities, and separates valid, uncertain, expired, dead, rejected, and duplicate results.
+
+This static document exists so the production health workflow can verify page retrieval, text extraction, semantic review, lifecycle classification, streaming progress, and verified-only result output without depending on a third-party website allowing automated requests from the deployment platform.
