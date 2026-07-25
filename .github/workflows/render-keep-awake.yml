@@ -1,0 +1,54 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-keep-awake
+  cancel-in-progress: true
+
+jobs:
+  ping-render-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Ping Render health endpoints
+        env:
+          PRIMARY_HEALTH_URL: https://ultra-search-browser.onrender.com/api/health
+          EXTRA_RENDER_URLS: ${{ vars.RENDER_KEEP_AWAKE_URLS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          targets_file="$(mktemp)"
+          printf '%s\n' "$PRIMARY_HEALTH_URL" > "$targets_file"
+
+          if [[ -n "${EXTRA_RENDER_URLS:-}" ]]; then
+            printf '%s\n' "$EXTRA_RENDER_URLS" \
+              | tr ', ' '\n\n' \
+              | sed '/^[[:space:]]*$/d' \
+              >> "$targets_file"
+          fi
+
+          sort -u "$targets_file" | while IFS= read -r url; do
+            echo "Pinging ${url}"
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --max-time 45 \
+              --retry 2 \
+              --retry-delay 5 \
+              --retry-all-errors \
+              --user-agent "Ultra-Search-Render-Keep-Awake/1.0" \
+              "$url" \
+              > /dev/null
+            echo "Healthy: ${url}"
+          done
