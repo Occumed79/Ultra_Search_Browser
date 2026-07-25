@@ -1,5 +1,5 @@
 import { searchBingHTML, searchDuckDuckGo, type SearchEngineOptions } from './search'
-import { parseBingRss, parseDuckDuckGoLite } from './search-response-parsers'
+import { isUsableExternalResult, parseBingRss, parseDuckDuckGoLite } from './search-response-parsers'
 import type { ScrapedResult } from '../types/search'
 
 const FALLBACK_TIMEOUT_MS = 4_500
@@ -59,6 +59,7 @@ function mergeResults(resultSets: ScrapedResult[][]): ScrapedResult[] {
   for (const result of resultSets.flat()) {
     try {
       const normalized = new URL(result.url).toString()
+      if (!isUsableExternalResult(normalized, result.title, result.description)) continue
       if (seen.has(normalized)) continue
       seen.add(normalized)
       merged.push({ ...result, url: normalized, domain: result.domain || extractDomain(normalized) })
@@ -104,7 +105,7 @@ export async function searchBingResilient(query: string, options: SearchEngineOp
   ])
   const results = mergeResults(settled.flatMap(item => item.status === 'fulfilled' ? [item.value] : []))
 
-  if (results.length === 0) throw new Error('Bing returned no parseable results')
+  if (results.length === 0) throw new Error('Bing returned no parseable external results')
   return toSearchPayload(results)
 }
 
@@ -115,6 +116,6 @@ export async function searchDuckDuckGoResilient(query: string, options: SearchEn
   ])
   const results = mergeResults(settled.flatMap(item => item.status === 'fulfilled' ? [item.value] : []))
 
-  if (results.length === 0) throw new Error('DuckDuckGo returned no parseable results')
+  if (results.length === 0) throw new Error('DuckDuckGo returned no parseable external results')
   return toSearchPayload(results)
 }

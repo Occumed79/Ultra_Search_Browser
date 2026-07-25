@@ -1,41 +1,36 @@
 import type { ScrapedResult } from '../types/search'
 import { hasDatabase, query } from './db'
-import { createVectorStoreAdapter, type VectorStoreAdapter } from './vector-store'
+import { createVectorStoreAdapter, type SearchDocument, type VectorStoreAdapter } from './vector-store'
 import { generateEmbedding, isEmbeddingsReady } from './embeddings'
+
+const MIN_VECTOR_MEMORY_SIMILARITY = 0.64
 
 function normalizeUrl(url: string): string {
   try {
     const u = new URL(url)
-    // drop fragments
     u.hash = ''
-    // remove common tracking params
-    u.searchParams.forEach((value, key) => {
+    u.searchParams.forEach((_value, key) => {
       const k = key.toLowerCase()
       if (k.startsWith('utm_') || k === 'fbclid' || k === 'gclid') {
         u.searchParams.delete(key)
       }
     })
-    // strip trailing slash
-    let cleaned = u.toString().replace(/\/$/, '')
-    return cleaned.toLowerCase()
-  } catch (err) {
-    // fallback: basic normalization
+    return u.toString().replace(/\/$/, '').toLowerCase()
+  } catch {
     return url.replace(/\/$/, '').toLowerCase()
   }
 }
 
 export function dedupeByUrl(results: ScrapedResult[]): ScrapedResult[] {
   const map = new Map<string, ScrapedResult>()
-  for (const r of results) {
-    const u = r.url ? normalizeUrl(r.url) : ''
-    if (!map.has(u)) {
-      map.set(u, r)
+  for (const result of results) {
+    const normalized = result.url ? normalizeUrl(result.url) : ''
+    if (!normalized) continue
+    if (!map.has(normalized)) {
+      map.set(normalized, result)
     } else {
-      // keep the one with higher score
-      const existing = map.get(u)!
-      if ((r.score || 0) > (existing.score || 0)) {
-        map.set(u, r)
-      }
+      const existing = map.get(normalized) as ScrapedResult
+      if ((result.score || 0) > (existing.score || 0)) map.set(normalized, result)
     }
   }
   return Array.from(map.values())
@@ -46,154 +41,198 @@ async function getPgVectorStore(): Promise<VectorStoreAdapter | null> {
   if (!databaseUrl) return null
   try {
     const adapter = createVectorStoreAdapter('pgvector', databaseUrl)
-    if ('initialize' in adapter) {
+    const initializable = adapter as VectorStoreAdapter & { initialize?: () => Promise<void> }
+    if (typeof initializable.initialize === 'function') {
       try {
-        await (adapter as any).initialize()
-      } catch (e) {
-        // ignore
+        await initializable.initialize()
+      } catch {
+        // The adapter search call will surface a meaningful failure when initialization is required.
       }
     }
     return adapter
-  } catch (err) {
-    console.warn('Failed to create pgvector adapter:', err)
+  } catch (error) {
+    console.warn('Failed to create pgvector adapter:', error)
     return null
   }
 }
 
+function verifiedMetadata(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false
+  return (metadata as Record<string, unknown>).verificationStatus === 'valid'
+}
+
 /**
- * Keyword search of stored results. Uses Postgres full-text search when available, falls back to ILIKE.
- * Returns ScrapedResult-compatible objects with source = 'memory-keyword'.
+ * Keyword search of verified stored results. Candidate rows and legacy rows
+ * without explicit verification metadata are intentionally excluded.
  */
 export async function keywordSearchStoredResults(
   queryText: string,
   vertical?: string,
-  operators?: any,
+  _operators?: unknown,
   limit = 20
 ): Promise<ScrapedResult[]> {
   if (!hasDatabase()) return []
 
-  // Try full-text search first
   try {
     const tsQuery = queryText.replace(/\W+/g, ' ').trim()
     if (!tsQuery) return []
 
-    // Build optional vertical filter
-    const verticalFilter = vertical ? `AND (metadata->>'lens' = '${vertical}' OR $3::text IS NULL)` : ''
-
-    const sql = `
-      SELECT id, url, title, snippet, domain, source_engine, rank, metadata,
-        ts_rank_cd(
-          setweight(to_tsvector(coalesce(title,'')), 'A') ||
-          setweight(to_tsvector(coalesce(snippet,'')), 'B') ||
-          setweight(to_tsvector(coalesce(extracted_text,'')), 'C'),
-          plainto_tsquery($1)
-        ) as score
-      FROM search_results
-      WHERE (
-        to_tsvector(coalesce(title,'')) || to_tsvector(coalesce(snippet,'')) || to_tsvector(coalesce(extracted_text,''))
-      ) @@ plainto_tsquery($1)
-      ${vertical ? "AND (metadata->>'lens' = $3)" : ''}
-      ORDER BY score DESC, rank ASC
-      LIMIT $2
-    `
+    const sql = vertical
+      ? `
+        SELECT id, url, title, snippet, domain, source_engine, rank, metadata,
+          ts_rank_cd(
+            setweight(to_tsvector(coalesce(title,'')), 'A') ||
+            setweight(to_tsvector(coalesce(snippet,'')), 'B') ||
+            setweight(to_tsvector(coalesce(extracted_text,'')), 'C'),
+            plainto_tsquery($1)
+          ) AS score
+        FROM search_results
+        WHERE metadata->>'verificationStatus' = 'valid'
+          AND metadata->>'lens' = $3
+          AND (
+            to_tsvector(coalesce(title,'')) ||
+            to_tsvector(coalesce(snippet,'')) ||
+            to_tsvector(coalesce(extracted_text,''))
+          ) @@ plainto_tsquery($1)
+        ORDER BY score DESC, rank ASC
+        LIMIT $2
+      `
+      : `
+        SELECT id, url, title, snippet, domain, source_engine, rank, metadata,
+          ts_rank_cd(
+            setweight(to_tsvector(coalesce(title,'')), 'A') ||
+            setweight(to_tsvector(coalesce(snippet,'')), 'B') ||
+            setweight(to_tsvector(coalesce(extracted_text,'')), 'C'),
+            plainto_tsquery($1)
+          ) AS score
+        FROM search_results
+        WHERE metadata->>'verificationStatus' = 'valid'
+          AND (
+            to_tsvector(coalesce(title,'')) ||
+            to_tsvector(coalesce(snippet,'')) ||
+            to_tsvector(coalesce(extracted_text,''))
+          ) @@ plainto_tsquery($1)
+        ORDER BY score DESC, rank ASC
+        LIMIT $2
+      `
 
     const params = vertical ? [tsQuery, limit, vertical] : [tsQuery, limit]
-
-    const res = await query(sql, params as any[])
-    if (res && res.rows) {
-      const out: ScrapedResult[] = res.rows.map((row: any, i: number) => ({
-        title: row.title || '',
-        url: row.url || '',
-        description: row.snippet || '',
-        domain: row.domain || (row.url ? new URL(row.url).hostname : ''),
+    const response = await query(sql, params)
+    if (response?.rows) {
+      return response.rows.map((row: Record<string, unknown>, index: number) => ({
+        id: typeof row.id === 'string' ? row.id : undefined,
+        title: typeof row.title === 'string' ? row.title : '',
+        url: typeof row.url === 'string' ? row.url : '',
+        description: typeof row.snippet === 'string' ? row.snippet : '',
+        domain: typeof row.domain === 'string'
+          ? row.domain
+          : typeof row.url === 'string'
+            ? new URL(row.url).hostname
+            : '',
         source: 'memory-keyword',
-        rank: i + 1,
-        score: row.score || 0,
-      }))
-      return out
+        rank: index + 1,
+        score: Number(row.score || 0),
+        bucket: 'valid',
+      })).filter(result => Boolean(result.url && result.title))
     }
-  } catch (err) {
-    // Full-text search might not be available; fall back to ILIKE
-    console.warn('Full-text search failed, falling back to ILIKE:', err)
+  } catch (error) {
+    console.warn('Verified full-text memory search failed, falling back to ILIKE:', error)
   }
 
-  // Fallback ILIKE search
   try {
     const like = `%${queryText}%`
-    const sql = `
-      SELECT id, url, title, snippet, domain, source_engine, rank, metadata
-      FROM search_results
-      WHERE (title ILIKE $1 OR snippet ILIKE $1 OR extracted_text ILIKE $1)
-      ${vertical ? "AND (metadata->>'lens' = $2)" : ''}
-      ORDER BY created_at DESC
-      LIMIT $3
-    `
+    const sql = vertical
+      ? `
+        SELECT id, url, title, snippet, domain, source_engine, rank, metadata
+        FROM search_results
+        WHERE metadata->>'verificationStatus' = 'valid'
+          AND metadata->>'lens' = $2
+          AND (title ILIKE $1 OR snippet ILIKE $1 OR extracted_text ILIKE $1)
+        ORDER BY created_at DESC
+        LIMIT $3
+      `
+      : `
+        SELECT id, url, title, snippet, domain, source_engine, rank, metadata
+        FROM search_results
+        WHERE metadata->>'verificationStatus' = 'valid'
+          AND (title ILIKE $1 OR snippet ILIKE $1 OR extracted_text ILIKE $1)
+        ORDER BY created_at DESC
+        LIMIT $2
+      `
     const params = vertical ? [like, vertical, limit] : [like, limit]
-    const res = await query(sql, params as any[])
-    if (res && res.rows) {
-      const out: ScrapedResult[] = res.rows.map((row: any, i: number) => ({
-        title: row.title || '',
-        url: row.url || '',
-        description: row.snippet || '',
-        domain: row.domain || (row.url ? new URL(row.url).hostname : ''),
+    const response = await query(sql, params)
+    if (response?.rows) {
+      return response.rows.map((row: Record<string, unknown>, index: number) => ({
+        id: typeof row.id === 'string' ? row.id : undefined,
+        title: typeof row.title === 'string' ? row.title : '',
+        url: typeof row.url === 'string' ? row.url : '',
+        description: typeof row.snippet === 'string' ? row.snippet : '',
+        domain: typeof row.domain === 'string'
+          ? row.domain
+          : typeof row.url === 'string'
+            ? new URL(row.url).hostname
+            : '',
         source: 'memory-keyword',
-        rank: i + 1,
+        rank: index + 1,
         score: 1,
-      }))
-      return out
+        bucket: 'valid',
+      })).filter(result => Boolean(result.url && result.title))
     }
-  } catch (err) {
-    console.warn('ILike keyword search failed:', err)
+  } catch (error) {
+    console.warn('Verified ILIKE memory search failed:', error)
   }
 
   return []
 }
 
 /**
- * Vector search of stored results using pgvector via existing adapter.
- * Returns ScrapedResult-compatible objects with source = 'memory-vector'.
+ * Vector search of verified pgvector documents. Legacy documents and weak
+ * semantic matches are excluded so stale unrelated memory cannot dominate
+ * fresh public retrieval.
  */
 export async function vectorSearchStoredResults(
   queryText: string,
   vertical?: string,
   limit = 10
 ): Promise<ScrapedResult[]> {
-  // If no DB or no pgvector, return []
   const adapter = await getPgVectorStore()
   if (!adapter) return []
 
-  // Generate embedding for query if possible
-  let vector: number[] | undefined = undefined
+  let vector: number[]
   try {
-    if (isEmbeddingsReady()) {
-      vector = await generateEmbedding(queryText)
-    } else {
-      // still attempt; generateEmbedding may fallback to hash-based
-      vector = await generateEmbedding(queryText)
-    }
-  } catch (err) {
-    console.warn('Failed to generate embedding for query:', err)
+    vector = isEmbeddingsReady()
+      ? await generateEmbedding(queryText)
+      : await generateEmbedding(queryText)
+  } catch (error) {
+    console.warn('Failed to generate embedding for query:', error)
     return []
   }
 
-  if (!vector) return []
-
   try {
-    const docs = await adapter.searchByVector(vector, limit)
-    const out: ScrapedResult[] = docs.map((d, i) => ({
-      title: d.metadata.title || '',
-      url: d.metadata.url || d.id || '',
-      description: d.text || '',
-      domain: d.metadata.url ? new URL(d.metadata.url).hostname : (d.metadata.domain || ''),
-      source: 'memory-vector',
-      rank: i + 1,
-      // Similarity is normalized to a bounded score so vector memory can influence
-      // ordering without overpowering fresh government/PDF/procurement boosts.
-      score: Math.max(0, Math.min(1, d.similarity ?? 0)) * 10,
-    }))
-    return out
-  } catch (err) {
-    console.warn('Vector search failed:', err)
+    const docs = await adapter.searchByVector(vector, Math.max(limit * 4, 30))
+    return docs
+      .filter((document: SearchDocument) => {
+        const similarity = Number(document.similarity || 0)
+        return verifiedMetadata(document.metadata)
+          && (!vertical || document.metadata.lens === vertical)
+          && similarity >= MIN_VECTOR_MEMORY_SIMILARITY
+      })
+      .slice(0, limit)
+      .map((document, index) => ({
+        title: document.metadata.title || '',
+        url: document.metadata.url || document.id || '',
+        description: document.text || '',
+        domain: document.metadata.url
+          ? new URL(document.metadata.url).hostname
+          : document.metadata.domain || '',
+        source: 'memory-vector',
+        rank: index + 1,
+        score: Math.max(0, Math.min(1, document.similarity ?? 0)) * 10,
+        bucket: 'valid',
+      }))
+      .filter(result => Boolean(result.url && result.title))
+  } catch (error) {
+    console.warn('Verified vector memory search failed:', error)
     return []
   }
 }

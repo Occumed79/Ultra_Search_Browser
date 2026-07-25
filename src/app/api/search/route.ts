@@ -122,9 +122,10 @@ export async function POST(request: NextRequest) {
               rank: result.rank,
               score: result.score,
               final_score: result.score,
-              extraction_status: 'search-result',
+              extraction_status: 'candidate',
               metadata: {
                 lens: orchestration.lens,
+                verificationStatus: 'candidate',
                 retrieval: result.retrieval,
                 validation: result.validation,
               },
