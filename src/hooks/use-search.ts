@@ -117,7 +117,21 @@ export function useSearch(): UseSearchReturn {
       detail?: string
     } | null
     if (!response.ok) throw new Error(enrichment?.detail || enrichment?.error || 'Enrichment failed')
-    if (searchSequence.current === sequence && enrichment?.results) setScrapedResults(enrichment.results)
+    if (searchSequence.current === sequence && enrichment?.results) {
+      const uncertain = enrichment.results.map(result => ({
+        ...result,
+        bucket: 'uncertain' as const,
+        validation: {
+          status: 'uncertain' as const,
+          relevance: result.validation?.relevance || 0,
+          reason: result.validation?.reason || 'Page-level verification did not complete.',
+          matchedConcepts: result.validation?.matchedConcepts || [],
+          mode: result.validation?.mode || 'local-rules' as const,
+        },
+      }))
+      setScrapedResults([])
+      setResultBuckets({ ...EMPTY_BUCKETS, uncertain })
+    }
   }, [])
 
   const runStreamingValidation = useCallback(async (
@@ -131,6 +145,7 @@ export function useSearch(): UseSearchReturn {
     validationController.current = controller
     setIsEnriching(true)
     setEnrichmentError(null)
+    setScrapedResults([])
     setValidationProgress({
       phase: 'opening-pages',
       total: Math.min(24, results.length),
@@ -180,23 +195,28 @@ export function useSearch(): UseSearchReturn {
             const payload = parsed.data as { progress?: SearchValidationProgress }
             if (payload.progress) setValidationProgress(payload.progress)
           } else if (parsed.event === 'result') {
-            const payload = parsed.data as { result?: ScrapedResult; progress?: SearchValidationProgress }
+            const payload = parsed.data as { progress?: SearchValidationProgress }
             if (payload.progress) setValidationProgress(payload.progress)
-            if (payload.result) {
-              const next = payload.result
-              setScrapedResults(current => current.map(item =>
-                item.url === next.pageValidation?.requestedUrl || item.url === next.url ? next : item
-              ))
-            }
+            // Individual pages are intentionally not rendered as results yet.
+            // Reachable does not mean relevant or verified.
           } else if (parsed.event === 'complete') {
             const payload = parsed.data as {
               results?: ScrapedResult[]
               buckets?: SearchResultBuckets
               progress?: SearchValidationProgress
+              summary?: string
+              confidence?: number
+              lens?: SearchLens
             }
             if (payload.results) setScrapedResults(payload.results)
             if (payload.buckets) setResultBuckets(payload.buckets)
             if (payload.progress) setValidationProgress(payload.progress)
+            setIntelligence(current => current ? {
+              ...current,
+              lens: payload.lens || current.lens,
+              summary: payload.summary,
+              confidence: payload.confidence ?? 0,
+            } : current)
             completed = true
           } else if (parsed.event === 'error') {
             const payload = parsed.data as { detail?: string; error?: string }
@@ -252,6 +272,7 @@ export function useSearch(): UseSearchReturn {
     validationController.current = null
     setIsLoading(true)
     setIsEnriching(false)
+    setScrapedResults([])
     setResultBuckets(EMPTY_BUCKETS)
     setValidationProgress(null)
     setEnrichmentError(null)
@@ -274,6 +295,7 @@ export function useSearch(): UseSearchReturn {
         detail?: string
         query?: string
         lens?: SearchLens
+        requestedLens?: SearchLens
         summary?: string
         expandedQueries?: string[]
         signals?: Array<{ name: string; score: number; description: string }>
@@ -307,17 +329,29 @@ export function useSearch(): UseSearchReturn {
         confidence: payload.confidence ?? 0,
       }
 
+      if (data.lens !== searchLens) {
+        setLens(data.lens)
+        const routedPath = buildSearchPath(
+          window.location.pathname,
+          window.location.search,
+          normalizedSearchQuery,
+          data.lens,
+          window.location.hash
+        )
+        window.history.replaceState({}, '', routedPath)
+      }
+
       setIntelligence({
         query: data.query,
         lens: data.lens,
-        summary: data.summary,
-        confidence: data.confidence,
+        summary: data.results.length > 0 ? undefined : data.summary,
+        confidence: data.results.length > 0 ? 0 : data.confidence,
         signals: data.signals,
         sources: data.sources,
         queryExpansions: data.expandedQueries,
         timestamp: data.timestamp,
       })
-      setScrapedResults(data.results)
+      setScrapedResults([])
       setHasSearched(true)
       setSearchTime(performance.now() - startTime)
       setIsLoading(false)
