@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { parseBangs } from '../../../lib/bangs'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
 import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
+import { applyIntentCandidateGate } from '../../../lib/search-intent-gate'
+import { routeSearchLens } from '../../../lib/search-intent-routing'
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
 import { buildGroundedSummary, buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
@@ -36,8 +39,21 @@ export async function POST(request: NextRequest) {
     const requestedLens: SearchLens = body.lens && VALID_LENSES.has(body.lens)
       ? body.lens
       : 'web'
+    const bangs = parseBangs(query)
+    const lensRouting = routeSearchLens(
+      requestedLens,
+      bangs.forcedVertical,
+      bangs.cleanQuery || query
+    )
     const plan = buildSearchPlan(body.settings)
-    const orchestration = await orchestrateSearch(query, requestedLens, plan)
+    const orchestration = await orchestrateSearch(query, lensRouting.effectiveLens, plan)
+    const gated = applyIntentCandidateGate(
+      orchestration.normalizedQuery,
+      orchestration.lens,
+      orchestration.results
+    )
+    orchestration.results = gated.results
+
     const noExternalResults = orchestration.diagnostics.successfulLiveTasks === 0
       && orchestration.diagnostics.memoryKeywordMatches === 0
       && orchestration.diagnostics.memoryVectorMatches === 0
@@ -51,7 +67,11 @@ export async function POST(request: NextRequest) {
           detail: 'The selected web sources were blocked, timed out, or returned unreadable search pages. This is a retrieval failure, not a legitimate zero-result search.',
           query: orchestration.normalizedQuery,
           lens: orchestration.lens,
-          diagnostics: orchestration.diagnostics,
+          diagnostics: {
+            ...orchestration.diagnostics,
+            lensRouting,
+            intentGate: gated.diagnostics,
+          },
         },
         { status: 502 }
       )
@@ -69,15 +89,23 @@ export async function POST(request: NextRequest) {
     )
     orchestration.results = await applyResultFeedbackRanking(smartFilter.results)
 
-    const note = orchestration.failures.length > 0
-      ? `${orchestration.failures.length} retrieval tasks failed or returned unreadable pages; successful sources were preserved.`
-      : undefined
+    const noteParts = [
+      lensRouting.autoRouted
+        ? `The query was automatically routed from ${lensRouting.requestedLens} to ${lensRouting.effectiveLens}: ${lensRouting.reason}`
+        : undefined,
+      gated.diagnostics.rejected > 0
+        ? `${gated.diagnostics.rejected} candidates were removed before AI review because they lacked procurement evidence or the requested subject.`
+        : undefined,
+      orchestration.failures.length > 0
+        ? `${orchestration.failures.length} retrieval tasks failed or returned unreadable pages; successful sources were preserved.`
+        : undefined,
+    ].filter(Boolean)
     const intelligence = buildIntelligenceObject(
       orchestration.normalizedQuery,
       orchestration.expanded,
       orchestration.sources,
       orchestration.rawTexts,
-      note
+      noteParts.join(' ') || undefined
     )
     intelligence.summary = buildGroundedSummary(
       orchestration.normalizedQuery,
@@ -85,6 +113,9 @@ export async function POST(request: NextRequest) {
       orchestration.results,
       plan.autoSummarize
     )
+    // Snippet-stage confidence is deliberately capped. The final confidence is
+    // calculated only after destination pages have been opened and reviewed.
+    intelligence.confidence = Math.min(45, intelligence.confidence)
 
     const runtimeMs = Date.now() - startedAt
     let searchRunId: string | null = null
@@ -104,6 +135,8 @@ export async function POST(request: NextRequest) {
           variants: orchestration.diagnostics.queryVariants,
           failures: orchestration.failures,
           enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+          lensRouting,
+          intentGate: gated.diagnostics,
           smartFilter: smartFilter.diagnostics,
         },
       })
@@ -152,6 +185,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       query: orchestration.normalizedQuery,
       lens: orchestration.lens,
+      requestedLens,
       summary: intelligence.summary,
       expandedQueries: orchestration.diagnostics.queryVariants
         .map(variant => variant.query)
@@ -167,6 +201,8 @@ export async function POST(request: NextRequest) {
         enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
+        lensRouting,
+        intentGate: gated.diagnostics,
         smartFilter: smartFilter.diagnostics,
         ...orchestration.diagnostics,
       },

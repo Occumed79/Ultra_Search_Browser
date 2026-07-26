@@ -2,6 +2,10 @@ import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { insertSearchResult } from '../../../../lib/search-storage'
+import {
+  verifiedSearchConfidence,
+  verifiedSearchSummary,
+} from '../../../../lib/verified-search-intelligence'
 import { verifiedResultsOnly } from '../../../../lib/verified-results'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
 
@@ -111,6 +115,9 @@ export async function POST(request: NextRequest) {
         write('complete', {
           ...outcome,
           results: verifiedResults,
+          summary: verifiedSearchSummary(query, lens, verifiedResults),
+          confidence: verifiedSearchConfidence(verifiedResults),
+          lens,
           diagnostics: {
             ...outcome.diagnostics,
             verifiedOnly: true,
