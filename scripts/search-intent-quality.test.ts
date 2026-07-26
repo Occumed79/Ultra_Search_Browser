@@ -64,6 +64,28 @@ test('procurement gate removes definitions, indexes, licensing pages, and unrela
   assert.ok((gated.diagnostics.reasons['generic-definition-or-index'] || 0) >= 2)
 })
 
+test('sparse procurement snippets with one subject match reach page-level review', () => {
+  const sparse = result(
+    'RFP 26-104 Employee Health Program',
+    'https://procurement.example.gov/opportunities/26-104',
+    'Solicitation documents and submission instructions are available through the procurement portal.'
+  )
+  const unrelated = result(
+    'RFP 26-105 Fleet Maintenance',
+    'https://procurement.example.gov/opportunities/26-105',
+    'Solicitation documents for vehicle maintenance are available.'
+  )
+
+  const gated = applyIntentCandidateGate(
+    'request for proposal occupational health services',
+    'procurement',
+    [sparse, unrelated]
+  )
+
+  assert.deepEqual(gated.results.map(item => item.url), [sparse.url])
+  assert.equal(gated.diagnostics.reasons['missing-query-subject'], 1)
+})
+
 test('zero verified results produce zero confidence and an honest summary', () => {
   assert.equal(verifiedSearchConfidence([]), 0)
   assert.match(

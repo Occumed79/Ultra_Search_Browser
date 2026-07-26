@@ -39,17 +39,22 @@ function rejectReason(query: string, result: ScrapedResult): string | undefined 
   const text = normalize(`${result.title} ${result.description} ${result.url} ${result.domain}`)
   const originalText = `${result.title} ${result.description} ${result.url} ${result.domain}`
 
+  // These page types are structurally wrong for a procurement query even when
+  // they happen to contain words such as occupational, health, or services.
   if (GENERIC_PAGE_TITLE.test(result.title)) return 'generic-definition-or-index'
 
   const hasProcurementEvidence = PROCUREMENT_TERMS.test(originalText)
     || PROCUREMENT_PORTALS.test(result.url)
   if (!hasProcurementEvidence) return 'missing-procurement-evidence'
 
+  // Search-engine snippets and portal titles are often abbreviated. Requiring
+  // half of every subject token before opening the page caused genuine RFPs to
+  // be discarded. One meaningful subject match is enough to reach the stricter
+  // page-level Cerebras/Groq evidence review; zero subject matches is not.
   const required = subjectTokens(query)
   if (required.length > 0) {
     const matches = required.filter(token => text.includes(token))
-    const minimum = Math.max(1, Math.ceil(required.length * 0.5))
-    if (matches.length < minimum) return 'missing-query-subject'
+    if (matches.length === 0) return 'missing-query-subject'
   }
 
   if (!title && !result.description.trim()) return 'empty-result'
