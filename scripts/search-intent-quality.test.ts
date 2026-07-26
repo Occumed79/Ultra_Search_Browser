@@ -2,7 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
 import { routeSearchLens } from '../src/lib/search-intent-routing'
-import { verifiedSearchConfidence, verifiedSearchSummary } from '../src/app/api/search/validate/route'
+import {
+  verifiedSearchConfidence,
+  verifiedSearchSummary,
+} from '../src/lib/verified-search-intelligence'
 import type { ScrapedResult } from '../src/types/search'
 
 function result(title: string, url: string, description: string): ScrapedResult {
