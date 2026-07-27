@@ -10,6 +10,9 @@ const FORBIDDEN_HOSTS = new Set([
   'login.live.com', 'signup.live.com', 'account.microsoft.com',
   'login.microsoftonline.com', 'accounts.google.com',
 ])
+const GENERIC_PROCUREMENT_TITLES = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|therapy)\b/i
+const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
+const PROCUREMENT_PORTALS = /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
@@ -78,7 +81,19 @@ function assertCandidateUrls(results, lens) {
   }
 }
 
-async function runSearch(query, lens, health) {
+function assertProcurementQuality(results) {
+  for (const result of results) {
+    const text = `${result.title} ${result.description} ${result.url}`
+    if (GENERIC_PROCUREMENT_TITLES.test(result.title)) {
+      throw new Error(`Procurement search leaked a generic page: ${result.title} — ${result.url}`)
+    }
+    if (!PROCUREMENT_EVIDENCE.test(text) && !PROCUREMENT_PORTALS.test(result.url)) {
+      throw new Error(`Procurement candidate lacks opportunity evidence: ${result.title} — ${result.url}`)
+    }
+  }
+}
+
+async function runSearch(query, lens, health, expectations = {}) {
   const response = await fetch(`${APP_URL}/api/search`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -118,8 +133,28 @@ async function runSearch(query, lens, health) {
     throw new Error(`${lens} did not use Cerebras/Groq: ${JSON.stringify(diagnostics.smartFilter)}`)
   }
 
-  console.log(`[${lens}] candidates=${data.results.length}; live=${diagnostics.successfulLiveTasks}/${diagnostics.attemptedLiveTasks}; memory=${diagnostics.memoryKeywordMatches}/${diagnostics.memoryVectorMatches}`)
-  for (const result of data.results.slice(0, 3)) console.log(`[${lens}] ${result.source} · ${result.title} — ${result.url}`)
+  if (expectations.expectedLens && data.lens !== expectations.expectedLens) {
+    throw new Error(`Expected ${expectations.expectedLens} lens but production returned ${data.lens}.`)
+  }
+  if (expectations.autoRouted) {
+    if (diagnostics.lensRouting?.autoRouted !== true) {
+      throw new Error(`Production did not report automatic lens routing: ${JSON.stringify(diagnostics.lensRouting)}`)
+    }
+    if (diagnostics.intentGate?.applied !== true) {
+      throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
+    }
+  }
+  if (expectations.procurementQuality) assertProcurementQuality(data.results)
+  if (Number(data.confidence || 0) !== 0) {
+    throw new Error(`Candidate-stage confidence must be 0, received ${data.confidence}.`)
+  }
+  if (data.summary) {
+    throw new Error(`Candidate-stage search returned a premature summary: ${data.summary}`)
+  }
+
+  console.log(`[${lens}->${data.lens}] candidates=${data.results.length}; live=${diagnostics.successfulLiveTasks}/${diagnostics.attemptedLiveTasks}; memory=${diagnostics.memoryKeywordMatches}/${diagnostics.memoryVectorMatches}`)
+  for (const result of data.results.slice(0, 3)) console.log(`[${data.lens}] ${result.source} · ${result.title} — ${result.url}`)
+  return data
 }
 
 function parseSseBlock(block) {
@@ -186,8 +221,10 @@ async function runEvidenceValidation() {
   )) throw new Error(`Non-verified main result leaked: ${JSON.stringify(complete.results).slice(0, 2_000)}`)
   if (complete.diagnostics?.verifiedOnly !== true) throw new Error('Verified-only mode was not reported.')
   if (progressEvents < 1 || resultEvents < 1) throw new Error('Evidence stream emitted no live progress/results.')
+  if (Number(complete.confidence || 0) <= 0) throw new Error('Verified evidence returned no confidence score.')
+  if (!complete.summary) throw new Error('Verified evidence returned no grounded summary.')
 
-  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}`)
+  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}; confidence=${complete.confidence}`)
   for (const result of complete.results) console.log(`[evidence] VERIFIED · ${result.title} — ${result.url}`)
 }
 
@@ -199,7 +236,11 @@ async function main() {
   console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
 
   await runSearch('occupational health services', 'web', health)
-  await runSearch('request for proposal occupational health services', 'procurement', health)
+  await runSearch('Occupational Health Services RFP', 'web', health, {
+    expectedLens: 'procurement',
+    autoRouted: true,
+    procurementQuality: true,
+  })
   await runEvidenceValidation()
 
   console.log('Production smoke test passed.')

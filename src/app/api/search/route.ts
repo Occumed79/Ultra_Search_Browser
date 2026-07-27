@@ -5,7 +5,7 @@ import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking
 import { applyIntentCandidateGate } from '../../../lib/search-intent-gate'
 import { routeSearchLens } from '../../../lib/search-intent-routing'
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
-import { buildGroundedSummary, buildSearchPlan } from '../../../lib/search-settings'
+import { buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
 import { applySmartFilter } from '../../../lib/smart-filter'
 import type { SearchLens } from '../../../types/search'
@@ -107,15 +107,15 @@ export async function POST(request: NextRequest) {
       orchestration.rawTexts,
       noteParts.join(' ') || undefined
     )
-    intelligence.summary = buildGroundedSummary(
-      orchestration.normalizedQuery,
-      orchestration.lens,
-      orchestration.results,
-      plan.autoSummarize
-    )
-    // Snippet-stage confidence is deliberately capped. The final confidence is
-    // calculated only after destination pages have been opened and reviewed.
-    intelligence.confidence = Math.min(45, intelligence.confidence)
+
+    // Search-engine snippets are discovery candidates, not verified evidence.
+    // The destination-page stream is the only place allowed to produce a
+    // summary or confidence score.
+    intelligence.summary = orchestration.results.length === 0
+      ? `No candidates matched the required ${orchestration.lens} intent. Generic definitions, indexes, and unrelated pages were excluded before page verification.`
+      : undefined
+    intelligence.confidence = 0
+    intelligence.signals = []
 
     const runtimeMs = Date.now() - startedAt
     let searchRunId: string | null = null
@@ -190,12 +190,12 @@ export async function POST(request: NextRequest) {
       expandedQueries: orchestration.diagnostics.queryVariants
         .map(variant => variant.query)
         .filter(variant => variant.toLowerCase() !== orchestration.normalizedQuery.toLowerCase()),
-      signals: intelligence.signals,
+      signals: [],
       results: responseResults,
       searchRunId,
       sources: orchestration.sources,
       timestamp: intelligence.timestamp,
-      confidence: intelligence.confidence,
+      confidence: 0,
       diagnostics: {
         runtimeMs,
         enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
