@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { buildIntelligenceObject } from '../../../lib/intelligence'
+import { buildIntelligenceObject, classifyLens } from '../../../lib/intelligence'
 import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
-import { buildGroundedSummary, buildSearchPlan } from '../../../lib/search-settings'
+import { buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
 import { applySmartFilter } from '../../../lib/smart-filter'
-import type { SearchLens } from '../../../types/search'
+import type { ScrapedResult, SearchLens } from '../../../types/search'
 
 const VALID_LENSES = new Set<SearchLens>([
   'web',
@@ -22,6 +22,55 @@ const VALID_LENSES = new Set<SearchLens>([
   'financial',
 ])
 
+const PROCUREMENT_LANGUAGE = /\b(?:rfp|rfq|rft|request for proposals?|request for qualifications|solicitation|invitation for bids?|invitation to bid|notice inviting bids|competitive sealed proposals?|bid opportunity|procurement opportunity|contract opportunity|vendor opportunity|tender|proposal due|responses due|submission deadline|closing date)\b/i
+const PROCUREMENT_PORTAL = /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|vendorregistry\.com)/i
+const QUERY_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'of',
+  'on', 'or', 'the', 'to', 'with', 'services', 'service', 'rfp', 'rfq', 'rft',
+  'request', 'proposal', 'proposals', 'solicitation', 'bid', 'procurement',
+])
+
+function effectiveLens(requestedLens: SearchLens, query: string): SearchLens {
+  if (requestedLens !== 'web') return requestedLens
+  const inferred = classifyLens(query)
+  return inferred === 'web' ? requestedLens : inferred
+}
+
+function meaningfulSubjectTerms(query: string): string[] {
+  return Array.from(new Set(
+    query
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter(term => term.length >= 3 && !QUERY_STOP_WORDS.has(term))
+  ))
+}
+
+function subjectMatchRatio(query: string, result: ScrapedResult): number {
+  const terms = meaningfulSubjectTerms(query)
+  if (terms.length === 0) return 1
+  const text = `${result.title} ${result.description} ${result.url}`.toLowerCase()
+  const matched = terms.filter(term => text.includes(term)).length
+  return matched / terms.length
+}
+
+export function filterIntentCandidates(
+  query: string,
+  lens: SearchLens,
+  results: ScrapedResult[]
+): ScrapedResult[] {
+  if (lens !== 'procurement') return results
+
+  return results.filter(result => {
+    const text = `${result.title} ${result.description} ${result.url} ${result.domain}`
+    if (PROCUREMENT_LANGUAGE.test(text) || PROCUREMENT_PORTAL.test(text)) return true
+
+    const isOfficialDocument = /\.pdf(?:$|[?#])/i.test(result.url)
+      && /(?:\.gov|\.us)(?:\/|$)/i.test(result.domain || result.url)
+    return isOfficialDocument && subjectMatchRatio(query, result) >= 0.5
+  })
+}
+
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
 
@@ -36,8 +85,15 @@ export async function POST(request: NextRequest) {
     const requestedLens: SearchLens = body.lens && VALID_LENSES.has(body.lens)
       ? body.lens
       : 'web'
+    const resolvedLens = effectiveLens(requestedLens, query)
     const plan = buildSearchPlan(body.settings)
-    const orchestration = await orchestrateSearch(query, requestedLens, plan)
+    const orchestration = await orchestrateSearch(query, resolvedLens, plan)
+    orchestration.results = filterIntentCandidates(
+      orchestration.normalizedQuery,
+      orchestration.lens,
+      orchestration.results
+    )
+
     const noExternalResults = orchestration.diagnostics.successfulLiveTasks === 0
       && orchestration.diagnostics.memoryKeywordMatches === 0
       && orchestration.diagnostics.memoryVectorMatches === 0
@@ -79,12 +135,11 @@ export async function POST(request: NextRequest) {
       orchestration.rawTexts,
       note
     )
-    intelligence.summary = buildGroundedSummary(
-      orchestration.normalizedQuery,
-      orchestration.lens,
-      orchestration.results,
-      plan.autoSummarize
-    )
+
+    // Candidate snippets are not evidence. The verified summary and confidence
+    // are populated only after destination pages have been opened and reviewed.
+    intelligence.summary = undefined
+    intelligence.confidence = 0
 
     const runtimeMs = Date.now() - startedAt
     let searchRunId: string | null = null
@@ -104,6 +159,8 @@ export async function POST(request: NextRequest) {
           variants: orchestration.diagnostics.queryVariants,
           failures: orchestration.failures,
           enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+          requestedLens,
+          resolvedLens: orchestration.lens,
           smartFilter: smartFilter.diagnostics,
         },
       })
@@ -156,14 +213,16 @@ export async function POST(request: NextRequest) {
       expandedQueries: orchestration.diagnostics.queryVariants
         .map(variant => variant.query)
         .filter(variant => variant.toLowerCase() !== orchestration.normalizedQuery.toLowerCase()),
-      signals: intelligence.signals,
+      signals: [],
       results: responseResults,
       searchRunId,
       sources: orchestration.sources,
       timestamp: intelligence.timestamp,
-      confidence: intelligence.confidence,
+      confidence: 0,
       diagnostics: {
         runtimeMs,
+        requestedLens,
+        resolvedLens: orchestration.lens,
         enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
