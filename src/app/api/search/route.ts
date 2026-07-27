@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parseBangs } from '../../../lib/bangs'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
+import { rescueProcurementCandidates, type ProcurementRescueDiagnostics } from '../../../lib/procurement-rescue'
 import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
 import { applyIntentCandidateGate } from '../../../lib/search-intent-gate'
 import { routeSearchLens } from '../../../lib/search-intent-routing'
@@ -54,11 +55,32 @@ export async function POST(request: NextRequest) {
     )
     orchestration.results = gated.results
 
+    let procurementRescue: ProcurementRescueDiagnostics | undefined
+    if (orchestration.lens === 'procurement' && orchestration.results.length === 0) {
+      const rescued = await rescueProcurementCandidates(orchestration.normalizedQuery, {
+        safeSearch: plan.safeSearch,
+        preferredLanguage: plan.preferredLanguage,
+        region: plan.region,
+      })
+      procurementRescue = rescued.diagnostics
+      orchestration.results = rescued.results
+      if (rescued.results.length > 0) {
+        orchestration.sources = Array.from(new Set([
+          ...orchestration.sources,
+          ...rescued.results.map(result => `${result.source} · procurement-rescue`),
+        ]))
+      }
+      if (rescued.diagnostics.failures.length > 0) {
+        orchestration.failures.push(...rescued.diagnostics.failures.map(error => `procurement rescue: ${error}`))
+      }
+    }
+
     const noExternalResults = orchestration.diagnostics.successfulLiveTasks === 0
       && orchestration.diagnostics.memoryKeywordMatches === 0
       && orchestration.diagnostics.memoryVectorMatches === 0
       && orchestration.diagnostics.smallWebMatches === 0
       && orchestration.diagnostics.marginaliaMatches === 0
+      && (procurementRescue?.successfulTasks || 0) === 0
 
     if (orchestration.results.length === 0 && noExternalResults && orchestration.failures.length > 0) {
       return NextResponse.json(
@@ -71,6 +93,7 @@ export async function POST(request: NextRequest) {
             ...orchestration.diagnostics,
             lensRouting,
             intentGate: gated.diagnostics,
+            procurementRescue,
           },
         },
         { status: 502 }
@@ -95,6 +118,9 @@ export async function POST(request: NextRequest) {
         : undefined,
       gated.diagnostics.rejected > 0
         ? `${gated.diagnostics.rejected} candidates were removed before AI review because they lacked procurement evidence or the requested subject.`
+        : undefined,
+      procurementRescue
+        ? `A strict procurement rescue attempted ${procurementRescue.attemptedTasks} targeted retrieval tasks and retained ${procurementRescue.retainedCandidates} candidates.`
         : undefined,
       orchestration.failures.length > 0
         ? `${orchestration.failures.length} retrieval tasks failed or returned unreadable pages; successful sources were preserved.`
@@ -137,6 +163,7 @@ export async function POST(request: NextRequest) {
           enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
           lensRouting,
           intentGate: gated.diagnostics,
+          procurementRescue,
           smartFilter: smartFilter.diagnostics,
         },
       })
@@ -203,6 +230,7 @@ export async function POST(request: NextRequest) {
         failures: orchestration.failures,
         lensRouting,
         intentGate: gated.diagnostics,
+        procurementRescue,
         smartFilter: smartFilter.diagnostics,
         ...orchestration.diagnostics,
       },
