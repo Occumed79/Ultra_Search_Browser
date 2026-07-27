@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
+import { buildGroundedSummary } from '../../../../lib/search-settings'
 import { insertSearchResult } from '../../../../lib/search-storage'
 import { verifiedResultsOnly } from '../../../../lib/verified-results'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
@@ -22,6 +23,21 @@ interface ValidationRequest {
 
 function sseEvent(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`
+}
+
+function verifiedConfidence(results: ScrapedResult[]): number {
+  if (results.length === 0) return 0
+  const averageRelevance = results.reduce(
+    (total, result) => total + Math.max(0, Math.min(1, result.validation?.relevance || 0)),
+    0
+  ) / results.length
+  const distinctSources = new Set(results.flatMap(result => result.retrieval?.sources || [result.source])).size
+  const corroborated = results.filter(result => (result.entity?.confirmationCount || 1) > 1).length
+  return Math.min(98, Math.round(
+    averageRelevance * 82
+    + Math.min(10, Math.max(0, distinctSources - 1) * 3)
+    + Math.min(6, corroborated * 2)
+  ))
 }
 
 async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens) {
@@ -94,8 +110,11 @@ export async function POST(request: NextRequest) {
         const outcome = await deepValidateResults(query, lens, results, {
           maxTargets,
           onEvent: async (event: DeepValidationEvent) => {
-            if (event.type === 'complete') return
-            write(event.type, event)
+            // Individual pages are candidates until the complete-query evidence
+            // review finishes. Stream progress, but never publish a reachable
+            // page as a verified result prematurely.
+            if (event.type !== 'progress') return
+            write('progress', event)
           },
         })
         const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
@@ -108,9 +127,16 @@ export async function POST(request: NextRequest) {
           ),
           persistVerifiedResults(verifiedResults, lens),
         ])
+        const confidence = verifiedConfidence(verifiedResults)
+        const summary = verifiedResults.length > 0
+          ? buildGroundedSummary(query, lens, verifiedResults, true)
+          : `No destination page passed complete-query evidence verification for “${query}”. The withheld candidates were either irrelevant, inaccessible, expired, or insufficiently supported.`
+
         write('complete', {
           ...outcome,
           results: verifiedResults,
+          summary,
+          confidence,
           diagnostics: {
             ...outcome.diagnostics,
             verifiedOnly: true,
