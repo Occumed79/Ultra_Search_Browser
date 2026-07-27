@@ -100,30 +100,10 @@ export function useSearch(): UseSearchReturn {
     setSearchTime(0)
   }, [])
 
-  const runFallbackEnrichment = useCallback(async (
-    searchQuery: string,
-    searchLens: SearchLens,
-    results: ScrapedResult[],
-    sequence: number
-  ) => {
-    const response = await fetch('/api/search/enrich', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: searchQuery, lens: searchLens, results }),
-    })
-    const enrichment = await response.json().catch(() => null) as {
-      results?: ScrapedResult[]
-      error?: string
-      detail?: string
-    } | null
-    if (!response.ok) throw new Error(enrichment?.detail || enrichment?.error || 'Enrichment failed')
-    if (searchSequence.current === sequence && enrichment?.results) setScrapedResults(enrichment.results)
-  }, [])
-
   const runStreamingValidation = useCallback(async (
     searchQuery: string,
     searchLens: SearchLens,
-    results: ScrapedResult[],
+    candidates: ScrapedResult[],
     sequence: number
   ) => {
     validationController.current?.abort()
@@ -131,9 +111,10 @@ export function useSearch(): UseSearchReturn {
     validationController.current = controller
     setIsEnriching(true)
     setEnrichmentError(null)
+    setScrapedResults([])
     setValidationProgress({
       phase: 'opening-pages',
-      total: Math.min(24, results.length),
+      total: Math.min(24, candidates.length),
       checked: 0,
       reachable: 0,
       valid: 0,
@@ -151,7 +132,7 @@ export function useSearch(): UseSearchReturn {
           Accept: 'text/event-stream',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query: searchQuery, lens: searchLens, results }),
+        body: JSON.stringify({ query: searchQuery, lens: searchLens, results: candidates }),
         signal: controller.signal,
       })
 
@@ -176,27 +157,28 @@ export function useSearch(): UseSearchReturn {
           const parsed = parseSseBlock(block)
           if (!parsed) continue
 
-          if (parsed.event === 'progress') {
+          if (parsed.event === 'progress' || parsed.event === 'result') {
             const payload = parsed.data as { progress?: SearchValidationProgress }
             if (payload.progress) setValidationProgress(payload.progress)
-          } else if (parsed.event === 'result') {
-            const payload = parsed.data as { result?: ScrapedResult; progress?: SearchValidationProgress }
-            if (payload.progress) setValidationProgress(payload.progress)
-            if (payload.result) {
-              const next = payload.result
-              setScrapedResults(current => current.map(item =>
-                item.url === next.pageValidation?.requestedUrl || item.url === next.url ? next : item
-              ))
-            }
           } else if (parsed.event === 'complete') {
             const payload = parsed.data as {
               results?: ScrapedResult[]
               buckets?: SearchResultBuckets
               progress?: SearchValidationProgress
+              summary?: string
+              confidence?: number
             }
-            if (payload.results) setScrapedResults(payload.results)
+            const verified = payload.results ?? []
+            setScrapedResults(verified)
             if (payload.buckets) setResultBuckets(payload.buckets)
             if (payload.progress) setValidationProgress(payload.progress)
+            setIntelligence(current => current ? {
+              ...current,
+              lens: searchLens,
+              summary: payload.summary,
+              confidence: payload.confidence ?? 0,
+              sources: Array.from(new Set(verified.map(result => result.source))),
+            } : current)
             completed = true
           } else if (parsed.event === 'error') {
             const payload = parsed.data as { detail?: string; error?: string }
@@ -208,20 +190,19 @@ export function useSearch(): UseSearchReturn {
       if (!completed) throw new Error('Validation stream ended before completion')
     } catch (validationFailure) {
       if (controller.signal.aborted || searchSequence.current !== sequence) return
-      try {
-        await runFallbackEnrichment(searchQuery, searchLens, results, sequence)
-      } catch (fallbackFailure) {
-        if (searchSequence.current === sequence) {
-          const primary = validationFailure instanceof Error ? validationFailure.message : 'Validation failed'
-          const fallback = fallbackFailure instanceof Error ? fallbackFailure.message : 'Fallback enrichment failed'
-          setEnrichmentError(`${primary}. ${fallback}`)
-        }
-      }
+      const message = validationFailure instanceof Error ? validationFailure.message : 'Validation failed'
+      setScrapedResults([])
+      setEnrichmentError(message)
+      setIntelligence(current => current ? {
+        ...current,
+        summary: 'Destination-page verification did not complete, so provisional candidates were not displayed as verified results.',
+        confidence: 0,
+      } : current)
     } finally {
       if (validationController.current === controller) validationController.current = null
       if (searchSequence.current === sequence) setIsEnriching(false)
     }
-  }, [runFallbackEnrichment])
+  }, [])
 
   const executeSearch = useCallback(async (
     searchQuery: string,
@@ -252,6 +233,8 @@ export function useSearch(): UseSearchReturn {
     validationController.current = null
     setIsLoading(true)
     setIsEnriching(false)
+    setScrapedResults([])
+    setIntelligence(null)
     setResultBuckets(EMPTY_BUCKETS)
     setValidationProgress(null)
     setEnrichmentError(null)
@@ -307,17 +290,30 @@ export function useSearch(): UseSearchReturn {
         confidence: payload.confidence ?? 0,
       }
 
+      setLens(data.lens)
+      const resolvedPath = buildSearchPath(
+        window.location.pathname,
+        window.location.search,
+        data.query,
+        data.lens,
+        window.location.hash
+      )
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
+      if (resolvedPath !== currentPath) window.history.replaceState({}, '', resolvedPath)
+
       setIntelligence({
         query: data.query,
         lens: data.lens,
-        summary: data.summary,
-        confidence: data.confidence,
-        signals: data.signals,
-        sources: data.sources,
+        summary: data.results.length === 0
+          ? `No candidates matched the required ${data.lens} intent. Generic definitions and index pages were excluded.`
+          : undefined,
+        confidence: 0,
+        signals: [],
+        sources: [],
         queryExpansions: data.expandedQueries,
         timestamp: data.timestamp,
       })
-      setScrapedResults(data.results)
+      setScrapedResults([])
       setHasSearched(true)
       setSearchTime(performance.now() - startTime)
       setIsLoading(false)
