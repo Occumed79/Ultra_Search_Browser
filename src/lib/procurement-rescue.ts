@@ -1,7 +1,12 @@
+import {
+  searchBraveHtml,
+  searchMojeekHtml,
+  searchYahooHtml,
+  type PublicSearchOptions,
+} from './public-search-fallbacks'
+import { buildProcurementRescueQueries } from './procurement-rescue-queries'
 import { searchBingResilient } from './resilient-search'
 import { applyIntentCandidateGate } from './search-intent-gate'
-import { buildProcurementRescueQueries } from './procurement-rescue-queries'
-import { searchGoogleScrape, type SearchEngineOptions } from './search'
 import type { ScrapedResult } from '../types/search'
 
 export interface ProcurementRescueDiagnostics {
@@ -12,6 +17,7 @@ export interface ProcurementRescueDiagnostics {
   retainedCandidates: number
   failures: string[]
   queries: string[]
+  rawPreview: Array<{ source: string; title: string; url: string }>
 }
 
 function normalizedUrl(value: string): string | undefined {
@@ -60,21 +66,34 @@ function mergeCandidates(
 
 export async function rescueProcurementCandidates(
   query: string,
-  options: SearchEngineOptions
+  options: PublicSearchOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query)
-  const tasks = queries.flatMap(rescueQuery => [
-    {
-      engine: 'Google',
-      query: rescueQuery,
-      run: () => searchGoogleScrape(rescueQuery, options),
-    },
-    {
+  const broadQueries = queries.slice(0, 2)
+  const tasks = [
+    ...queries.map(rescueQuery => ({
       engine: 'Bing',
       query: rescueQuery,
       run: () => searchBingResilient(rescueQuery, options),
-    },
-  ])
+    })),
+    ...broadQueries.flatMap(rescueQuery => [
+      {
+        engine: 'Yahoo',
+        query: rescueQuery,
+        run: () => searchYahooHtml(rescueQuery, options),
+      },
+      {
+        engine: 'Brave',
+        query: rescueQuery,
+        run: () => searchBraveHtml(rescueQuery, options),
+      },
+      {
+        engine: 'Mojeek',
+        query: rescueQuery,
+        run: () => searchMojeekHtml(rescueQuery, options),
+      },
+    ]),
+  ]
 
   const settled = await Promise.allSettled(tasks.map(async task => ({
     engine: task.engine,
@@ -110,6 +129,11 @@ export async function rescueProcurementCandidates(
       retainedCandidates: gated.results.length,
       failures,
       queries,
+      rawPreview: rawCandidates.slice(0, 12).map(result => ({
+        source: result.source,
+        title: result.title,
+        url: result.url,
+      })),
     },
   }
 }
