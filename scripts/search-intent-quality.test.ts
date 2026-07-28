@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildProcurementRescueQueries } from '../src/lib/procurement-rescue'
+import { buildProcurementRescueQueries } from '../src/lib/procurement-rescue-queries'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
 import { routeSearchLens } from '../src/lib/search-intent-routing'
 import {
