@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { buildProcurementRescueQueries } from '../src/lib/procurement-rescue-queries'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
 import { routeSearchLens } from '../src/lib/search-intent-routing'
 import {
@@ -84,6 +85,16 @@ test('sparse procurement snippets with one subject match reach page-level review
 
   assert.deepEqual(gated.results.map(item => item.url), [sparse.url])
   assert.equal(gated.diagnostics.reasons['missing-query-subject'], 1)
+})
+
+test('procurement rescue queries remove duplicate RFP language and target official portals', () => {
+  const queries = buildProcurementRescueQueries('Occupational Health Services RFP')
+  assert.equal(queries.length, 4)
+  assert.ok(queries.every(query => /occupational health services/i.test(query)))
+  assert.ok(queries.some(query => /site:\.gov/i.test(query)))
+  assert.ok(queries.some(query => /site:sam\.gov/i.test(query)))
+  assert.ok(queries.some(query => /ionwave\.net/i.test(query)))
+  assert.ok(queries.every(query => !/RFP\s+RFP/i.test(query)))
 })
 
 test('zero verified results produce zero confidence and an honest summary', () => {
