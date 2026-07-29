@@ -30,6 +30,9 @@ const SOURCE_DESCRIPTIONS: Record<string, string> = {
   google: 'Broad web coverage',
   bing: 'Independent web index',
   duckduckgo: 'Privacy-focused web results',
+  brave: 'Independent privacy-focused index',
+  mojeek: 'Independent crawler-built index',
+  yahoo: 'Additional broad web coverage',
   searxng: 'Self-hosted metasearch source',
   memory: 'Previously indexed search memory',
 }

@@ -31,7 +31,7 @@ interface CloudflareScore {
 }
 
 const DEFAULT_RERANK_MODEL = '@cf/baai/bge-reranker-base'
-const RERANK_TIMEOUT_MS = 7_000
+const RERANK_TIMEOUT_MS = 2_500
 const MAX_RERANK_CANDIDATES = 36
 
 function configuredToken(env: CloudflareEnvironment): string {

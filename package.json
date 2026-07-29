@@ -8,11 +8,11 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit --incremental false",
-    "smoke": "npx --yes tsx scripts/smoke-search.ts",
-    "check:pgvector": "npx --yes tsx scripts/check-pgvector.ts",
-    "smoke:pgvector": "npx --yes tsx scripts/smoke-pgvector-search.ts",
+    "smoke": "tsx scripts/smoke-search.ts",
+    "check:pgvector": "tsx scripts/check-pgvector.ts",
+    "smoke:pgvector": "tsx scripts/smoke-pgvector-search.ts",
     "verify": "npm run typecheck && npm run test:settings && npm run build",
-    "test:search": "npx --yes tsx --test scripts/*.test.ts",
+    "test:search": "node --import tsx --test scripts/*.test.ts",
     "test:settings": "npm run test:search"
   },
   "dependencies": {
@@ -44,5 +44,8 @@
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
     "typescript": "^5.7.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.1"
   }
 }

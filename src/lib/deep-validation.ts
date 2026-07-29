@@ -101,7 +101,7 @@ function lifecycleBucket(result: ScrapedResult): ResultBucket | undefined {
   const page = result.pageValidation
   if (!page) return undefined
   if (page.availability === 'dead') return 'dead'
-  if (['blocked', 'login', 'generic', 'search-page', 'thin', 'unsupported'].includes(page.availability)) return 'rejected'
+  if (['generic', 'search-page', 'thin'].includes(page.availability)) return 'rejected'
   if (['expired', 'closed', 'cancelled', 'awarded', 'stale'].includes(page.lifecycle.status)) return 'expired'
   return undefined
 }
@@ -254,13 +254,13 @@ export async function deepValidateResults(
       continue
     }
 
-    if (original.pageValidation?.availability === 'error') {
+    if (['blocked', 'login', 'unsupported', 'error'].includes(original.pageValidation?.availability || '')) {
       buckets.uncertain.push(bucketResult({
         ...original,
         validation: {
           status: 'uncertain',
           relevance: original.validation?.relevance || 0,
-          reason: original.pageValidation.reason,
+          reason: `The result remains ranked, but its destination could not be independently verified: ${original.pageValidation?.reason || 'page access was unavailable'}`,
           matchedConcepts: original.validation?.matchedConcepts || [],
           mode: original.validation?.mode || 'local-rules',
         },
@@ -321,7 +321,9 @@ export async function deepValidateResults(
   progress.rejected = buckets.rejected.length
   progress.duplicates = buckets.duplicate.length
 
-  const results = buckets.valid.length > 0 ? buckets.valid : buckets.uncertain.slice(0, 5)
+  const results = [...buckets.valid, ...buckets.uncertain]
+    .sort((left, right) => right.score - left.score)
+    .map((result, index) => ({ ...result, rank: index + 1 }))
   const outcome: DeepValidationOutcome = {
     results,
     buckets,

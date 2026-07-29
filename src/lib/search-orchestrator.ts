@@ -7,6 +7,7 @@ import { searchMarginalia } from './marginalia'
 import { dedupeByUrl, keywordSearchStoredResults, vectorSearchStoredResults } from './memory-retrieval'
 import { calculateRankingPrecisionSignals } from './ranking-signals'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
+import { searchBraveHtml, searchMojeekHtml, searchYahooHtml } from './public-search-fallbacks'
 import { searchGoogleScrape, type SearchEngineOptions } from './search'
 import { buildSearchOrchestrationPlan, type QueryPurpose, type RetrievalTask } from './search-planner'
 import { parseSearchOperators, type OperatorsResult } from './search-operators'
@@ -17,9 +18,9 @@ import { searchSearXNG } from './searxng'
 import { searchSmallWeb } from './small-web'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
-const TASK_TIMEOUT_MS = 6_000
+const TASK_TIMEOUT_MS = 3_500
 const MEMORY_TIMEOUT_MS = 4_000
-const OPTIONAL_SOURCE_TIMEOUT_MS = 4_500
+const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500
 const VALID_LENSES = new Set<SearchLens>([
   'web', 'pdf', 'government', 'procurement', 'pricing', 'provider',
   'technical', 'news', 'legal', 'medical', 'academic', 'financial',
@@ -190,6 +191,9 @@ function sourceExecutor(source: LiveSearchSource, options: SearchEngineOptions) 
     google: query => searchGoogleScrape(query, options),
     bing: query => searchBingResilient(query, options),
     duckduckgo: query => searchDuckDuckGoResilient(query, options),
+    brave: query => searchBraveHtml(query, options),
+    mojeek: query => searchMojeekHtml(query, options),
+    yahoo: query => searchYahooHtml(query, options),
     searxng: query => searchSearXNG(query, options),
   }
   return executors[source]

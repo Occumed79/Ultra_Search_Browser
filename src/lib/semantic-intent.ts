@@ -45,7 +45,7 @@ interface GeminiIntentPayload {
   complexity?: unknown
 }
 
-const GEMINI_TIMEOUT_MS = 7_000
+const GEMINI_TIMEOUT_MS = 2_500
 const CURRENT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
 const RETIRED_GEMINI_MODELS = new Set([
   'gemini-2.5-flash-lite',

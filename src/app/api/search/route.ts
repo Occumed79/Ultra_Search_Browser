@@ -107,7 +107,10 @@ export async function POST(request: NextRequest) {
       plan.resultsPerPage,
       {
         useLocalTransformer: false,
-        useExternalProviders: true,
+        // Initial results must not wait on a second external AI round trip.
+        // Cerebras/Groq still review actual destination-page evidence in the
+        // asynchronous validation stream.
+        useExternalProviders: false,
       }
     )
     orchestration.results = await applyResultFeedbackRanking(smartFilter.results)

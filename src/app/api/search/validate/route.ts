@@ -114,13 +114,17 @@ export async function POST(request: NextRequest) {
         ])
         write('complete', {
           ...outcome,
-          results: verifiedResults,
+          // Keep useful but unverifiable results in the primary list. A site
+          // blocking server-side fetches is not evidence that the search
+          // result itself is irrelevant.
+          results: outcome.results,
           summary: verifiedSearchSummary(query, lens, verifiedResults),
           confidence: verifiedSearchConfidence(verifiedResults),
           lens,
           diagnostics: {
             ...outcome.diagnostics,
-            verifiedOnly: true,
+            verifiedOnly: false,
+            verifiedCount: verifiedResults.length,
             persistentMemory,
             verifiedPersistence,
           },

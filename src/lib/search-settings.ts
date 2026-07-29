@@ -1,6 +1,15 @@
 import type { ScrapedResult, SearchLens, SearchSource, UserSettings } from '../types/search'
 
-export const SUPPORTED_SEARCH_SOURCES = ['google', 'bing', 'duckduckgo', 'searxng', 'memory'] as const
+export const SUPPORTED_SEARCH_SOURCES = [
+  'google',
+  'bing',
+  'duckduckgo',
+  'brave',
+  'mojeek',
+  'yahoo',
+  'searxng',
+  'memory',
+] as const
 export type SupportedSearchSource = (typeof SUPPORTED_SEARCH_SOURCES)[number]
 export type LiveSearchSource = Exclude<SupportedSearchSource, 'memory'>
 
@@ -10,13 +19,16 @@ export const SEARCH_SOURCE_OPTIONS: Array<{ value: SupportedSearchSource; label:
   { value: 'google', label: 'Google', description: 'Google web results' },
   { value: 'bing', label: 'Bing', description: 'Bing web results' },
   { value: 'duckduckgo', label: 'DuckDuckGo', description: 'DuckDuckGo HTML results' },
+  { value: 'brave', label: 'Brave', description: 'Brave public web results' },
+  { value: 'mojeek', label: 'Mojeek', description: 'Independent web index' },
+  { value: 'yahoo', label: 'Yahoo', description: 'Yahoo public web results' },
   { value: 'searxng', label: 'SearXNG', description: 'Configured self-hosted metasearch' },
   { value: 'memory', label: 'Small Web / Memory', description: 'Stored keyword and vector results' },
 ]
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
   theme: 'system',
-  defaultSources: ['google', 'bing', 'duckduckgo', 'memory'],
+  defaultSources: ['bing', 'duckduckgo', 'brave', 'mojeek', 'memory'],
   resultsPerPage: 20,
   autoSummarize: true,
   safeSearch: true,
@@ -29,6 +41,13 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   region: 'us',
   aiModel: 'local-grounded',
 }
+
+const LEGACY_DEFAULT_SOURCES: SupportedSearchSource[] = [
+  'google',
+  'bing',
+  'duckduckgo',
+  'memory',
+]
 
 export interface SearchRequestPreferences {
   defaultSources: SearchSource[]
@@ -89,13 +108,18 @@ export function normalizeUserSettings(value: unknown): UserSettings {
         (source): source is SupportedSearchSource => typeof source === 'string' && supportedSourceSet.has(source)
       )))
     : []
+  const usesLegacyDefaults = selectedSources.length === LEGACY_DEFAULT_SOURCES.length
+    && LEGACY_DEFAULT_SOURCES.every(source => selectedSources.includes(source))
+  const normalizedSources = usesLegacyDefaults
+    ? [...DEFAULT_USER_SETTINGS.defaultSources]
+    : selectedSources
 
   return {
     ...DEFAULT_USER_SETTINGS,
     theme: typeof candidate.theme === 'string' && themeSet.has(candidate.theme)
       ? candidate.theme as UserSettings['theme']
       : DEFAULT_USER_SETTINGS.theme,
-    defaultSources: selectedSources.length > 0 ? selectedSources : [...DEFAULT_USER_SETTINGS.defaultSources],
+    defaultSources: normalizedSources.length > 0 ? normalizedSources : [...DEFAULT_USER_SETTINGS.defaultSources],
     resultsPerPage: normalizeResultCount(candidate.resultsPerPage),
     autoSummarize: asBoolean(candidate.autoSummarize, DEFAULT_USER_SETTINGS.autoSummarize),
     safeSearch: asBoolean(candidate.safeSearch, DEFAULT_USER_SETTINGS.safeSearch),

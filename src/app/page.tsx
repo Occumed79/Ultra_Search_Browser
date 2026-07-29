@@ -40,6 +40,9 @@ const SOURCE_COLORS: Record<string, string> = {
   Google: 'bg-blue-500/10 text-blue-300 border-blue-500/30',
   Bing: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30',
   DuckDuckGo: 'bg-orange-500/10 text-orange-300 border-orange-500/30',
+  Brave: 'bg-amber-500/10 text-amber-200 border-amber-500/30',
+  Mojeek: 'bg-fuchsia-500/10 text-fuchsia-200 border-fuchsia-500/30',
+  Yahoo: 'bg-purple-500/10 text-purple-200 border-purple-500/30',
   SearXNG: 'bg-violet-500/10 text-violet-300 border-violet-500/30',
   'memory-vector': 'bg-teal-500/10 text-teal-300 border-teal-500/30',
 }
@@ -175,7 +178,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
 
           {(result.validation?.reason || lifecycle?.reason) && (
             <div className="mt-2 rounded-lg border border-white/[0.07] bg-black/15 px-3 py-2 text-[11px] leading-relaxed text-white/50">
-              <span className="font-medium text-white/65">Why it survived:</span>{' '}
+              <span className="font-medium text-white/65">Ranking note:</span>{' '}
               {result.validation?.reason || lifecycle?.reason}
             </div>
           )}
@@ -277,7 +280,7 @@ export default function Home() {
   }, [filterSource, scrapedResults, sortMode])
 
   const excludedBuckets = useMemo(() => (
-    (['uncertain', 'expired', 'dead', 'rejected', 'duplicate'] as ResultBucket[])
+    (['expired', 'dead', 'rejected', 'duplicate'] as ResultBucket[])
       .map(bucket => ({ bucket, results: resultBuckets[bucket] }))
       .filter(item => item.results.length > 0)
   ), [resultBuckets])
@@ -395,7 +398,7 @@ export default function Home() {
           <section className="mt-6">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
-                <span>{visibleResults.length} verified results · {searchTime.toFixed(0)}ms initial search</span>
+                <span>{visibleResults.length} ranked results · {searchTime.toFixed(0)}ms initial search</span>
                 {isEnriching && (
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-1 text-[10px] text-cyan-100/65">
                     <Sparkles className="h-3 w-3 animate-pulse" /> Opening and validating pages
@@ -514,7 +517,7 @@ export default function Home() {
               <details className="glass-surface mt-5 rounded-xl p-3">
                 <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-white/55">
                   <ChevronDown className="h-4 w-4" />
-                  {excludedCount} results withheld from the verified list
+                  {excludedCount} results removed after validation
                   <span className="ml-auto text-[10px] text-white/30">review buckets</span>
                 </summary>
                 <div className="mt-3 space-y-4">
@@ -548,7 +551,7 @@ export default function Home() {
             )}
 
             {!isLoading && visibleResults.length === 0 && (
-              <div className="py-12 text-center text-sm text-white/40">No verified results found.</div>
+              <div className="py-12 text-center text-sm text-white/40">No ranked results found.</div>
             )}
           </section>
         )}
