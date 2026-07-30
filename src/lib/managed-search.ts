@@ -2,6 +2,9 @@ import type { ScrapedResult } from '../types/search'
 
 export type ManagedSearchProvider =
   | 'serper'
+  | 'you'
+  | 'parallel'
+  | 'linkup'
   | 'exa'
   | 'langsearch'
   | 'firecrawl'
@@ -83,6 +86,24 @@ const PROVIDERS: ProviderDefinition[] = [
     endpoint: 'https://google.serper.dev/search',
   },
   {
+    provider: 'you',
+    label: 'You.com',
+    environmentVariable: 'YOU_API_KEY',
+    endpoint: 'https://ydc-index.io/v1/search',
+  },
+  {
+    provider: 'parallel',
+    label: 'Parallel',
+    environmentVariable: 'PARALLEL_API_KEY',
+    endpoint: 'https://api.parallel.ai/v1/search',
+  },
+  {
+    provider: 'linkup',
+    label: 'Linkup',
+    environmentVariable: 'LINKUP_API_KEY',
+    endpoint: 'https://api.linkup.so/v1/search',
+  },
+  {
     provider: 'exa',
     label: 'Exa',
     environmentVariable: 'EXA_API_KEY',
@@ -135,17 +156,20 @@ function configuredKeys(
   environmentVariable: string,
   environment: ManagedSearchEnvironment
 ): string[] {
-  const pluralVariable = environmentVariable.replace(/_KEY$/, '_KEYS')
-  const names = [
-    environmentVariable,
-    `${environmentVariable}_SECONDARY`,
-    `${environmentVariable}_TERTIARY`,
-    `${environmentVariable}_QUATERNARY`,
-    ...Array.from({ length: 10 }, (_, index) => `${environmentVariable}_${index + 2}`),
-  ]
+  const baseVariables = environmentVariable === 'YOU_API_KEY'
+    ? [environmentVariable, 'YDC_API_KEY']
+    : [environmentVariable]
+  const names = baseVariables.flatMap(baseVariable => [
+    baseVariable,
+    `${baseVariable}_SECONDARY`,
+    `${baseVariable}_TERTIARY`,
+    `${baseVariable}_QUATERNARY`,
+    ...Array.from({ length: 10 }, (_, index) => `${baseVariable}_${index + 2}`),
+  ])
+  const pluralVariables = baseVariables.map(baseVariable => baseVariable.replace(/_KEY$/, '_KEYS'))
   const values = [
     ...names.map(name => environment[name] || ''),
-    ...(environment[pluralVariable] || '').split(/[\n,;]/),
+    ...pluralVariables.flatMap(name => (environment[name] || '').split(/[\n,;]/)),
   ]
   return unique(values.map(value => value.trim()))
 }
@@ -206,9 +230,11 @@ function providerItems(provider: ManagedSearchProvider, payload: unknown): unkno
   const data = asRecord(root.data)
   const webPages = asRecord(data.webPages || root.webPages)
   const result = asRecord(root.result)
+  const unifiedResults = asRecord(root.results)
 
   if (provider === 'serper') return asArray(root.organic)
-  if (provider === 'exa') return asArray(root.results)
+  if (provider === 'you') return [...asArray(unifiedResults.web), ...asArray(unifiedResults.news)]
+  if (provider === 'parallel' || provider === 'linkup' || provider === 'exa') return asArray(root.results)
   if (provider === 'langsearch') {
     return asArray(webPages.value).length
       ? asArray(webPages.value)
@@ -258,6 +284,8 @@ function normalizeProviderResults(
           record.snippet,
           record.summary,
           record.content,
+          record.excerpts,
+          record.snippets,
           record.highlights,
           record.text
         ).slice(0, 1_200),
@@ -299,6 +327,39 @@ function requestForProvider(
         hl: language,
         autocorrect: true,
         ...(options.safeSearch ? { safe: 'active' } : {}),
+      },
+    }
+  }
+  if (definition.provider === 'you') {
+    return {
+      headers: { 'X-API-Key': key, 'Content-Type': 'application/json' },
+      body: {
+        query,
+        count: limit,
+        country: region.toUpperCase(),
+        language: language.toUpperCase(),
+        safesearch: options.safeSearch ? 'strict' : 'moderate',
+      },
+    }
+  }
+  if (definition.provider === 'parallel') {
+    return {
+      headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
+      body: {
+        objective: query,
+        search_queries: [query],
+        max_chars_total: Math.max(8_000, limit * 800),
+      },
+    }
+  }
+  if (definition.provider === 'linkup') {
+    return {
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: {
+        q: query,
+        depth: 'standard',
+        outputType: 'searchResults',
+        maxResults: limit,
       },
     }
   }
@@ -543,13 +604,17 @@ export async function searchManagedWeb(
     }
   }
 
-  const providerOffset = stableHash(query) % definitions.length
-  const ordered = [...definitions.slice(providerOffset), ...definitions.slice(0, providerOffset)]
+  // Always send the user's complete query to the primary indexes. The former
+  // hash-based assignment could send every configured provider a different expansion
+  // while never sending the literal request that the user typed.
+  const ordered = definitions
   const primary = ordered.slice(0, Math.min(PRIMARY_PROVIDER_COUNT, ordered.length))
   const fallbacks = ordered.slice(primary.length)
   const queries = unique([query, ...(options.queryVariants || [])]).slice(0, 4)
-  const queryFor = (provider: ProviderDefinition, index: number) =>
-    queries[(stableHash(provider.provider) + index) % queries.length] || query
+  const queryFor = (_provider: ProviderDefinition, index: number) =>
+    index < primary.length
+      ? query
+      : queries[(index - primary.length) % queries.length] || query
 
   const primaryRuns = await Promise.all(primary.map((provider, index) =>
     runProvider(provider, queryFor(provider, index), options, environment, fetchFn)

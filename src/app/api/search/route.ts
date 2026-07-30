@@ -78,10 +78,17 @@ export async function POST(request: NextRequest) {
       && (procurementRescue?.successfulTasks || 0) === 0
 
     if (orchestration.results.length === 0 && noExternalResults && orchestration.failures.length > 0) {
+      const failureSummary = orchestration.diagnostics.sourceRuns
+        .filter(run => run.status === 'failed')
+        .slice(0, 6)
+        .map(run => `${run.source}: ${run.error || 'request failed'}`)
+        .join('; ')
       return NextResponse.json(
         {
           error: 'All retrieval sources failed',
-          detail: 'The selected web sources were blocked, timed out, or returned unreadable search pages. This is a retrieval failure, not a legitimate zero-result search.',
+          detail: failureSummary
+            ? `Every configured search provider failed. ${failureSummary}`
+            : 'Every configured search provider failed before returning usable results.',
           query: orchestration.normalizedQuery,
           lens: orchestration.lens,
           diagnostics: {

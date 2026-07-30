@@ -289,6 +289,10 @@ export function useSearch(): UseSearchReturn {
     setValidationProgress(null)
     setEnrichmentError(null)
     setError(null)
+    setIntelligence(null)
+    setSuggestions([])
+    setHasSearched(false)
+    setSearchTime(0)
     const startTime = performance.now()
 
     try {
@@ -408,6 +412,13 @@ export function useSearch(): UseSearchReturn {
       }
     } catch (searchError) {
       if (searchSequence.current === sequence) {
+        setIntelligence(null)
+        setScrapedResults([])
+        setResultBuckets(EMPTY_BUCKETS)
+        setValidationProgress(null)
+        setSuggestions([])
+        setHasSearched(true)
+        setSearchTime(performance.now() - startTime)
         setError(searchError instanceof Error ? searchError.message : 'Search failed')
       }
     } finally {
