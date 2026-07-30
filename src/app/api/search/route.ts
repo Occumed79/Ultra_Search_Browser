@@ -153,6 +153,9 @@ export async function POST(request: NextRequest) {
     const enabledSources = Array.from(new Set([
       ...orchestration.diagnostics.managedSearch.configuredProviders,
       ...(orchestration.diagnostics.geminiGroundedSearch.configured ? ['gemini-google-search'] : []),
+      ...(orchestration.diagnostics.automaticBrowserFallbackEnabled
+        ? ['bing-rss', 'duckduckgo-lite', 'mojeek']
+        : []),
       ...(orchestration.diagnostics.legacyHtmlSearchEnabled
         ? plan.liveSources
         : plan.liveSources.filter(source => source === 'searxng')),

@@ -1,4 +1,5 @@
 import { applySpamPenalty, calculateCombinedSpamScore } from './anti-spam'
+import { selectAutomaticBrowserFallbackTasks } from './automatic-browser-fallback'
 import { parseBangs } from './bangs'
 import { rerankWithCloudflare, type CloudflareRerankDiagnostics } from './cloudflare-reranker'
 import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
@@ -67,6 +68,7 @@ export interface SearchOrchestrationDiagnostics {
   managedSearch: ManagedSearchDiagnostics
   geminiGroundedSearch: GeminiGroundedSearchDiagnostics
   legacyHtmlSearchEnabled: boolean
+  automaticBrowserFallbackEnabled: boolean
   sourceRuns: SourceRunDiagnostic[]
 }
 
@@ -297,8 +299,15 @@ export async function orchestrateSearch(
 
   const managedCapabilities = managedSearchCapabilities()
   const legacyHtmlSearchEnabled = process.env.ENABLE_LEGACY_HTML_SEARCH === 'true'
+  const automaticBrowserFallbackEnabled = !managedCapabilities.configured
+  const automaticBrowserTasks = selectAutomaticBrowserFallbackTasks(
+    orchestration.tasks,
+    automaticBrowserFallbackEnabled
+  )
   const legacyTasks = orchestration.tasks.filter(task =>
-    task.source === 'searxng' || legacyHtmlSearchEnabled
+    task.source === 'searxng'
+    || legacyHtmlSearchEnabled
+    || automaticBrowserTasks.includes(task)
   )
   const livePromise = Promise.allSettled(legacyTasks.map(task => runLiveTask(task, options)))
   const managedPromise = searchManagedWeb(normalizedQuery, {
@@ -339,7 +348,11 @@ export async function orchestrateSearch(
     smallWebPromise,
     marginaliaPromise,
   ])
-  const geminiGroundedSearch = managedSearch.results.length === 0
+  const liveResultCount = liveSettled.reduce(
+    (total, item) => total + (item.status === 'fulfilled' ? item.value.data.results.length : 0),
+    0
+  )
+  const geminiGroundedSearch = managedSearch.results.length === 0 && liveResultCount === 0
     ? await searchGeminiGroundedWeb(normalizedQuery, lens)
     : {
         text: '',
@@ -593,6 +606,7 @@ export async function orchestrateSearch(
       managedSearch: managedSearch.diagnostics,
       geminiGroundedSearch: geminiGroundedSearch.diagnostics,
       legacyHtmlSearchEnabled,
+      automaticBrowserFallbackEnabled,
       sourceRuns,
     },
   }
