@@ -179,3 +179,68 @@ test('managed metasearch merges independent API indexes and records real provide
     new Set(['Serper', 'Exa', 'LangSearch', 'Firecrawl Search', 'Olostep Search'])
   )
 })
+
+
+test('You.com, Parallel, and Linkup use their production API contracts', async () => {
+  const environment: ManagedSearchEnvironment = {
+    YOU_API_KEY: 'you-key',
+    PARALLEL_API_KEY: 'parallel-key',
+    LINKUP_API_KEY: 'linkup-key',
+  }
+  const requests: Array<{ endpoint: string; headers: Headers; body: Record<string, unknown> }> = []
+  const fetchFn = async (input: string | URL | Request, init?: RequestInit) => {
+    const endpoint = String(input)
+    const headers = new Headers(init?.headers)
+    const body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+    requests.push({ endpoint, headers, body })
+
+    if (endpoint.includes('ydc-index.io')) {
+      return jsonResponse({
+        results: {
+          web: [{
+            title: 'Occupational Health Services RFP',
+            url: 'https://you.example/rfp',
+            description: 'Request for proposals for occupational health services.',
+            snippets: ['Occupational health solicitation.'],
+          }],
+          news: [],
+        },
+      })
+    }
+    if (endpoint.includes('parallel.ai')) {
+      return jsonResponse({
+        results: [{
+          title: 'Employee Medical Services Bid',
+          url: 'https://parallel.example/bid',
+          excerpts: ['Bid for employee medical evaluation services.'],
+        }],
+      })
+    }
+    return jsonResponse({
+      results: [{
+        name: 'Pre-Employment Examination Solicitation',
+        url: 'https://linkup.example/solicitation',
+        content: 'Solicitation for pre-employment examinations.',
+      }],
+    })
+  }
+
+  const search = await searchManagedWeb(
+    'occupational health services RFP',
+    { safeSearch: true, preferredLanguage: 'en', region: 'us' },
+    environment,
+    fetchFn
+  )
+
+  assert.equal(search.results.length, 3)
+  assert.deepEqual(
+    new Set(search.results.map(result => result.source)),
+    new Set(['You.com', 'Parallel', 'Linkup'])
+  )
+  assert.equal(requests.find(request => request.endpoint.includes('ydc-index.io'))?.headers.get('X-API-Key'), 'you-key')
+  assert.equal(requests.find(request => request.endpoint.includes('parallel.ai'))?.headers.get('x-api-key'), 'parallel-key')
+  assert.equal(requests.find(request => request.endpoint.includes('linkup.so'))?.headers.get('Authorization'), 'Bearer linkup-key')
+  assert.equal(requests.find(request => request.endpoint.includes('ydc-index.io'))?.body.query, 'occupational health services RFP')
+  assert.deepEqual(requests.find(request => request.endpoint.includes('parallel.ai'))?.body.search_queries, ['occupational health services RFP'])
+  assert.equal(requests.find(request => request.endpoint.includes('linkup.so'))?.body.outputType, 'searchResults')
+})

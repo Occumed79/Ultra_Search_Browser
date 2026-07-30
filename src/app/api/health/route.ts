@@ -24,7 +24,7 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v7-managed-api-metasearch',
+    searchPipeline: 'orchestrated-v8-multi-api-failover',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),

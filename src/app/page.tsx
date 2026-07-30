@@ -522,7 +522,7 @@ export default function Home() {
               </details>
             )}
 
-            {!isLoading && visibleResults.length === 0 && (
+            {!isLoading && !error && visibleResults.length === 0 && (
               <div className="py-12 text-center text-sm text-white/40">No ranked results found.</div>
             )}
           </section>
