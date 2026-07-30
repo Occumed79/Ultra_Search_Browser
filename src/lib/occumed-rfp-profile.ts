@@ -76,7 +76,7 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'respirator fit testing', 'hearing conservation', 'audiometric testing', 'audiogram',
       'spirometry', 'pulmonary function test', 'pft', 'silica surveillance',
       'asbestos surveillance', 'hazwoper medical', 'hazmat medical', 'lead surveillance',
-      'fmcsr medical', 'fmса medical', 'dot physical', 'commercial driver medical',
+      'fmcsr medical', 'fmcsa medical', 'dot physical', 'commercial driver medical',
     ],
   },
   {
@@ -217,7 +217,6 @@ export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
 }
 
 export function augmentOccuMedSemanticIntent(
-  query: string,
   intent?: SemanticIntentPlan
 ): SemanticIntentPlan | undefined {
   if (!intent) return undefined
@@ -225,6 +224,14 @@ export function augmentOccuMedSemanticIntent(
   const capabilityTerms = OCCUMED_CAPABILITY_GROUPS.flatMap(group => group.terms)
   const clientContext = OCCUMED_CLIENT_ANCHORS.join(', ')
   const websiteContext = OCCUMED_OFFICIAL_SOURCES.join(', ')
+  const occuMedGroup = {
+    id: 'occumed-capable-service',
+    label: 'Occu-Med capable service',
+    terms: Array.from(new Set(capabilityTerms)),
+    kind: 'subject' as const,
+    required: true,
+    weight: 1.4,
+  }
 
   return {
     ...intent,
@@ -235,15 +242,10 @@ export function augmentOccuMedSemanticIntent(
       `Official capability sources: ${websiteContext}.`,
       `Existing-client similarity anchors: ${clientContext}.`,
     ].join(' '),
+    requiredConcepts: Array.from(new Set([...intent.requiredConcepts, occuMedGroup.label])),
     conceptGroups: [
-      ...intent.conceptGroups,
-      {
-        label: 'Occu-Med capable service',
-        terms: Array.from(new Set(capabilityTerms)),
-        kind: 'subject',
-        required: true,
-        weight: 1.4,
-      },
+      ...intent.conceptGroups.filter(group => group.id !== occuMedGroup.id),
+      occuMedGroup,
     ],
     exclusions: Array.from(new Set([
       ...intent.exclusions,
@@ -251,7 +253,6 @@ export function augmentOccuMedSemanticIntent(
       'expired opportunity', 'closed solicitation', 'cancelled solicitation',
       'awarded contract', 'archived notice', 'past response deadline',
     ])),
-    rerankQuery: `${intent.rerankQuery || query} Occu-Med employment medical evaluations occupational health medical readiness surveillance provider network`,
   }
 }
 
