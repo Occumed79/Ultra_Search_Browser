@@ -1,5 +1,5 @@
 export interface ProcurementBrowserRescueTask {
-  source: 'bing' | 'duckduckgo' | 'mojeek'
+  source: 'bing' | 'duckduckgo' | 'yahoo' | 'brave' | 'mojeek'
   query: string
 }
 
@@ -14,6 +14,8 @@ export function buildProcurementBrowserRescueTasks(
   return [
     ...targeted.map(query => ({ source: 'bing' as const, query })),
     { source: 'duckduckgo' as const, query: targeted[0] },
+    { source: 'yahoo' as const, query: targeted[0] },
+    { source: 'brave' as const, query: targeted[0] },
     { source: 'mojeek' as const, query: targeted[0] },
   ]
 }
