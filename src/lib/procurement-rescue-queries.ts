@@ -1,3 +1,4 @@
+import { OCCUMED_CAPABILITY_GROUPS } from './occumed-rfp-profile'
 import type { SemanticIntentPlan } from './semantic-intent'
 
 const PROCUREMENT_WORDS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/gi
@@ -28,6 +29,13 @@ function semanticSubjects(intent?: SemanticIntentPlan): string[] {
   ]).map(normalizeSpace).filter(Boolean)))
 }
 
+function occuMedDiscoverySubjects(): string[] {
+  return OCCUMED_CAPABILITY_GROUPS.flatMap(group => [
+    group.label,
+    ...group.terms.slice(0, 2),
+  ]).map(normalizeSpace)
+}
+
 export function buildProcurementRescueQueries(
   query: string,
   intent?: SemanticIntentPlan
@@ -38,12 +46,16 @@ export function buildProcurementRescueQueries(
   const aliases = semanticSubjects(intent)
     .filter(value => value.toLowerCase() !== subject.toLowerCase())
     .slice(0, 8)
+  const profileAliases = occuMedDiscoverySubjects()
+    .filter(value => !subject.toLowerCase().includes(value.toLowerCase()))
+    .slice(0, 6)
 
   return Array.from(new Set([
-    `${quotedSubject} (RFP OR RFQ OR solicitation OR bid) ${currentYear}`,
+    `${quotedSubject} (RFP OR RFQ OR solicitation OR bid OR tender) ${currentYear}`,
     `intitle:RFP ${quotedSubject}`,
-    `site:.gov ${quotedSubject} (RFP OR RFQ OR solicitation)`,
-    `filetype:pdf ${quotedSubject} ("request for proposals" OR RFP OR RFQ)`,
+    `site:.gov ${quotedSubject} (RFP OR RFQ OR solicitation OR "sources sought")`,
+    `filetype:pdf ${quotedSubject} ("request for proposals" OR RFP OR RFQ OR IFB)`,
     ...aliases.map(alias => `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation)`),
+    ...profileAliases.map(alias => `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`),
   ]))
 }
