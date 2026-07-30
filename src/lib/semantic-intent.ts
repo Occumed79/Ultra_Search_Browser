@@ -196,6 +196,22 @@ const CONCEPT_FAMILIES: ConceptFamily[] = [
     weight: 1.45,
   },
   {
+    id: 'employment-medical-evaluation',
+    label: 'employment medical evaluation',
+    kind: 'service',
+    terms: [
+      'employment evaluation', 'employment medical evaluation', 'employee medical evaluation',
+      'pre-employment evaluation', 'pre employment evaluation',
+      'pre-employment medical evaluation', 'pre employment medical evaluation',
+      'pre-employment physical', 'pre employment physical',
+      'pre-employment physical exam', 'pre employment physical exam',
+      'pre-employment examination', 'pre employment examination',
+      'occupational health evaluation', 'fitness for duty evaluation',
+      'medical evaluation services',
+    ],
+    weight: 1.5,
+  },
+  {
     id: 'pdf-document',
     label: 'PDF document',
     kind: 'format',

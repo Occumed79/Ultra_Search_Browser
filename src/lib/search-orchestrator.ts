@@ -4,6 +4,11 @@ import { rerankWithCloudflare, type CloudflareRerankDiagnostics } from './cloudf
 import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
 import { expandQuery, scoreSignals } from './intelligence'
 import { evaluateIntentRelevance, intentRerankQuery } from './intent-relevance'
+import {
+  managedSearchCapabilities,
+  searchManagedWeb,
+  type ManagedSearchDiagnostics,
+} from './managed-search'
 import { searchMarginalia } from './marginalia'
 import { dedupeByUrl, keywordSearchStoredResults, vectorSearchStoredResults } from './memory-retrieval'
 import { calculateRankingPrecisionSignals } from './ranking-signals'
@@ -32,7 +37,7 @@ const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500
 export interface SourceRunDiagnostic {
   source: string
   query: string
-  purpose: QueryPurpose | 'memory' | 'small-web'
+  purpose: QueryPurpose | 'managed-api' | 'memory' | 'small-web'
   status: 'success' | 'empty' | 'failed'
   resultCount: number
   runtimeMs: number
@@ -54,6 +59,8 @@ export interface SearchOrchestrationDiagnostics {
   semanticIntent: SemanticIntentPlan
   lensRouting: LensRoutingDecision
   cloudflareRerank: CloudflareRerankDiagnostics
+  managedSearch: ManagedSearchDiagnostics
+  legacyHtmlSearchEnabled: boolean
   sourceRuns: SourceRunDiagnostic[]
 }
 
@@ -282,7 +289,26 @@ export async function orchestrateSearch(
     region: plan.region,
   }
 
-  const livePromise = Promise.allSettled(orchestration.tasks.map(task => runLiveTask(task, options)))
+  const managedCapabilities = managedSearchCapabilities()
+  const legacyHtmlSearchEnabled = process.env.ENABLE_LEGACY_HTML_SEARCH === 'true'
+  const legacyTasks = orchestration.tasks.filter(task =>
+    task.source === 'searxng' || legacyHtmlSearchEnabled
+  )
+  const livePromise = Promise.allSettled(legacyTasks.map(task => runLiveTask(task, options)))
+  const managedPromise = searchManagedWeb(normalizedQuery, {
+    safeSearch: plan.safeSearch,
+    preferredLanguage: plan.preferredLanguage,
+    region: plan.region,
+    limit: Math.min(20, Math.max(10, plan.resultsPerPage)),
+    queryVariants: orchestration.variants
+      .filter(variant =>
+        variant.purpose === 'intent-core'
+        || variant.purpose === 'ai-intent'
+        || variant.purpose === 'official'
+        || variant.purpose === 'document'
+      )
+      .map(variant => variant.query),
+  })
   const keywordPromise = plan.useMemory
     ? withTimeout(keywordSearchStoredResults(normalizedQuery, lens, operators, 20), MEMORY_TIMEOUT_MS, 'keyword memory search').catch(() => [] as ScrapedResult[])
     : Promise.resolve([] as ScrapedResult[])
@@ -299,8 +325,9 @@ export async function orchestrateSearch(
         .catch(() => ({ text: '', results: [] as ScrapedResult[] }))
     : Promise.resolve({ text: '', results: [] as ScrapedResult[] })
 
-  const [liveSettled, memoryKeyword, memoryVector, smallWebEntries, marginalia] = await Promise.all([
+  const [liveSettled, managedSearch, memoryKeyword, memoryVector, smallWebEntries, marginalia] = await Promise.all([
     livePromise,
+    managedPromise,
     keywordPromise,
     vectorPromise,
     smallWebPromise,
@@ -314,7 +341,7 @@ export async function orchestrateSearch(
   const rawTexts: string[] = []
 
   liveSettled.forEach((settled, index) => {
-    const task = orchestration.tasks[index]
+    const task = legacyTasks[index]
     if (settled.status === 'rejected') {
       const error = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
       failures.push(`${task.source}: ${error}`)
@@ -343,6 +370,38 @@ export async function orchestrateSearch(
     if (data.text.trim()) rawTexts.push(data.text)
     addResults(occurrences, data.results, task.source, task.query, task.purpose)
   })
+
+  for (const result of managedSearch.results) {
+    const query = result.retrieval?.queries[0] || normalizedQuery
+    addResults(occurrences, [result], result.source, query, 'semantic')
+  }
+  for (const attempt of managedSearch.diagnostics.attempts) {
+    sourceRuns.push({
+      source: attempt.provider,
+      query: attempt.query,
+      purpose: 'managed-api',
+      status: attempt.status,
+      resultCount: attempt.resultCount,
+      runtimeMs: attempt.runtimeMs,
+      error: attempt.error,
+    })
+    if (attempt.status === 'failed') {
+      failures.push(`${attempt.provider}: ${attempt.error || 'managed search request failed'}`)
+    }
+  }
+  if (managedSearch.results.length > 0) {
+    if (managedSearch.text.trim()) rawTexts.push(managedSearch.text)
+    for (const provider of managedSearch.diagnostics.attempts
+      .filter(attempt => attempt.status === 'success')
+      .map(attempt => attempt.provider)) {
+      sourceLabels.add(`${provider} · managed-api`)
+    }
+  }
+  if (!managedCapabilities.configured && legacyTasks.length === 0) {
+    failures.push(
+      'managed search: no supported API search provider is configured and legacy HTML search is disabled'
+    )
+  }
 
   addResults(occurrences, memoryKeyword, 'memory-keyword', normalizedQuery)
   addResults(occurrences, memoryVector, 'memory-vector', normalizedQuery)
@@ -469,9 +528,11 @@ export async function orchestrateSearch(
       queryVariants: orchestration.variants.map(({ query, purpose }) => ({ query, purpose })),
       variantBudget: orchestration.variantBudget,
       taskBudget: orchestration.taskBudget,
-      attemptedLiveTasks: orchestration.tasks.length,
-      successfulLiveTasks: liveSettled.filter(item => item.status === 'fulfilled').length,
-      failedLiveTasks: liveSettled.filter(item => item.status === 'rejected').length,
+      attemptedLiveTasks: legacyTasks.length + managedSearch.diagnostics.attemptedRequests,
+      successfulLiveTasks: liveSettled.filter(item => item.status === 'fulfilled').length
+        + managedSearch.diagnostics.successfulRequests,
+      failedLiveTasks: liveSettled.filter(item => item.status === 'rejected').length
+        + managedSearch.diagnostics.failedRequests,
       memoryKeywordMatches: memoryKeyword.length,
       memoryVectorMatches: memoryVector.length,
       smallWebMatches: smallWebEntries.length,
@@ -479,6 +540,8 @@ export async function orchestrateSearch(
       semanticIntent,
       lensRouting,
       cloudflareRerank: cloudflare.diagnostics,
+      managedSearch: managedSearch.diagnostics,
+      legacyHtmlSearchEnabled,
       sourceRuns,
     },
   }

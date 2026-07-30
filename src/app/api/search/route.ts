@@ -44,7 +44,8 @@ export async function POST(request: NextRequest) {
     const gated = applyIntentCandidateGate(
       orchestration.normalizedQuery,
       orchestration.lens,
-      orchestration.results
+      orchestration.results,
+      orchestration.diagnostics.semanticIntent
     )
     orchestration.results = gated.results
 
@@ -54,6 +55,7 @@ export async function POST(request: NextRequest) {
         safeSearch: plan.safeSearch,
         preferredLanguage: plan.preferredLanguage,
         region: plan.region,
+        semanticIntent: orchestration.diagnostics.semanticIntent,
       })
       procurementRescue = rescued.diagnostics
       orchestration.results = rescued.results
@@ -141,6 +143,13 @@ export async function POST(request: NextRequest) {
     intelligence.signals = []
 
     const runtimeMs = Date.now() - startedAt
+    const enabledSources = Array.from(new Set([
+      ...orchestration.diagnostics.managedSearch.configuredProviders,
+      ...(orchestration.diagnostics.legacyHtmlSearchEnabled
+        ? plan.liveSources
+        : plan.liveSources.filter(source => source === 'searxng')),
+      ...(plan.useMemory ? ['memory'] : []),
+    ]))
     let searchRunId: string | null = null
     const persistedResultIds = new Map<string, string>()
 
@@ -157,7 +166,7 @@ export async function POST(request: NextRequest) {
           parsed: orchestration.operators,
           variants: orchestration.diagnostics.queryVariants,
           failures: orchestration.failures,
-          enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+          enabledSources,
           lensRouting,
           intentGate: gated.diagnostics,
           procurementRescue,
@@ -223,7 +232,7 @@ export async function POST(request: NextRequest) {
       intent: orchestration.diagnostics.semanticIntent,
       diagnostics: {
         runtimeMs,
-        enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
+        enabledSources,
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
         intentGate: gated.diagnostics,

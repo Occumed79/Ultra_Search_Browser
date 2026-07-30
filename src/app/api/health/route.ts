@@ -1,5 +1,6 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { managedSearchCapabilities } from '../../../lib/managed-search'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
@@ -18,11 +19,12 @@ function healthPayload() {
   const providers = externalSmartFilterCapabilities()
   const gemini = semanticIntentCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
+  const managedSearch = managedSearchCapabilities()
 
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v6-task-aware-intent',
+    searchPipeline: 'orchestrated-v7-managed-api-metasearch',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -32,6 +34,10 @@ function healthPayload() {
       geminiIntentModel: gemini.model,
       structuredIntentPlanning: true,
       taskAwareReranking: true,
+      managedSearch: managedSearch.configured,
+      managedSearchProviders: managedSearch.providers,
+      configuredButUnwiredSearchKeys: managedSearch.configuredButUnwired,
+      legacyHtmlSearch: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
       cloudflareReranker: cloudflare.configured,
       cloudflareRerankModel: cloudflare.model,
       cerebrasSmartFilter: providers.cerebras.configured,

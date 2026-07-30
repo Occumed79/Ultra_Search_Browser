@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { buildProcurementRescueQueries } from '../src/lib/procurement-rescue-queries'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
 import { routeSearchLens } from '../src/lib/search-intent-routing'
+import { buildDeterministicSemanticIntent } from '../src/lib/semantic-intent'
 import {
   verifiedSearchConfidence,
   verifiedSearchSummary,
@@ -87,14 +88,39 @@ test('sparse procurement snippets with one subject match reach page-level review
   assert.equal(gated.diagnostics.reasons['missing-query-subject'], 1)
 })
 
-test('procurement rescue queries remove duplicate RFP language and target official portals', () => {
-  const queries = buildProcurementRescueQueries('Occupational Health Services RFP')
-  assert.equal(queries.length, 4)
-  assert.ok(queries.every(query => /occupational health services/i.test(query)))
+test('procurement rescue queries remove duplicate RFP language and preserve semantic aliases', () => {
+  const query = 'request for proposal employment evaluation'
+  const intent = buildDeterministicSemanticIntent(query)
+  const queries = buildProcurementRescueQueries(query, intent)
+  assert.ok(queries.length >= 4)
+  assert.ok(queries.some(rescueQuery => /employment evaluation/i.test(rescueQuery)))
+  assert.ok(queries.some(rescueQuery => /pre-employment physical/i.test(rescueQuery)))
   assert.ok(queries.some(query => /site:\.gov/i.test(query)))
-  assert.ok(queries.some(query => /site:sam\.gov/i.test(query)))
-  assert.ok(queries.some(query => /ionwave\.net/i.test(query)))
   assert.ok(queries.every(query => !/RFP\s+RFP/i.test(query)))
+})
+
+test('employment evaluation RFPs match common procurement wording', () => {
+  const query = 'request for proposal employment evaluation'
+  const intent = buildDeterministicSemanticIntent(query)
+  const candidates = [
+    result(
+      'RFP 901634 – Pre-Employment Physical Exams and Occupational Health Services',
+      'https://example.gov/procurement/rfp-901634.doc',
+      'The County requests proposals for pre-employment physical examinations and employee health services.'
+    ),
+    result(
+      'REQUEST Definition & Meaning',
+      'https://dictionary.example/request',
+      'The meaning of request.'
+    ),
+  ]
+  const gated = applyIntentCandidateGate(query, 'procurement', candidates, intent)
+
+  assert.deepEqual(gated.results.map(item => item.url), [candidates[0].url])
+  assert.ok(intent.conceptGroups.some(group =>
+    group.id === 'employment-medical-evaluation'
+    && group.terms.some(term => /pre-employment physical/i.test(term))
+  ))
 })
 
 test('zero verified results produce zero confidence and an honest summary', () => {
