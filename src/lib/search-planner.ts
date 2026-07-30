@@ -25,7 +25,15 @@ export interface SearchOrchestrationPlan {
   taskBudget: number
 }
 
-const TARGETED_SOURCE_ORDER: LiveSearchSource[] = ['searxng', 'bing', 'duckduckgo', 'google']
+const TARGETED_SOURCE_ORDER: LiveSearchSource[] = [
+  'searxng',
+  'bing',
+  'duckduckgo',
+  'brave',
+  'mojeek',
+  'yahoo',
+  'google',
+]
 const DEFAULT_QUERY_VARIANTS = 7
 const DEFAULT_LIVE_TASKS = 14
 

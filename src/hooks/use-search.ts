@@ -129,7 +129,7 @@ export function useSearch(): UseSearchReturn {
           mode: result.validation?.mode || 'local-rules' as const,
         },
       }))
-      setScrapedResults([])
+      setScrapedResults(uncertain)
       setResultBuckets({ ...EMPTY_BUCKETS, uncertain })
     }
   }, [])
@@ -145,7 +145,6 @@ export function useSearch(): UseSearchReturn {
     validationController.current = controller
     setIsEnriching(true)
     setEnrichmentError(null)
-    setScrapedResults([])
     setValidationProgress({
       phase: 'opening-pages',
       total: Math.min(24, results.length),
@@ -195,10 +194,20 @@ export function useSearch(): UseSearchReturn {
             const payload = parsed.data as { progress?: SearchValidationProgress }
             if (payload.progress) setValidationProgress(payload.progress)
           } else if (parsed.event === 'result') {
-            const payload = parsed.data as { progress?: SearchValidationProgress }
+            const payload = parsed.data as {
+              progress?: SearchValidationProgress
+              result?: ScrapedResult
+            }
             if (payload.progress) setValidationProgress(payload.progress)
-            // Individual pages are intentionally not rendered as results yet.
-            // Reachable does not mean relevant or verified.
+            if (payload.result) {
+              const validatedResult = payload.result
+              setScrapedResults(current => current.map(result => {
+                const requestedUrl = validatedResult.pageValidation?.requestedUrl
+                return result.url === requestedUrl || result.url === validatedResult.url
+                  ? { ...validatedResult, bucket: 'uncertain' }
+                  : result
+              }))
+            }
           } else if (parsed.event === 'complete') {
             const payload = parsed.data as {
               results?: ScrapedResult[]
@@ -351,7 +360,10 @@ export function useSearch(): UseSearchReturn {
         queryExpansions: data.expandedQueries,
         timestamp: data.timestamp,
       })
-      setScrapedResults([])
+      // Search results are useful discovery candidates before the optional
+      // destination-page review completes. Keep them visible and enhance them
+      // in place as validation events arrive.
+      setScrapedResults(data.results)
       setHasSearched(true)
       setSearchTime(performance.now() - startTime)
       setIsLoading(false)

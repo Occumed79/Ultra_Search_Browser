@@ -1,7 +1,7 @@
 // ─── Search Lenses ───
 export type SearchLens = "web" | "pdf" | "government" | "procurement" | "pricing" | "provider" | "technical" | "news" | "legal" | "medical" | "academic" | "financial";
 
-export type SearchSource = "google" | "bing" | "duckduckgo" | "searxng" | "memory" | "brave" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
+export type SearchSource = "google" | "bing" | "duckduckgo" | "brave" | "mojeek" | "yahoo" | "searxng" | "memory" | "wikipedia" | "github" | "stackoverflow" | "news" | "scholar" | "semantic";
 
 export type ResultBucket = "valid" | "uncertain" | "expired" | "dead" | "rejected" | "duplicate";
 export type ResultLifecycleStatus = "active" | "current" | "open" | "expired" | "closed" | "cancelled" | "awarded" | "stale" | "unknown" | "dead" | "junk" | "duplicate";

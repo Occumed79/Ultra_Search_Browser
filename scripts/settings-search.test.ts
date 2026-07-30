@@ -30,6 +30,20 @@ test('normalizes persisted settings and removes decorative unsupported sources',
   assert.equal(settings.safeSearch, false)
 })
 
+test('migrates the fragile legacy default source mix to independent indexes', () => {
+  const settings = normalizeUserSettings({
+    defaultSources: ['google', 'bing', 'duckduckgo', 'memory'],
+  })
+  assert.deepEqual(settings.defaultSources, ['bing', 'duckduckgo', 'brave', 'mojeek', 'memory'])
+})
+
+test('preserves a custom public source selection exactly', () => {
+  const settings = normalizeUserSettings({
+    defaultSources: ['brave', 'yahoo'],
+  })
+  assert.deepEqual(settings.defaultSources, ['brave', 'yahoo'])
+})
+
 test('builds an engine plan from the exact selected sources', () => {
   const plan = buildSearchPlan({ defaultSources: ['bing', 'searxng'], safeSearch: true })
   assert.deepEqual(plan.liveSources, ['bing', 'searxng'])

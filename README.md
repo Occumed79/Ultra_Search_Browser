@@ -4,8 +4,8 @@ Ultra Search Browser is a focused research search app that combines multiple pub
 
 ## What is live
 
-- Multi-engine search through Google, Bing, and DuckDuckGo scraping
-- Optional self-hosted SearXNG source
+- Multi-engine search through Bing, DuckDuckGo, Brave, Mojeek, Yahoo, Google,
+  and an optional self-hosted SearXNG source
 - Web, PDF, Government, Procurement, Pricing, Provider, Technical, News, Legal, Medical, Academic, and Financial lenses
 - Query expansion and lens-specific ranking signals
 - Fast initial results followed by bounded asynchronous enrichment
@@ -20,9 +20,16 @@ Ultra Search Browser is a focused research search app that combines multiple pub
 
 ## Runtime model
 
-The first search response is intentionally fast. Advanced extraction and intelligence work runs through `/api/search/enrich`; enriched results replace the initial cards when the request completes. If enrichment fails or times out, the initial results remain usable.
+The first search response returns ranked discovery results immediately. Destination-page
+validation then updates those cards in place through `/api/search/validate`. Sites that
+block automated validation remain visible and clearly marked instead of disappearing;
+dead, generic, and irrelevant pages move into review buckets. If validation fails or
+times out, the initial ranked results remain usable.
 
-Public search engines may rate-limit or change their HTML. The app keeps successful engine results when another selected source fails. For the most stable independent metasearch path, configure a self-hosted SearXNG instance.
+Public search engines may rate-limit or change their HTML. The app keeps successful
+engine results when another selected source fails, and the default source mix favors
+several independent indexes instead of depending on one scraper. For the most stable
+independent metasearch path, configure a self-hosted SearXNG instance.
 
 ## Local setup
 

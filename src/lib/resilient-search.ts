@@ -2,7 +2,7 @@ import { searchBingHTML, searchDuckDuckGo, type SearchEngineOptions } from './se
 import { isUsableExternalResult, parseBingRss, parseDuckDuckGoLite } from './search-response-parsers'
 import type { ScrapedResult } from '../types/search'
 
-const FALLBACK_TIMEOUT_MS = 4_500
+const FALLBACK_TIMEOUT_MS = 3_500
 const SOURCE_RESULT_LIMIT = 30
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
