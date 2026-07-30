@@ -18,12 +18,6 @@ import { selectAutomaticBrowserFallbackTasks } from './automatic-browser-fallbac
 
 replace_once(
     "src/lib/search-orchestrator.ts",
-    "import { filterSafeResults, type LiveSearchSource, type SearchPlan } from './search-settings'",
-    "import { filterSafeResults, type SearchPlan } from './search-settings'",
-)
-
-replace_once(
-    "src/lib/search-orchestrator.ts",
     """  geminiGroundedSearch: GeminiGroundedSearchDiagnostics
   legacyHtmlSearchEnabled: boolean
   sourceRuns: SourceRunDiagnostic[]""",
