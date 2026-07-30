@@ -2,7 +2,7 @@ import { deduplicateEntities } from './entity-dedupe'
 import { extractIntelligence } from './entity-extraction'
 import { pageValidationCacheStats, validateCandidatePage } from './page-validation'
 import type { SemanticIntentPlan } from './semantic-intent'
-import { applySmartFilter, type SmartFilterDiagnostics } from './smart-filter'
+import { applyOccuMedSmartFilter, type SmartFilterDiagnostics } from './occumed-smart-filter'
 import type {
   ResultBucket,
   ScrapedResult,
@@ -219,7 +219,7 @@ export async function deepValidateResults(
   let reviewedByUrl = new Map<string, ScrapedResult>()
 
   if (reviewable.length > 0) {
-    const smart = await applySmartFilter(
+    const smart = await applyOccuMedSmartFilter(
       query,
       lens,
       reviewable.map(evidenceReviewCandidate),
@@ -275,7 +275,7 @@ export async function deepValidateResults(
     if (!reviewed) {
       buckets.rejected.push(bucketResult(rejectedByEvidence(
         original,
-        'The destination page did not pass the complete-query evidence review.'
+        'The destination page did not pass the complete-query and Occu-Med capability evidence review.'
       ), 'rejected'))
       continue
     }
