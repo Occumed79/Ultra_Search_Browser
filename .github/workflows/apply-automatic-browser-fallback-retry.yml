@@ -1,0 +1,55 @@
+name: Apply automatic browser search fallback retry
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - scripts/automatic-browser-fallback.test.ts
+      - scripts/apply-automatic-browser-fallback.py
+      - .github/workflows/apply-automatic-browser-fallback-retry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/automatic-browser-search-fallback
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Enable exact-query browser fallback
+        run: python scripts/apply-automatic-browser-fallback.py
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run complete search tests
+        run: npm run test:search
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Commit verified fallback
+        shell: bash
+        run: |
+          rm scripts/apply-automatic-browser-fallback.py
+          rm .github/workflows/apply-automatic-browser-fallback-retry.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Use browser search when API providers are unavailable"
+          git push origin HEAD:fix/automatic-browser-search-fallback
