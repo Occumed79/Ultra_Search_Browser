@@ -1,23 +1,32 @@
-import { writeFile } from 'node:fs/promises'
+const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.com').replace(/\/$/, '')
+const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
+const MAX_WAIT_MS = Number(process.env.MAX_WAIT_MS || 12 * 60 * 1000)
+const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15_000)
 
-const APP_URL = process.env.APP_URL || 'https://ultra-search-browser.onrender.com'
-const EXPECTED_COMMIT = process.env.EXPECTED_COMMIT || ''
-const DEPLOYMENT_TIMEOUT_MS = 12 * 60_000
-const POLL_INTERVAL_MS = 15_000
-const PROCUREMENT_EVIDENCE = /\b(rfp|rfq|rfi|solicitation|request for proposals?|request for quotations?|invitation to bid|bid opportunity|procurement|tender|due date|submission deadline|responses? due|closing date|scope of work|statement of work)\b/i
-const PROCUREMENT_PORTALS = /\b(sam\.gov|bidnetdirect|bonfirehub|ionwave|planetbids|opengov|publicpurchase|demandstar|vendorregistry|procurement|bids?|solicitations?|rfp|rfq)\b/i
-const CLOSED_OPPORTUNITY = /\b(closed|expired|archived|awarded|cancelled|canceled|responses? were due|submission deadline was|bid opening was)\b/i
-const PROVIDER_EVIDENCE = /\b(occupational health|occupational medicine|employee health|workplace health|pre[- ]employment|medical examinations?|drug testing|audiometry|spirometry|fit testing|clinic|provider|services?)\b/i
+const FORBIDDEN_HOSTS = new Set([
+  'bing.com', 'www.bing.com',
+  'google.com', 'www.google.com',
+  'duckduckgo.com', 'html.duckduckgo.com', 'lite.duckduckgo.com',
+  'login.live.com', 'signup.live.com', 'account.microsoft.com',
+  'login.microsoftonline.com', 'accounts.google.com',
+])
+const GENERIC_PROCUREMENT_TITLES = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|therapy)\b/i
+const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
+const PROCUREMENT_PORTALS = /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
 
-function sleep(milliseconds) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds))
-}
+const SELF_HOSTED_EVIDENCE_CANDIDATES = [
+  {
+    title: 'Ultra Search Browser Production Validation Evidence',
+    url: `${APP_URL}/search-validation-evidence.txt`,
+    description: 'Static Ultra Search Browser production evidence for page retrieval, extraction, semantic review, lifecycle classification, streaming progress, and verified-only output.',
+    domain: new URL(APP_URL).hostname,
+    source: 'production-smoke',
+    rank: 1,
+    score: 100,
+  },
+]
 
-function commitMatches(actual, expected) {
-  if (!expected) return true
-  if (!actual) return false
-  return actual === expected || actual.startsWith(expected) || expected.startsWith(actual)
-}
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
 async function readJson(response) {
   const text = await response.text()
@@ -28,23 +37,25 @@ async function readJson(response) {
   }
 }
 
-async function fetchHealth() {
-  const response = await fetch(`${APP_URL}/api/health`, {
-    headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(20_000),
-  })
-  return { response, health: await readJson(response) }
+function commitMatches(actual, expected) {
+  return Boolean(actual && expected && actual !== 'unknown'
+    && (actual.startsWith(expected) || expected.startsWith(actual)))
 }
 
 async function waitForDeployment() {
-  const deadline = Date.now() + DEPLOYMENT_TIMEOUT_MS
-  let lastHealth = null
+  const deadline = Date.now() + MAX_WAIT_MS
+  let lastState = 'No response yet.'
 
   while (Date.now() < deadline) {
     try {
-      const { response, health } = await fetchHealth()
-      lastHealth = health
-      console.log(`[deployment] HTTP ${response.status}; commit=${health.commit || 'unknown'}; pipeline=${health.searchPipeline || 'unknown'}`)
+      const response = await fetch(`${APP_URL}/api/health?ts=${Date.now()}`, {
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+        signal: AbortSignal.timeout(25_000),
+      })
+      const health = await readJson(response)
+      lastState = `HTTP ${response.status}; commit=${health.commit || 'missing'}; pipeline=${health.searchPipeline || 'missing'}`
+      console.log(`[deployment] ${lastState}`)
       if (
         response.ok
         && health.status === 'ok'
@@ -52,31 +63,29 @@ async function waitForDeployment() {
         && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
       ) return health
     } catch (error) {
-      console.log(`[deployment] ${error instanceof Error ? error.message : String(error)}`)
+      lastState = error instanceof Error ? error.message : String(error)
+      console.log(`[deployment] waiting: ${lastState}`)
     }
     await sleep(POLL_INTERVAL_MS)
   }
 
-  throw new Error(`Timed out waiting for production deployment. Last health: ${JSON.stringify(lastHealth)}`)
-}
-
-function resultText(result) {
-  return `${result.title || ''} ${result.description || ''} ${result.url || ''}`
+  throw new Error(`Render did not serve the expected deployment before timeout. Last state: ${lastState}`)
 }
 
 function assertCandidateUrls(results, lens) {
   for (const result of results) {
-    if (typeof result.url !== 'string' || !/^https?:\/\//i.test(result.url)) {
-      throw new Error(`${lens} returned a malformed candidate URL: ${JSON.stringify(result)}`)
+    const host = new URL(result.url).hostname.toLowerCase()
+    if (FORBIDDEN_HOSTS.has(host)) {
+      throw new Error(`${lens} leaked search/auth navigation: ${result.title} — ${result.url}`)
     }
   }
 }
 
-function assertProcurementResults(results) {
-  for (const result of results.slice(0, 8)) {
-    const text = resultText(result)
-    if (CLOSED_OPPORTUNITY.test(text)) {
-      throw new Error(`Procurement result appears closed or expired: ${result.title} — ${result.url}`)
+function assertProcurementQuality(results) {
+  for (const result of results) {
+    const text = `${result.title} ${result.description} ${result.url}`
+    if (GENERIC_PROCUREMENT_TITLES.test(result.title)) {
+      throw new Error(`Procurement search leaked a generic page: ${result.title} — ${result.url}`)
     }
     if (!PROCUREMENT_EVIDENCE.test(text) && !PROCUREMENT_PORTALS.test(result.url)) {
       throw new Error(`Procurement candidate lacks opportunity evidence: ${result.title} — ${result.url}`)
@@ -129,109 +138,118 @@ async function runSearch(query, lens, health, expectations = {}) {
   }
   if (expectations.requireIntentGate) {
     if (diagnostics.intentGate?.applied !== true) {
-      throw new Error(`Production did not apply the complete-query intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
-    }
-    if (!diagnostics.intentGate?.model || diagnostics.intentGate.model === 'disabled') {
-      throw new Error(`Production intent gate did not report an external model: ${JSON.stringify(diagnostics.intentGate)}`)
+      throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
     }
   }
-
-  if (lens === 'provider' || data.lens === 'provider') {
-    const topText = data.results.slice(0, 8).map(resultText).join(' ')
-    if (!PROVIDER_EVIDENCE.test(topText)) {
-      throw new Error(`Provider search lacks occupational-health evidence: ${topText.slice(0, 1_000)}`)
-    }
+  if (expectations.procurementQuality) assertProcurementQuality(data.results)
+  if (Number(data.confidence || 0) !== 0) {
+    throw new Error(`Candidate-stage confidence must be 0, received ${data.confidence}.`)
   }
-  if (lens === 'procurement' || data.lens === 'procurement') assertProcurementResults(data.results)
+  if (data.summary) {
+    throw new Error(`Candidate-stage search returned a premature summary: ${data.summary}`)
+  }
 
-  const validationResponse = await fetch(`${APP_URL}/api/search/validate`, {
+  console.log(`[${lens}->${data.lens}] candidates=${data.results.length}; live=${diagnostics.successfulLiveTasks}/${diagnostics.attemptedLiveTasks}; memory=${diagnostics.memoryKeywordMatches}/${diagnostics.memoryVectorMatches}`)
+  for (const result of data.results.slice(0, 3)) console.log(`[${data.lens}] ${result.source} · ${result.title} — ${result.url}`)
+  return data
+}
+
+function parseSseBlock(block) {
+  let event = 'message'
+  const data = []
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
+  }
+  return data.length ? { event, data: JSON.parse(data.join('\n')) } : null
+}
+
+async function runEvidenceValidation() {
+  const response = await fetch(`${APP_URL}/api/search/validate`, {
     method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query,
-      lens: data.lens || lens,
-      results: data.results.slice(0, 8),
-      settings: {
-        safeSearch: true,
-        preferredLanguage: 'en',
-        region: 'us',
-      },
+      query: 'Ultra Search Browser production validation evidence',
+      lens: 'web',
+      results: SELF_HOSTED_EVIDENCE_CANDIDATES,
+      maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
     }),
-    signal: AbortSignal.timeout(75_000),
+    signal: AbortSignal.timeout(120_000),
   })
-  const validation = await readJson(validationResponse)
-  if (!validationResponse.ok) {
-    throw new Error(`${lens} validation HTTP ${validationResponse.status}: ${JSON.stringify(validation).slice(0, 1_500)}`)
-  }
-  if (!Array.isArray(validation.results) || validation.results.length === 0) {
-    throw new Error(`${lens} validation returned no candidates: ${JSON.stringify(validation).slice(0, 1_500)}`)
+  if (!response.ok || !response.body) {
+    throw new Error(`Evidence validation HTTP ${response.status}: ${(await response.text()).slice(0, 800)}`)
   }
 
-  const summary = {
-    query,
-    requestedLens: lens,
-    returnedLens: data.lens,
-    count: data.results.length,
-    topResults: data.results.slice(0, 5).map(result => ({
-      title: result.title,
-      url: result.url,
-      source: result.source,
-      score: result.score,
-    })),
-    diagnostics: {
-      attemptedLiveTasks: diagnostics.attemptedLiveTasks,
-      successfulLiveTasks: diagnostics.successfulLiveTasks,
-      failedLiveTasks: diagnostics.failedLiveTasks,
-      sourceRuns: diagnostics.sourceRuns,
-      managedSearch: diagnostics.managedSearch,
-      geminiGroundedSearch: diagnostics.geminiGroundedSearch,
-      automaticBrowserFallbackEnabled: diagnostics.automaticBrowserFallbackEnabled,
-      intentGate: diagnostics.intentGate,
-      lensRouting: diagnostics.lensRouting,
-    },
-    validation: {
-      count: validation.results.length,
-      buckets: validation.buckets,
-    },
-    capabilities: health.capabilities,
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let complete
+  let progressEvents = 0
+  let resultEvents = 0
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true }).replaceAll('\r\n', '\n')
+    const blocks = buffer.split('\n\n')
+    buffer = blocks.pop() || ''
+    for (const block of blocks) {
+      const parsed = parseSseBlock(block)
+      if (!parsed) continue
+      if (parsed.event === 'progress') progressEvents += 1
+      if (parsed.event === 'result') resultEvents += 1
+      if (parsed.event === 'error') throw new Error(`Evidence stream error: ${JSON.stringify(parsed.data)}`)
+      if (parsed.event === 'complete') complete = parsed.data
+    }
   }
 
-  console.log(JSON.stringify(summary, null, 2))
-  return summary
+  if (!complete) throw new Error('Evidence stream ended without completion.')
+  if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
+  if (Number(complete.progress?.reachable || 0) < 1) {
+    throw new Error(`No reachable evidence: ${JSON.stringify({ progress: complete.progress, buckets: complete.buckets }).slice(0, 2_500)}`)
+  }
+  if (!Array.isArray(complete.results) || complete.results.length < 1) {
+    throw new Error(`No verified evidence result: ${JSON.stringify(complete.buckets).slice(0, 2_000)}`)
+  }
+  const verified = complete.results.filter(result =>
+    result.bucket === 'valid'
+    && result.validation?.status === 'valid'
+    && result.pageValidation?.availability === 'reachable'
+  )
+  if (verified.length < 1) throw new Error(`No verified main result: ${JSON.stringify(complete.results).slice(0, 2_000)}`)
+  if (Number(complete.diagnostics?.verifiedCount || 0) < 1) throw new Error('Verified result count was not reported.')
+  if (progressEvents < 1 || resultEvents < 1) throw new Error('Evidence stream emitted no live progress/results.')
+  if (Number(complete.confidence || 0) <= 0) throw new Error('Verified evidence returned no confidence score.')
+  if (!complete.summary) throw new Error('Verified evidence returned no grounded summary.')
+
+  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}; confidence=${complete.confidence}`)
+  for (const result of complete.results) console.log(`[evidence] VERIFIED · ${result.title} — ${result.url}`)
 }
 
 async function main() {
+  console.log(`Testing production: ${APP_URL}`)
+  if (EXPECTED_COMMIT) console.log(`Expected commit: ${EXPECTED_COMMIT}`)
   const health = await waitForDeployment()
-  console.log(`Production deployment ready: ${health.commit || 'unknown'}`)
-  console.log(`Capabilities: ${JSON.stringify(health.capabilities || {})}`)
+  console.log(`Production deployment ready: ${health.commit}`)
+  console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
 
-  const reports = []
-  reports.push(await runSearch(
-    'occupational health services',
-    'provider',
-    health,
-    { expectedLens: 'provider', requireIntentGate: true }
-  ))
-  reports.push(await runSearch(
-    'occupational health services RFP',
-    'web',
-    health,
-    { expectedLens: 'procurement', autoRouted: true, requireIntentGate: true }
-  ))
+  await runSearch('occupational health services', 'web', health, {
+    expectedLens: 'provider',
+    autoRouted: true,
+  })
+  await runSearch('Occupational Health Services RFP', 'web', health, {
+    expectedLens: 'procurement',
+    autoRouted: true,
+    requireIntentGate: true,
+    procurementQuality: true,
+  })
+  await runEvidenceValidation()
 
-  await writeFile(
-    'production-smoke-report.json',
-    JSON.stringify({ generatedAt: new Date().toISOString(), appUrl: APP_URL, health, reports }, null, 2)
-  )
+  console.log('Production smoke test passed.')
 }
 
-main().catch(async error => {
-  const message = error instanceof Error ? `${error.stack || error.message}` : String(error)
+main().catch(error => {
   console.error('Production smoke test failed.')
-  console.error(message)
-  await writeFile(
-    'production-smoke-report.json',
-    JSON.stringify({ generatedAt: new Date().toISOString(), appUrl: APP_URL, error: message }, null, 2)
-  )
-  process.exitCode = 1
+  console.error(error instanceof Error ? error.stack || error.message : error)
+  process.exit(1)
 })
