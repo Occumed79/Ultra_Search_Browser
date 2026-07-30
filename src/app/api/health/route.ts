@@ -1,5 +1,6 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { geminiGroundedSearchCapabilities } from '../../../lib/gemini-grounded-search'
 import { managedSearchCapabilities } from '../../../lib/managed-search'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
@@ -18,13 +19,14 @@ function deployedCommit(): string {
 function healthPayload() {
   const providers = externalSmartFilterCapabilities()
   const gemini = semanticIntentCapabilities()
+  const geminiSearch = geminiGroundedSearchCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
   const managedSearch = managedSearchCapabilities()
 
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v8-multi-api-failover',
+    searchPipeline: 'orchestrated-v9-gemini-grounded-fallback',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -32,6 +34,8 @@ function healthPayload() {
       localEmbeddings: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
       geminiIntentPlanner: gemini.configured,
       geminiIntentModel: gemini.model,
+      geminiGroundedSearch: geminiSearch.configured,
+      geminiGroundedSearchModel: geminiSearch.model,
       structuredIntentPlanning: true,
       taskAwareReranking: true,
       managedSearch: managedSearch.configured,
