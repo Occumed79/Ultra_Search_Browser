@@ -26,7 +26,7 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v9-gemini-grounded-fallback',
+    searchPipeline: 'orchestrated-v10-browser-search-fallback',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -41,6 +41,8 @@ function healthPayload() {
       managedSearch: managedSearch.configured,
       managedSearchProviders: managedSearch.providers,
       configuredButUnwiredSearchKeys: managedSearch.configuredButUnwired,
+      automaticBrowserSearchFallback: true,
+      automaticBrowserSearchSources: ['bing-rss', 'duckduckgo-lite', 'mojeek'],
       legacyHtmlSearch: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
       cloudflareReranker: cloudflare.configured,
       cloudflareRerankModel: cloudflare.model,
