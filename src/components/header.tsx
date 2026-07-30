@@ -12,22 +12,25 @@ const navigation = [
 
 export function Header() {
   const pathname = usePathname();
+  const isSearchHome = pathname === "/";
 
   return (
     <header className="relative z-20 grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-4 py-3 sm:px-6 sm:py-4">
       <div aria-hidden="true" />
 
-      <Link
-        href="/"
-        className="logo-glow col-start-2 flex min-w-0 justify-self-center"
-        aria-label="Ultra Search home"
-      >
-        <img
-          src="/brand/logo.png"
-          alt="Ultra Search"
-          className="h-auto w-[170px] object-contain sm:w-[270px] lg:w-[320px]"
-        />
-      </Link>
+      {!isSearchHome && (
+        <Link
+          href="/"
+          className="logo-glow col-start-2 flex min-w-0 justify-self-center"
+          aria-label="Ultra Search home"
+        >
+          <img
+            src="/brand/logo.png"
+            alt="Ultra Search"
+            className="h-auto w-[170px] object-contain sm:w-[270px] lg:w-[320px]"
+          />
+        </Link>
+      )}
 
       <nav className="col-start-3 flex items-center gap-2 justify-self-end" aria-label="Primary navigation">
         {navigation.map(({ href, label, icon: Icon }) => {

@@ -24,7 +24,34 @@ import type { SearchPlan } from '../src/lib/search-settings'
 test('Gemini semantic payload preserves complete multi-concept intent', () => {
   const plan = parseGeminiIntentPayload(JSON.stringify({
     interpretation: 'Find occupational-health clinics in Stuttgart that provide pure-tone audiograms.',
+    intentKind: 'find-provider',
     requiredConcepts: ['occupational health clinic', 'pure-tone audiogram', 'Stuttgart'],
+    conceptGroups: [
+      {
+        id: 'occupational-health',
+        label: 'occupational health',
+        terms: ['occupational health', 'occupational medicine', 'Arbeitsmedizin'],
+        kind: 'subject',
+        required: true,
+        weight: 1.5,
+      },
+      {
+        id: 'audiogram',
+        label: 'pure-tone audiogram',
+        terms: ['pure-tone audiogram', 'audiometry', 'Audiometrie'],
+        kind: 'service',
+        required: true,
+        weight: 1.5,
+      },
+      {
+        id: 'stuttgart',
+        label: 'Stuttgart',
+        terms: ['Stuttgart'],
+        kind: 'geography',
+        required: true,
+        weight: 1.25,
+      },
+    ],
     optionalConcepts: ['employer referrals'],
     exclusions: ['hearing aid retailers', 'jobs'],
     geography: ['Stuttgart, Germany'],
@@ -78,7 +105,16 @@ test('Gemini planner sends the current model with a supported request shape', as
           parts: [{
             text: JSON.stringify({
               interpretation: 'Find occupational health services.',
+              intentKind: 'find-provider',
               requiredConcepts: ['occupational health services'],
+              conceptGroups: [{
+                id: 'occupational-health',
+                label: 'occupational health',
+                terms: ['occupational health', 'occupational medicine'],
+                kind: 'subject',
+                required: true,
+                weight: 1.5,
+              }],
               optionalConcepts: [],
               exclusions: [],
               geography: [],
@@ -111,7 +147,8 @@ test('Gemini planner sends the current model with a supported request shape', as
   assert.equal('temperature' in generationConfig, false)
   assert.equal(plan.usedExternal, true)
   assert.equal(plan.model, 'gemini-3.5-flash-lite')
-  assert.deepEqual(plan.searchVariants, ['occupational medicine services'])
+  assert.equal(plan.searchVariants[0], 'occupational medicine services')
+  assert.ok(plan.searchVariants.some(variant => /occupational health/i.test(variant)))
 })
 
 test('semantic provider capabilities require complete credentials', () => {
@@ -171,7 +208,34 @@ test('complex Gemini intent expands the adaptive fan-out without losing original
   }
   const semanticIntent: SemanticIntentPlan = {
     interpretation: operators.cleanQuery,
+    intentKind: 'find-provider',
     requiredConcepts: ['occupational health', 'pure-tone audiogram', 'Stuttgart'],
+    conceptGroups: [
+      {
+        id: 'occupational-health',
+        label: 'occupational health',
+        terms: ['occupational health', 'occupational medicine'],
+        kind: 'subject',
+        required: true,
+        weight: 1.5,
+      },
+      {
+        id: 'pure-tone-audiogram',
+        label: 'pure-tone audiogram',
+        terms: ['pure-tone audiogram', 'audiometry'],
+        kind: 'service',
+        required: true,
+        weight: 1.5,
+      },
+      {
+        id: 'stuttgart',
+        label: 'Stuttgart',
+        terms: ['Stuttgart'],
+        kind: 'geography',
+        required: true,
+        weight: 1.25,
+      },
+    ],
     optionalConcepts: [],
     exclusions: ['jobs'],
     geography: ['Stuttgart, Germany'],
@@ -205,8 +269,9 @@ test('complex Gemini intent expands the adaptive fan-out without losing original
     tasks.filter(task => task.query === operators.cleanQuery).map(task => task.source),
     ['google', 'bing', 'duckduckgo']
   )
+  const protectedIntent = '"occupational health" "pure-tone audiogram" Stuttgart'
   assert.deepEqual(
-    tasks.filter(task => task.query === `"${operators.cleanQuery}"`).map(task => task.source),
+    tasks.filter(task => task.query === protectedIntent).map(task => task.source),
     ['google', 'bing', 'duckduckgo']
   )
   assert.ok(tasks.length > 14)

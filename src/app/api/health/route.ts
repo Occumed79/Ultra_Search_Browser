@@ -22,7 +22,7 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v5-evidence-stream',
+    searchPipeline: 'orchestrated-v6-task-aware-intent',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -30,6 +30,8 @@ function healthPayload() {
       localEmbeddings: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
       geminiIntentPlanner: gemini.configured,
       geminiIntentModel: gemini.model,
+      structuredIntentPlanning: true,
+      taskAwareReranking: true,
       cloudflareReranker: cloudflare.configured,
       cloudflareRerankModel: cloudflare.model,
       cerebrasSmartFilter: providers.cerebras.configured,

@@ -4,7 +4,7 @@ import type { SemanticIntentPlan } from './semantic-intent'
 import type { LiveSearchSource, SearchPlan } from './search-settings'
 import type { SearchLens } from '../types/search'
 
-export type QueryPurpose = 'broad' | 'semantic' | 'ai-intent' | 'official' | 'document' | 'freshness' | 'portal'
+export type QueryPurpose = 'broad' | 'intent-core' | 'semantic' | 'ai-intent' | 'official' | 'document' | 'freshness' | 'portal'
 
 export interface QueryVariant {
   query: string
@@ -37,15 +37,19 @@ const TARGETED_SOURCE_ORDER: LiveSearchSource[] = [
 const DEFAULT_QUERY_VARIANTS = 7
 const DEFAULT_LIVE_TASKS = 14
 
+export function searchCandidateLimit(resultsPerPage: number): number {
+  return Math.min(80, Math.max(40, resultsPerPage * 3))
+}
+
 function normalizeQuery(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
 export function semanticBudgets(intent?: SemanticIntentPlan): { variants: number; tasks: number } {
-  if (!intent || !intent.usedExternal || intent.complexity === 'simple') {
+  if (!intent || intent.complexity === 'simple') {
     return { variants: DEFAULT_QUERY_VARIANTS, tasks: DEFAULT_LIVE_TASKS }
   }
-  if (intent.complexity === 'moderate') return { variants: 10, tasks: 22 }
+  if (intent.complexity === 'moderate') return { variants: 9, tasks: 20 }
   return { variants: 12, tasks: 28 }
 }
 
@@ -80,7 +84,22 @@ function restoreExplicitOperators(query: string, operators: OperatorsResult): st
   return normalizeQuery(pieces.join(' '))
 }
 
-function protectedFullQuery(query: string, operators: OperatorsResult): string | undefined {
+function normalizeForMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/([a-z0-9])\.(?=[a-z0-9])/g, '$1')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function protectedIntentQuery(
+  query: string,
+  operators: OperatorsResult,
+  intent?: SemanticIntentPlan
+): string | undefined {
   const hasExplicitOperators = operators.includedSites.length > 0
     || operators.excludedSites.length > 0
     || operators.fileTypes.length > 0
@@ -89,9 +108,24 @@ function protectedFullQuery(query: string, operators: OperatorsResult): string |
     || operators.exactPhrases.length > 0
     || operators.excludedTerms.length > 0
 
+  if (hasExplicitOperators) return undefined
+
+  const normalizedQuery = ` ${normalizeForMatch(query)} `
+  const groups = intent?.conceptGroups?.filter(group => group.required) || []
+  if (groups.length > 0) {
+    const parts = groups.map(group => {
+      const selected = group.terms.find(term =>
+        normalizedQuery.includes(` ${normalizeForMatch(term)} `)
+      ) || group.label
+      const clean = normalizeQuery(selected).replaceAll('"', '')
+      return clean.includes(' ') ? `"${clean}"` : clean
+    }).filter(Boolean)
+    return parts.length ? parts.join(' ') : undefined
+  }
+
   const normalized = normalizeQuery(query).replaceAll('"', '')
   const wordCount = normalized.split(' ').filter(Boolean).length
-  if (hasExplicitOperators || wordCount < 2 || wordCount > 14) return undefined
+  if (wordCount < 2 || wordCount > 8) return undefined
   return `"${normalized}"`
 }
 
@@ -110,9 +144,17 @@ export function buildQueryVariants(
 
   // Every selected engine receives the user's complete sentence unchanged.
   addVariant(variants, seen, explicitQuery, 'broad', 100, budgets.variants)
-  // A protected phrase pass prevents engines from silently reducing a
-  // multi-word intent to one broad token such as "occupational".
-  addVariant(variants, seen, protectedFullQuery(query, operators), 'semantic', 95, budgets.variants)
+  // Protect the meaning-bearing groups rather than quoting an entire natural
+  // language sentence. This preserves names, services, and geography without
+  // asking an engine to match filler words such as “find me” verbatim.
+  addVariant(
+    variants,
+    seen,
+    protectedIntentQuery(query, operators, semanticIntent),
+    'intent-core',
+    96,
+    budgets.variants
+  )
 
   for (const candidate of semanticIntent?.searchVariants || []) {
     addVariant(variants, seen, candidate, 'ai-intent', 92, budgets.variants)
@@ -189,7 +231,7 @@ export function buildRetrievalTasks(
   }
 
   const broadVariants = variants
-    .filter(variant => variant.purpose === 'broad' || variant.priority === 95)
+    .filter(variant => variant.purpose === 'broad' || variant.purpose === 'intent-core')
     .slice(0, 2)
   for (const variant of broadVariants) {
     for (const source of plan.liveSources) addTask(source, variant)

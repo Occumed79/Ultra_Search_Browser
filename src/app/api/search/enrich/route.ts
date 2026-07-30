@@ -5,6 +5,7 @@ import { fetchAndExtractFromURL } from '../../../../lib/document-extraction'
 import { applyDomainPreferences, getDomainPreferences, type DomainPreference } from '../../../../lib/domain-memory'
 import { extractIntelligence } from '../../../../lib/entity-extraction'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
+import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { insertPricingFinding } from '../../../../lib/search-storage'
 import { applySmartFilter } from '../../../../lib/smart-filter'
 import { extractPricingFindings } from '../../../../lib/verticals/pricing/extract'
@@ -47,6 +48,7 @@ interface EnrichmentRequest {
   query?: string
   lens?: SearchLens
   results?: ScrapedResult[]
+  intent?: unknown
 }
 
 function extractionType(url: string, fileType?: string): NonNullable<ScrapedResult['extractionDiagnostics']>['extractionType'] {
@@ -136,6 +138,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as EnrichmentRequest
     const query = body.query?.trim() ?? ''
     const lens = body.lens && VALID_LENSES.has(body.lens) ? body.lens : 'web'
+    const semanticIntent = coerceSemanticIntentPlan(body.intent, query, lens)
     const inputResults = Array.isArray(body.results)
       ? body.results
           .filter(result => Boolean(result?.url && result?.title))
@@ -251,6 +254,7 @@ export async function POST(request: NextRequest) {
       {
         useLocalTransformer: true,
         semanticCandidateLimit: MAX_LOCAL_SEMANTIC_TARGETS,
+        semanticIntent,
       }
     )
 

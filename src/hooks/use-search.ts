@@ -12,6 +12,7 @@ import {
 } from '@/types/search'
 import { useLocalStorage } from './use-local-storage'
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings, toSearchRequestPreferences } from '@/lib/search-settings'
+import type { SemanticIntentPlan } from '@/lib/semantic-intent'
 import { buildSearchPath, parseSearchUrl } from '@/lib/search-url'
 
 interface UseSearchReturn {
@@ -104,12 +105,13 @@ export function useSearch(): UseSearchReturn {
     searchQuery: string,
     searchLens: SearchLens,
     results: ScrapedResult[],
-    sequence: number
+    sequence: number,
+    semanticIntent?: SemanticIntentPlan
   ) => {
     const response = await fetch('/api/search/enrich', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: searchQuery, lens: searchLens, results }),
+      body: JSON.stringify({ query: searchQuery, lens: searchLens, results, intent: semanticIntent }),
     })
     const enrichment = await response.json().catch(() => null) as {
       results?: ScrapedResult[]
@@ -138,7 +140,8 @@ export function useSearch(): UseSearchReturn {
     searchQuery: string,
     searchLens: SearchLens,
     results: ScrapedResult[],
-    sequence: number
+    sequence: number,
+    semanticIntent?: SemanticIntentPlan
   ) => {
     validationController.current?.abort()
     const controller = new AbortController()
@@ -165,7 +168,7 @@ export function useSearch(): UseSearchReturn {
           Accept: 'text/event-stream',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query: searchQuery, lens: searchLens, results }),
+        body: JSON.stringify({ query: searchQuery, lens: searchLens, results, intent: semanticIntent }),
         signal: controller.signal,
       })
 
@@ -238,7 +241,7 @@ export function useSearch(): UseSearchReturn {
     } catch (validationFailure) {
       if (controller.signal.aborted || searchSequence.current !== sequence) return
       try {
-        await runFallbackEnrichment(searchQuery, searchLens, results, sequence)
+        await runFallbackEnrichment(searchQuery, searchLens, results, sequence, semanticIntent)
       } catch (fallbackFailure) {
         if (searchSequence.current === sequence) {
           const primary = validationFailure instanceof Error ? validationFailure.message : 'Validation failed'
@@ -313,6 +316,7 @@ export function useSearch(): UseSearchReturn {
         timestamp?: string
         confidence?: number
         searchRunId?: string | null
+        intent?: SemanticIntentPlan
       } | null
 
       if (!response.ok) {
@@ -336,6 +340,7 @@ export function useSearch(): UseSearchReturn {
         sources: payload.sources ?? [],
         timestamp: payload.timestamp,
         confidence: payload.confidence ?? 0,
+        intent: payload.intent,
       }
 
       if (data.lens !== searchLens) {
@@ -369,7 +374,7 @@ export function useSearch(): UseSearchReturn {
       setIsLoading(false)
 
       if (data.results.length > 0) {
-        void runStreamingValidation(data.query, data.lens, data.results, sequence)
+        void runStreamingValidation(data.query, data.lens, data.results, sequence, data.intent)
       }
 
       setSuggestions(data.expandedQueries.length

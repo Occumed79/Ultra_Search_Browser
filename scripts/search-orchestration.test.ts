@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildQueryVariants, buildRetrievalTasks } from '../src/lib/search-planner'
+import {
+  buildQueryVariants,
+  buildRetrievalTasks,
+  searchCandidateLimit,
+} from '../src/lib/search-planner'
 import type { ExpandedQuery } from '../src/lib/intelligence'
 import type { OperatorsResult } from '../src/lib/search-operators'
 import type { SearchPlan } from '../src/lib/search-settings'
@@ -107,4 +111,11 @@ test('explicit site, filetype, phrase, and exclusion operators survive query pla
   assert.match(variants[0].query, /"occupational health"/)
   assert.match(variants[0].query, /-archived/)
   assert.equal(variants.filter(variant => variant.query === '"occupational health"').length, 0)
+})
+
+test('retrieval preserves a wider candidate pool until complete-query filtering', () => {
+  assert.equal(searchCandidateLimit(10), 40)
+  assert.equal(searchCandidateLimit(20), 60)
+  assert.equal(searchCandidateLimit(40), 80)
+  assert.equal(searchCandidateLimit(60), 80)
 })

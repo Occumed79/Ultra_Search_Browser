@@ -1,6 +1,7 @@
 import { deduplicateEntities } from './entity-dedupe'
 import { extractIntelligence } from './entity-extraction'
 import { pageValidationCacheStats, validateCandidatePage } from './page-validation'
+import type { SemanticIntentPlan } from './semantic-intent'
 import { applySmartFilter, type SmartFilterDiagnostics } from './smart-filter'
 import type {
   ResultBucket,
@@ -33,6 +34,7 @@ export interface DeepValidationOptions {
   maxTargets?: number
   concurrency?: number
   onEvent?: (event: DeepValidationEvent) => void | Promise<void>
+  semanticIntent?: SemanticIntentPlan
 }
 
 const MAX_DEEP_VALIDATION_TARGETS = 24
@@ -226,6 +228,7 @@ export async function deepValidateResults(
         useLocalTransformer: true,
         useExternalProviders: true,
         semanticCandidateLimit: Math.min(16, reviewable.length),
+        semanticIntent: options.semanticIntent,
       }
     )
     smartDiagnostics = smart.diagnostics

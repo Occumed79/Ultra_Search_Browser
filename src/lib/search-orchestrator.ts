@@ -3,14 +3,21 @@ import { parseBangs } from './bangs'
 import { rerankWithCloudflare, type CloudflareRerankDiagnostics } from './cloudflare-reranker'
 import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
 import { expandQuery, scoreSignals } from './intelligence'
+import { evaluateIntentRelevance, intentRerankQuery } from './intent-relevance'
 import { searchMarginalia } from './marginalia'
 import { dedupeByUrl, keywordSearchStoredResults, vectorSearchStoredResults } from './memory-retrieval'
 import { calculateRankingPrecisionSignals } from './ranking-signals'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
 import { searchBraveHtml, searchMojeekHtml, searchYahooHtml } from './public-search-fallbacks'
 import { searchGoogleScrape, type SearchEngineOptions } from './search'
-import { buildSearchOrchestrationPlan, type QueryPurpose, type RetrievalTask } from './search-planner'
+import {
+  buildSearchOrchestrationPlan,
+  searchCandidateLimit,
+  type QueryPurpose,
+  type RetrievalTask,
+} from './search-planner'
 import { parseSearchOperators, type OperatorsResult } from './search-operators'
+import { routeSearchLens, type LensRoutingDecision } from './search-intent-routing'
 import { planSemanticIntent, type SemanticIntentPlan } from './semantic-intent'
 import { filterSafeResults, type LiveSearchSource, type SearchPlan } from './search-settings'
 import { rerankResults } from './semantic-search'
@@ -21,10 +28,6 @@ import type { ScrapedResult, SearchLens } from '../types/search'
 const TASK_TIMEOUT_MS = 3_500
 const MEMORY_TIMEOUT_MS = 4_000
 const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500
-const VALID_LENSES = new Set<SearchLens>([
-  'web', 'pdf', 'government', 'procurement', 'pricing', 'provider',
-  'technical', 'news', 'legal', 'medical', 'academic', 'financial',
-])
 
 export interface SourceRunDiagnostic {
   source: string
@@ -49,6 +52,7 @@ export interface SearchOrchestrationDiagnostics {
   smallWebMatches: number
   marginaliaMatches: number
   semanticIntent: SemanticIntentPlan
+  lensRouting: LensRoutingDecision
   cloudflareRerank: CloudflareRerankDiagnostics
   sourceRuns: SourceRunDiagnostic[]
 }
@@ -136,10 +140,6 @@ function reconstructQuery(operators: OperatorsResult, fallback: string): string 
     .trim() || fallback.trim()
 }
 
-function resolveLens(requested: SearchLens, forced?: string): SearchLens {
-  return forced && VALID_LENSES.has(forced as SearchLens) ? forced as SearchLens : requested
-}
-
 function applyOperatorFilters(results: ScrapedResult[], operators: OperatorsResult): ScrapedResult[] {
   return results.filter(result => {
     const domain = result.domain.toLowerCase().replace(/^www\./, '')
@@ -183,6 +183,7 @@ function purposeBonus(purposes: Set<QueryPurpose>): number {
     + (purposes.has('freshness') ? 8 : 0)
     + (purposes.has('portal') ? 8 : 0)
     + (purposes.has('ai-intent') ? 7 : 0)
+    + (purposes.has('intent-core') ? 7 : 0)
     + (purposes.has('semantic') ? 4 : 0)
 }
 
@@ -257,9 +258,15 @@ export async function orchestrateSearch(
   const bangs = parseBangs(rawQuery)
   const operators = parseSearchOperators(bangs.cleanQuery || rawQuery)
   const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
-  const lens = resolveLens(requestedLens, bangs.forcedVertical)
+  const semanticIntent = await planSemanticIntent(normalizedQuery, requestedLens)
+  const lensRouting = routeSearchLens(
+    requestedLens,
+    bangs.forcedVertical,
+    normalizedQuery,
+    semanticIntent
+  )
+  const lens = lensRouting.effectiveLens
   const expanded = expandQuery(normalizedQuery, lens)
-  const semanticIntent = await planSemanticIntent(normalizedQuery, lens)
   const orchestration = buildSearchOrchestrationPlan(
     normalizedQuery,
     lens,
@@ -367,9 +374,15 @@ export async function orchestrateSearch(
       .reduce((total, signal) => total + signal.score, 0)
     const overlap = Math.max(0, sources.size - 1) * 12 + Math.max(0, queries.size - 1) * 6
     const baseScore = Math.max(0, 90 - Math.min(result.rank || 1, 40) * 2)
+    const intent = evaluateIntentRelevance(semanticIntent, lens, result)
     return {
       ...result,
-      score: baseScore + signalScore * 0.35 + lensBonus(result, lens) + overlap + purposeBonus(purposes),
+      score: baseScore
+        + signalScore * 0.35
+        + lensBonus(result, lens)
+        + overlap
+        + purposeBonus(purposes)
+        + intent.adjustment,
       retrieval: {
         sources: Array.from(sources),
         queries: Array.from(queries),
@@ -383,8 +396,9 @@ export async function orchestrateSearch(
   results = dedupeByUrl(results)
 
   try {
+    const semanticQuery = intentRerankQuery(semanticIntent)
     const semantic = rerankResults(
-      normalizedQuery,
+      semanticQuery,
       results.map(result => ({
         id: result.url,
         text: `${result.title} ${result.description}`,
@@ -396,7 +410,7 @@ export async function orchestrateSearch(
     )
     const semanticScores = new Map(semantic.map(item => [item.id, item.score]))
     results = results.map(result => {
-      const precision = calculateRankingPrecisionSignals(normalizedQuery, lens, result)
+      const precision = calculateRankingPrecisionSignals(semanticQuery, lens, result)
       return {
         ...result,
         score: result.score
@@ -408,7 +422,7 @@ export async function orchestrateSearch(
     console.warn('Local semantic reranking failed:', error)
   }
 
-  const cloudflare = await rerankWithCloudflare(normalizedQuery, results)
+  const cloudflare = await rerankWithCloudflare(intentRerankQuery(semanticIntent), results)
   results = cloudflare.results
 
   results = results.map(result => {
@@ -434,7 +448,12 @@ export async function orchestrateSearch(
   }
 
   results.sort((left, right) => right.score - left.score)
-  results = results.slice(0, plan.resultsPerPage).map((result, index) => ({ ...result, rank: index + 1 }))
+  // Keep a wider candidate pool until the complete-query smart filter runs.
+  // Truncating to the display count here allowed high-ranked one-word matches
+  // to crowd out more relevant full-query results before filtering.
+  results = results
+    .slice(0, searchCandidateLimit(plan.resultsPerPage))
+    .map((result, index) => ({ ...result, rank: index + 1 }))
 
   return {
     normalizedQuery,
@@ -458,6 +477,7 @@ export async function orchestrateSearch(
       smallWebMatches: smallWebEntries.length,
       marginaliaMatches: marginalia.results.length,
       semanticIntent,
+      lensRouting,
       cloudflareRerank: cloudflare.diagnostics,
       sourceRuns,
     },

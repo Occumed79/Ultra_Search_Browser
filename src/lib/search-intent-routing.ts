@@ -77,12 +77,23 @@ export function routeSearchLens(
 
   const deterministic = classifyLens(query)
   const semantic = semanticIntent?.suggestedLens
-  if (semantic && semantic !== 'web' && semantic === deterministic) {
+  if (semantic && semantic !== 'web') {
     return {
       requestedLens,
       effectiveLens: semantic,
       autoRouted: true,
-      reason: `Both deterministic and Gemini intent analysis identified the ${semantic} lens.`,
+      reason: semanticIntent?.usedExternal
+        ? `Semantic intent analysis identified a ${semantic} search task.`
+        : `The query asks for a ${semantic} result type, so retrieval was routed accordingly.`,
+    }
+  }
+
+  if (!semantic && deterministic !== 'web') {
+    return {
+      requestedLens,
+      effectiveLens: deterministic,
+      autoRouted: true,
+      reason: `The query structure identified the ${deterministic} search task.`,
     }
   }
 

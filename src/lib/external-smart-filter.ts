@@ -34,6 +34,14 @@ export interface ExternalIntent {
   originalQuery: string
   interpretation: string
   requiredConcepts: string[]
+  conceptGroups?: Array<{
+    label: string
+    terms: string[]
+    kind: string
+    required: boolean
+  }>
+  exclusions?: string[]
+  intentKind?: string
   exactPhrases: string[]
   minimumRequiredMatches: number
 }
@@ -244,7 +252,10 @@ function promptForCandidates(
     query,
     lens,
     interpretation: intent.interpretation,
+    intentKind: intent.intentKind,
     requiredConcepts: intent.requiredConcepts,
+    conceptGroups: intent.conceptGroups,
+    exclusions: intent.exclusions,
     protectedPhrases: intent.exactPhrases,
     minimumRequiredMatches: intent.minimumRequiredMatches,
     candidates,

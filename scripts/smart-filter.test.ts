@@ -20,11 +20,11 @@ function result(overrides: Partial<ScrapedResult>): ScrapedResult {
   }
 }
 
-test('intent analysis protects every meaningful word in the full query', () => {
+test('intent analysis protects meaning-bearing groups instead of filler words', () => {
   const intent = analyzeSearchIntent('occupational health services Fresno')
 
-  assert.deepEqual(intent.requiredConcepts, ['occupational', 'health', 'services', 'fresno'])
-  assert.equal(intent.minimumRequiredMatches, 3)
+  assert.deepEqual(intent.requiredConcepts, ['occupational health', 'fresno'])
+  assert.equal(intent.minimumRequiredMatches, 2)
   assert.ok(intent.exactPhrases.includes('occupational health'))
   assert.ok(intent.exactPhrases.includes('health services'))
 })
@@ -40,7 +40,7 @@ test('a whole-query occupational health match is valid', () => {
   }))
 
   assert.equal(decision.status, 'valid')
-  assert.deepEqual(decision.matchedConcepts, ['occupational', 'health', 'services', 'fresno'])
+  assert.deepEqual(decision.matchedConcepts, ['occupational health', 'fresno'])
 })
 
 test('a one-word occupational match is rejected', () => {
@@ -54,7 +54,21 @@ test('a one-word occupational match is rejected', () => {
   }))
 
   assert.equal(decision.status, 'rejected')
-  assert.deepEqual(decision.matchedConcepts, ['occupational'])
+  assert.deepEqual(decision.matchedConcepts, [])
+})
+
+test('occupational medicine clinic language satisfies occupational health services intent', () => {
+  const query = 'occupational health services'
+  const intent = analyzeSearchIntent(query)
+  const decision = classifyLocalCandidate(query, 'web', intent, result({
+    title: 'Occupational Medicine Clinic',
+    description: 'Employer medical testing and workplace medicine.',
+    url: 'https://clinic.example/occupational-medicine',
+    domain: 'clinic.example',
+  }))
+
+  assert.equal(decision.status, 'valid')
+  assert.deepEqual(decision.matchedConcepts, ['occupational health'])
 })
 
 test('technical retailer collisions do not pass the smart filter', () => {
@@ -101,7 +115,7 @@ test('smart filter returns valid matches and removes weak candidates', async () 
   assert.equal(filtered.diagnostics.mode, 'local-rules')
 })
 
-test('strict filtering fails open with a small uncertain review set', async () => {
+test('strict filtering returns no ranked results when every candidate is junk', async () => {
   const filtered = await applySmartFilter(
     'occupational health services Fresno',
     'provider',
@@ -116,7 +130,33 @@ test('strict filtering fails open with a small uncertain review set', async () =
     { useLocalTransformer: false }
   )
 
-  assert.equal(filtered.results.length, 1)
-  assert.equal(filtered.results[0].validation?.status, 'uncertain')
-  assert.match(filtered.results[0].validation?.reason ?? '', /Nothing passed the strict full-query filter/)
+  assert.equal(filtered.results.length, 0)
+  assert.equal(filtered.diagnostics.rejectedCount, 1)
+})
+
+test('one-word dictionary matches do not fill the page behind relevant results', async () => {
+  const filtered = await applySmartFilter(
+    'occupational health services',
+    'web',
+    [
+      result({
+        title: 'Occupational Health Services',
+        description: 'Employer medical testing and occupational medicine services.',
+        url: 'https://clinic.example/services',
+        score: 70,
+      }),
+      result({
+        title: 'OCCUPATIONAL Definition & Meaning',
+        description: 'The meaning of occupational is relating to a job.',
+        url: 'https://dictionary.example/occupational',
+        domain: 'dictionary.example',
+        score: 90,
+      }),
+    ],
+    20,
+    { useLocalTransformer: false }
+  )
+
+  assert.deepEqual(filtered.results.map(item => item.url), ['https://clinic.example/services'])
+  assert.equal(filtered.diagnostics.rejectedCount, 1)
 })
