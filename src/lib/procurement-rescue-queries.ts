@@ -6,6 +6,10 @@ function normalizeSpace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+function quotedPhrase(value: string): string {
+  return `"${normalizeSpace(value).replace(/"/g, '')}"`
+}
+
 export function procurementSubject(query: string): string {
   return normalizeSpace(
     query
@@ -29,13 +33,17 @@ export function buildProcurementRescueQueries(
   intent?: SemanticIntentPlan
 ): string[] {
   const subject = procurementSubject(query)
+  const quotedSubject = quotedPhrase(subject)
+  const currentYear = new Date().getUTCFullYear()
   const aliases = semanticSubjects(intent)
     .filter(value => value.toLowerCase() !== subject.toLowerCase())
     .slice(0, 8)
+
   return Array.from(new Set([
-    `${subject} RFP solicitation bid`,
-    ...aliases.map(alias => `${alias} RFP solicitation`),
-    `site:.gov ${subject} RFP`,
-    `filetype:pdf ${subject} request for proposals`,
+    `${quotedSubject} (RFP OR RFQ OR solicitation OR bid) ${currentYear}`,
+    `intitle:RFP ${quotedSubject}`,
+    `site:.gov ${quotedSubject} (RFP OR RFQ OR solicitation)`,
+    `filetype:pdf ${quotedSubject} ("request for proposals" OR RFP OR RFQ)`,
+    ...aliases.map(alias => `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation)`),
   ]))
 }
