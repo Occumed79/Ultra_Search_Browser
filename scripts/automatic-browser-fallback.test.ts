@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { selectAutomaticBrowserFallbackTasks } from '../src/lib/search-orchestrator'
+import { selectAutomaticBrowserFallbackTasks } from '../src/lib/automatic-browser-fallback'
 import type { RetrievalTask } from '../src/lib/search-planner'
 
 const tasks: RetrievalTask[] = [
