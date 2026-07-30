@@ -2,6 +2,7 @@ import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { geminiGroundedSearchCapabilities } from '../../../lib/gemini-grounded-search'
 import { managedSearchCapabilities } from '../../../lib/managed-search'
+import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
@@ -27,7 +28,7 @@ function healthPayload() {
     status: 'ok',
     service: 'ultra-search-browser',
     productMode: 'rfp-finder-www',
-    searchPipeline: 'rfp-finder-v1-public-web',
+    searchPipeline: 'rfp-finder-v2-occumed-relevance',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -40,6 +41,9 @@ function healthPayload() {
       structuredIntentPlanning: true,
       procurementOnly: true,
       sourceAgnosticRfpSearch: true,
+      occuMedRelevanceProfile: true,
+      occuMedRelevanceProfileVersion: OCCUMED_PROFILE_VERSION,
+      occuMedOfficialSources: OCCUMED_OFFICIAL_SOURCES,
       taskAwareReranking: true,
       managedSearch: managedSearch.configured,
       managedSearchProviders: managedSearch.providers,
