@@ -1,3 +1,4 @@
+import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
 export interface IntentGateDiagnostics {
@@ -34,7 +35,31 @@ function subjectTokens(query: string): string[] {
   )).slice(0, 10)
 }
 
-function rejectReason(query: string, result: ScrapedResult): string | undefined {
+function subjectMatches(
+  query: string,
+  text: string,
+  semanticIntent?: SemanticIntentPlan
+): boolean {
+  const subjectGroups = semanticIntent?.conceptGroups.filter(group =>
+    group.required && group.kind !== 'format' && group.kind !== 'geography' && group.kind !== 'time'
+  ) || []
+  if (subjectGroups.length > 0) {
+    return subjectGroups.some(group =>
+      group.terms.some(term => {
+        const normalized = normalize(term)
+        return normalized.length >= 3 && text.includes(normalized)
+      })
+    )
+  }
+  const required = subjectTokens(query)
+  return required.length === 0 || required.some(token => text.includes(token))
+}
+
+function rejectReason(
+  query: string,
+  result: ScrapedResult,
+  semanticIntent?: SemanticIntentPlan
+): string | undefined {
   const title = normalize(result.title)
   const text = normalize(`${result.title} ${result.description} ${result.url} ${result.domain}`)
   const originalText = `${result.title} ${result.description} ${result.url} ${result.domain}`
@@ -51,11 +76,7 @@ function rejectReason(query: string, result: ScrapedResult): string | undefined 
   // half of every subject token before opening the page caused genuine RFPs to
   // be discarded. One meaningful subject match is enough to reach the stricter
   // page-level Cerebras/Groq evidence review; zero subject matches is not.
-  const required = subjectTokens(query)
-  if (required.length > 0) {
-    const matches = required.filter(token => text.includes(token))
-    if (matches.length === 0) return 'missing-query-subject'
-  }
+  if (!subjectMatches(query, text, semanticIntent)) return 'missing-query-subject'
 
   if (!title && !result.description.trim()) return 'empty-result'
   return undefined
@@ -64,7 +85,8 @@ function rejectReason(query: string, result: ScrapedResult): string | undefined 
 export function applyIntentCandidateGate(
   query: string,
   lens: SearchLens,
-  results: ScrapedResult[]
+  results: ScrapedResult[],
+  semanticIntent?: SemanticIntentPlan
 ): { results: ScrapedResult[]; diagnostics: IntentGateDiagnostics } {
   if (lens !== 'procurement') {
     return {
@@ -75,7 +97,7 @@ export function applyIntentCandidateGate(
 
   const reasons: Record<string, number> = {}
   const retained = results.filter(result => {
-    const reason = rejectReason(query, result)
+    const reason = rejectReason(query, result, semanticIntent)
     if (!reason) return true
     reasons[reason] = (reasons[reason] || 0) + 1
     return false

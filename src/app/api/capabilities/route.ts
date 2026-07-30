@@ -1,11 +1,13 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { managedSearchCapabilities } from '../../../lib/managed-search'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
 export async function GET() {
   const providers = externalSmartFilterCapabilities()
   const gemini = semanticIntentCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
+  const managedSearch = managedSearchCapabilities()
 
   return Response.json({
     database: {
@@ -15,6 +17,18 @@ export async function GET() {
     searxng: {
       configured: Boolean(process.env.SEARXNG_URL),
       label: 'Self-hosted SearXNG search source',
+    },
+    managedSearch: {
+      configured: managedSearch.configured,
+      label: managedSearch.configured
+        ? `Managed metasearch · ${managedSearch.configuredProviders.join(', ')}`
+        : 'Managed metasearch requires Serper, Exa, LangSearch, Firecrawl, or Olostep',
+      providers: managedSearch.providers,
+      configuredButUnwired: managedSearch.configuredButUnwired,
+    },
+    legacyHtmlSearch: {
+      configured: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
+      label: 'Direct search-page HTML parsing (disabled by default)',
     },
     localEmbeddings: {
       configured: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
