@@ -65,6 +65,16 @@ const STOP_WORDS = new Set([
   'to', 'what', 'when', 'where', 'which', 'who', 'with', 'you',
 ])
 
+const CONCEPT_ALIASES: Record<string, string[]> = {
+  health: ['healthcare', 'medical', 'medicine'],
+  medical: ['health', 'healthcare', 'medicine'],
+  medicine: ['health', 'healthcare', 'medical'],
+  provider: ['clinic', 'practice', 'facility'],
+  providers: ['clinic', 'clinics', 'practice', 'facility'],
+  service: ['services', 'provider', 'clinic', 'program', 'testing'],
+  services: ['service', 'provider', 'clinic', 'clinics', 'program', 'testing'],
+}
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -119,12 +129,30 @@ function candidateText(result: ScrapedResult): string {
   return normalize(`${result.title} ${result.description} ${result.url} ${result.domain}`)
 }
 
+function singularForms(value: string): string[] {
+  if (value.length <= 4) return [value]
+  if (value.endsWith('ies') && value.length > 5) return [value, `${value.slice(0, -3)}y`]
+  if (value.endsWith('es') && value.length > 5) return [value, value.slice(0, -2), value.slice(0, -1)]
+  if (value.endsWith('s')) return [value, value.slice(0, -1)]
+  return [value]
+}
+
+function conceptMatches(concept: string, text: string, tokens: Set<string>): boolean {
+  const alternatives = unique([
+    ...singularForms(concept),
+    ...(CONCEPT_ALIASES[concept] || []),
+  ])
+  return alternatives.some(alternative =>
+    tokens.has(alternative)
+    || singularForms(alternative).some(form => tokens.has(form))
+    || (alternative.length >= 5 && text.includes(alternative))
+  )
+}
+
 function matchedConcepts(intent: SearchIntent, result: ScrapedResult): string[] {
   const text = candidateText(result)
   const tokens = new Set(text.split(' '))
-  return intent.requiredConcepts.filter(concept =>
-    tokens.has(concept) || (concept.length >= 5 && text.includes(concept))
-  )
+  return intent.requiredConcepts.filter(concept => conceptMatches(concept, text, tokens))
 }
 
 function phraseMatches(intent: SearchIntent, result: ScrapedResult): string[] {
@@ -154,13 +182,18 @@ export function classifyLocalCandidate(
     : lexicalRelevance * 0.7 + normalizedSemantic * 0.3
   const lensAdjustment = lensCompatibilityAdjustment(lens, result)
   const enoughConcepts = matches.length >= intent.minimumRequiredMatches
-  const almostEnoughConcepts = matches.length >= Math.max(1, intent.minimumRequiredMatches - 1)
+  const uncertaintyFloor = intent.requiredConcepts.length <= 2
+    ? 1
+    : intent.minimumRequiredMatches
+  const almostEnoughConcepts = matches.length >= uncertaintyFloor
   const strongPhrase = phrases.length > 0
   const strongSemantic = normalizedSemantic !== undefined && normalizedSemantic >= 0.56
+  const completeConceptCoverage = intent.requiredConcepts.length > 0
+    && matches.length === intent.requiredConcepts.length
 
   if (
     enoughConcepts
-    && (lexicalRelevance >= 0.2 || strongPhrase || strongSemantic)
+    && (lexicalRelevance >= 0.2 || strongPhrase || strongSemantic || completeConceptCoverage)
     && lensAdjustment > -24
   ) {
     return {
@@ -363,22 +396,6 @@ export async function applySmartFilter(
 
   const uncertainAllowance = Math.max(0, displayLimit - valid.length)
   let displayed = [...valid, ...uncertain.slice(0, uncertainAllowance)]
-
-  // Do not lie with a blank page when every snippet is weak. Preserve only a
-  // small, clearly marked review set so the user can see retrieval happened.
-  if (displayed.length === 0 && classified.length > 0) {
-    displayed = classified
-      .sort((left, right) => right.score - left.score)
-      .slice(0, Math.min(5, displayLimit))
-      .map(result => ({
-        ...result,
-        validation: {
-          ...result.validation,
-          status: 'uncertain' as const,
-          reason: `Nothing passed the strict full-query filter. ${result.validation.reason}`,
-        },
-      }))
-  }
 
   displayed = displayed
     .slice(0, displayLimit)

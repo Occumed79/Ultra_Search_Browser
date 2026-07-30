@@ -37,6 +37,10 @@ const TARGETED_SOURCE_ORDER: LiveSearchSource[] = [
 const DEFAULT_QUERY_VARIANTS = 7
 const DEFAULT_LIVE_TASKS = 14
 
+export function searchCandidateLimit(resultsPerPage: number): number {
+  return Math.min(80, Math.max(40, resultsPerPage * 3))
+}
+
 function normalizeQuery(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }

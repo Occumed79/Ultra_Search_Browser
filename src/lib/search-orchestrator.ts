@@ -9,7 +9,12 @@ import { calculateRankingPrecisionSignals } from './ranking-signals'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
 import { searchBraveHtml, searchMojeekHtml, searchYahooHtml } from './public-search-fallbacks'
 import { searchGoogleScrape, type SearchEngineOptions } from './search'
-import { buildSearchOrchestrationPlan, type QueryPurpose, type RetrievalTask } from './search-planner'
+import {
+  buildSearchOrchestrationPlan,
+  searchCandidateLimit,
+  type QueryPurpose,
+  type RetrievalTask,
+} from './search-planner'
 import { parseSearchOperators, type OperatorsResult } from './search-operators'
 import { planSemanticIntent, type SemanticIntentPlan } from './semantic-intent'
 import { filterSafeResults, type LiveSearchSource, type SearchPlan } from './search-settings'
@@ -434,7 +439,12 @@ export async function orchestrateSearch(
   }
 
   results.sort((left, right) => right.score - left.score)
-  results = results.slice(0, plan.resultsPerPage).map((result, index) => ({ ...result, rank: index + 1 }))
+  // Keep a wider candidate pool until the complete-query smart filter runs.
+  // Truncating to the display count here allowed high-ranked one-word matches
+  // to crowd out more relevant full-query results before filtering.
+  results = results
+    .slice(0, searchCandidateLimit(plan.resultsPerPage))
+    .map((result, index) => ({ ...result, rank: index + 1 }))
 
   return {
     normalizedQuery,

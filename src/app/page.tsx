@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Check,
   ChevronDown,
-  ChevronRight,
   Clock,
   Command,
   Download,
@@ -16,25 +15,11 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
+import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ResultActions } from '../components/result-actions'
 import { useSearch } from '../hooks/use-search'
-import type { ResultBucket, ScrapedResult, SearchLens, UserSettings } from '../types/search'
-
-const LENSES: Array<{ id: SearchLens; label: string }> = [
-  { id: 'web', label: 'Web' },
-  { id: 'pdf', label: 'PDF' },
-  { id: 'government', label: 'Government' },
-  { id: 'procurement', label: 'Procurement' },
-  { id: 'pricing', label: 'Pricing' },
-  { id: 'provider', label: 'Provider' },
-  { id: 'technical', label: 'Technical' },
-  { id: 'news', label: 'News' },
-  { id: 'legal', label: 'Legal' },
-  { id: 'medical', label: 'Medical' },
-  { id: 'academic', label: 'Academic' },
-  { id: 'financial', label: 'Financial' },
-]
+import type { ResultBucket, ScrapedResult, UserSettings } from '../types/search'
 
 const SOURCE_COLORS: Record<string, string> = {
   Google: 'bg-blue-500/10 text-blue-300 border-blue-500/30',
@@ -230,7 +215,6 @@ export default function Home() {
     query,
     setQuery,
     lens,
-    setLens,
     intelligence,
     scrapedResults,
     resultBuckets,
@@ -247,7 +231,6 @@ export default function Home() {
   const [sortMode, setSortMode] = useState<SortMode>('score')
   const [filterSource, setFilterSource] = useState<string | null>(null)
   const [showFilters, setShowFilters] = useState(false)
-  const [lensOpen, setLensOpen] = useState(false)
   const [linkCopied, setLinkCopied] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
@@ -347,8 +330,20 @@ export default function Home() {
 
       <main
         className="relative z-10 mx-auto flex w-full max-w-3xl flex-col px-4 pb-16"
-        style={{ paddingTop: hasSearched ? '16px' : '12vh' }}
+        style={{ paddingTop: hasSearched ? '2px' : 'clamp(7vh, 11vh, 120px)' }}
       >
+        <Link
+          href="/"
+          className="logo-glow mb-5 flex justify-center"
+          aria-label="Occu-Med search home"
+        >
+          <img
+            src="/brand/logo.png"
+            alt="Occu-Med"
+            className="h-auto w-[230px] object-contain sm:w-[285px]"
+          />
+        </Link>
+
         <div className="search-pill flex items-center gap-3 px-5 py-3">
           <Search className="h-5 w-5 flex-shrink-0 text-white/40" />
           <input
@@ -371,31 +366,8 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="relative mt-4 flex items-center gap-3">
-          <button className="glass-button" onClick={() => setLensOpen(open => !open)}>
-            <ChevronRight className={'h-4 w-4 transition-transform ' + (lensOpen ? 'rotate-90' : '')} />
-            {LENSES.find(item => item.id === lens)?.label}
-          </button>
-          {lensOpen && (
-            <div className="lens-cluster animate-in absolute left-0 top-12 z-20 min-w-[300px]">
-              {LENSES.map(item => (
-                <button
-                  key={item.id}
-                  className={'lens-pill ' + (lens === item.id ? 'active' : '')}
-                  onClick={() => {
-                    setLens(item.id)
-                    setLensOpen(false)
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
         {hasSearched && (
-          <section className="mt-6">
+          <section className="mt-5">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
                 <span>{visibleResults.length} ranked results · {searchTime.toFixed(0)}ms initial search</span>
