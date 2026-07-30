@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
+import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { insertSearchResult } from '../../../../lib/search-storage'
 import {
   verifiedSearchConfidence,
@@ -22,6 +23,7 @@ interface ValidationRequest {
   lens?: SearchLens
   results?: ScrapedResult[]
   maxTargets?: number
+  intent?: unknown
 }
 
 function sseEvent(event: string, value: unknown): string {
@@ -78,6 +80,7 @@ export async function POST(request: NextRequest) {
 
   if (!query) return Response.json({ error: 'Query is required' }, { status: 400 })
   if (results.length === 0) return Response.json({ error: 'At least one result is required' }, { status: 400 })
+  const semanticIntent = coerceSemanticIntentPlan(body.intent, query, lens)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
@@ -97,6 +100,7 @@ export async function POST(request: NextRequest) {
       try {
         const outcome = await deepValidateResults(query, lens, results, {
           maxTargets,
+          semanticIntent,
           onEvent: async (event: DeepValidationEvent) => {
             if (event.type === 'complete') return
             write(event.type, event)

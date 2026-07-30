@@ -7,7 +7,15 @@ import {
   type ExternalCandidateDecision,
   type ExternalProviderAttempt,
 } from './external-smart-filter'
+import { evaluateIntentRelevance, intentRerankQuery } from './intent-relevance'
 import { lensCompatibilityAdjustment } from './ranking-signals'
+import {
+  buildDeterministicSemanticIntent,
+  coerceSemanticIntentPlan,
+  type IntentConceptGroup,
+  type SemanticIntentKind,
+  type SemanticIntentPlan,
+} from './semantic-intent'
 import { scoreLexicalRelevance } from './semantic-search'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
@@ -23,8 +31,12 @@ export interface SearchIntent {
   originalQuery: string
   interpretation: string
   requiredConcepts: string[]
+  conceptGroups: IntentConceptGroup[]
+  exclusions: string[]
+  intentKind: SemanticIntentKind
   exactPhrases: string[]
   minimumRequiredMatches: number
+  semanticPlan: SemanticIntentPlan
 }
 
 export interface SmartFilterDiagnostics {
@@ -48,6 +60,7 @@ export interface SmartFilterOptions {
   useLocalTransformer?: boolean
   useExternalProviders?: boolean
   semanticCandidateLimit?: number
+  semanticIntent?: SemanticIntentPlan
 }
 
 export interface CandidateDecision {
@@ -55,6 +68,7 @@ export interface CandidateDecision {
   relevance: number
   lexicalRelevance: number
   semanticRelevance?: number
+  intentAdjustment: number
   matchedConcepts: string[]
   reason: string
 }
@@ -64,16 +78,6 @@ const STOP_WORDS = new Set([
   'how', 'i', 'in', 'is', 'it', 'me', 'of', 'on', 'or', 'that', 'the', 'this',
   'to', 'what', 'when', 'where', 'which', 'who', 'with', 'you',
 ])
-
-const CONCEPT_ALIASES: Record<string, string[]> = {
-  health: ['healthcare', 'medical', 'medicine'],
-  medical: ['health', 'healthcare', 'medicine'],
-  medicine: ['health', 'healthcare', 'medical'],
-  provider: ['clinic', 'practice', 'facility'],
-  providers: ['clinic', 'clinics', 'practice', 'facility'],
-  service: ['services', 'provider', 'clinic', 'program', 'testing'],
-  services: ['service', 'provider', 'clinic', 'clinics', 'program', 'testing'],
-}
 
 function normalize(value: string): string {
   return value
@@ -114,45 +118,32 @@ function protectedPhrases(query: string): string[] {
   return unique([...quoted, ...adjacentPairs]).slice(0, 5)
 }
 
-export function analyzeSearchIntent(query: string): SearchIntent {
-  const requiredConcepts = meaningfulTokens(query)
+export function analyzeSearchIntent(
+  query: string,
+  lens: SearchLens = 'web',
+  semanticIntent?: SemanticIntentPlan
+): SearchIntent {
+  const semanticPlan = semanticIntent
+    ? coerceSemanticIntentPlan(semanticIntent, query, lens)
+    : buildDeterministicSemanticIntent(query, lens)
+  const requiredConcepts = semanticPlan.conceptGroups
+    .filter(group => group.required)
+    .map(group => group.label)
   return {
     originalQuery: query.trim(),
-    interpretation: query.trim(),
+    interpretation: semanticPlan.interpretation,
     requiredConcepts,
+    conceptGroups: semanticPlan.conceptGroups,
+    exclusions: semanticPlan.exclusions,
+    intentKind: semanticPlan.intentKind,
     exactPhrases: protectedPhrases(query),
-    minimumRequiredMatches: Math.max(1, Math.ceil(requiredConcepts.length * 0.6)),
+    minimumRequiredMatches: Math.max(1, Math.ceil(requiredConcepts.length * 0.66)),
+    semanticPlan,
   }
 }
 
 function candidateText(result: ScrapedResult): string {
   return normalize(`${result.title} ${result.description} ${result.url} ${result.domain}`)
-}
-
-function singularForms(value: string): string[] {
-  if (value.length <= 4) return [value]
-  if (value.endsWith('ies') && value.length > 5) return [value, `${value.slice(0, -3)}y`]
-  if (value.endsWith('es') && value.length > 5) return [value, value.slice(0, -2), value.slice(0, -1)]
-  if (value.endsWith('s')) return [value, value.slice(0, -1)]
-  return [value]
-}
-
-function conceptMatches(concept: string, text: string, tokens: Set<string>): boolean {
-  const alternatives = unique([
-    ...singularForms(concept),
-    ...(CONCEPT_ALIASES[concept] || []),
-  ])
-  return alternatives.some(alternative =>
-    tokens.has(alternative)
-    || singularForms(alternative).some(form => tokens.has(form))
-    || (alternative.length >= 5 && text.includes(alternative))
-  )
-}
-
-function matchedConcepts(intent: SearchIntent, result: ScrapedResult): string[] {
-  const text = candidateText(result)
-  const tokens = new Set(text.split(' '))
-  return intent.requiredConcepts.filter(concept => conceptMatches(concept, text, tokens))
 }
 
 function phraseMatches(intent: SearchIntent, result: ScrapedResult): string[] {
@@ -167,9 +158,10 @@ export function classifyLocalCandidate(
   result: ScrapedResult,
   semanticRelevance?: number
 ): CandidateDecision {
-  const matches = matchedConcepts(intent, result)
+  const intentMatch = evaluateIntentRelevance(intent.semanticPlan, lens, result)
+  const matches = intentMatch.matchedGroups.map(group => group.label)
   const phrases = phraseMatches(intent, result)
-  const lexicalRelevance = scoreLexicalRelevance(query, {
+  const lexicalRelevance = scoreLexicalRelevance(intentRerankQuery(intent.semanticPlan), {
     title: result.title,
     text: `${result.title} ${result.description}`,
     url: result.url,
@@ -178,22 +170,35 @@ export function classifyLocalCandidate(
     ? undefined
     : Math.max(0, Math.min(1, semanticRelevance))
   const relevance = normalizedSemantic === undefined
-    ? lexicalRelevance
-    : lexicalRelevance * 0.7 + normalizedSemantic * 0.3
+    ? Math.max(lexicalRelevance, intentMatch.coverage)
+    : Math.max(intentMatch.coverage, lexicalRelevance * 0.65 + normalizedSemantic * 0.35)
   const lensAdjustment = lensCompatibilityAdjustment(lens, result)
-  const enoughConcepts = matches.length >= intent.minimumRequiredMatches
-  const uncertaintyFloor = intent.requiredConcepts.length <= 2
-    ? 1
-    : intent.minimumRequiredMatches
-  const almostEnoughConcepts = matches.length >= uncertaintyFloor
-  const strongPhrase = phrases.length > 0
   const strongSemantic = normalizedSemantic !== undefined && normalizedSemantic >= 0.56
-  const completeConceptCoverage = intent.requiredConcepts.length > 0
-    && matches.length === intent.requiredConcepts.length
+  const rejectedByConstraint = intentMatch.exclusionMatches.length > 0 || Boolean(intentMatch.collisionReason)
+  const enoughCoverage = intentMatch.coverage >= 0.66
+    && intentMatch.criticalCoverage >= 0.8
+    && intentMatch.taskEvidence
+  const possibleCoverage = intentMatch.coverage >= 0.42
+    && intentMatch.criticalCoverage >= 0.45
+    && (intentMatch.taskEvidence || strongSemantic)
+
+  if (rejectedByConstraint) {
+    return {
+      status: 'rejected',
+      relevance,
+      lexicalRelevance,
+      semanticRelevance: normalizedSemantic,
+      intentAdjustment: intentMatch.adjustment,
+      matchedConcepts: matches,
+      reason: intentMatch.collisionReason
+        ? `Rejected: ${intentMatch.collisionReason}.`
+        : `Rejected because it matches an exclusion: ${intentMatch.exclusionMatches.join(', ')}.`,
+    }
+  }
 
   if (
-    enoughConcepts
-    && (lexicalRelevance >= 0.2 || strongPhrase || strongSemantic || completeConceptCoverage)
+    enoughCoverage
+    && (lexicalRelevance >= 0.12 || phrases.length > 0 || strongSemantic || intentMatch.coverage >= 0.9)
     && lensAdjustment > -24
   ) {
     return {
@@ -201,14 +206,15 @@ export function classifyLocalCandidate(
       relevance,
       lexicalRelevance,
       semanticRelevance: normalizedSemantic,
+      intentAdjustment: intentMatch.adjustment,
       matchedConcepts: matches,
-      reason: `Matches ${matches.length}/${intent.requiredConcepts.length || 1} required concepts${strongPhrase ? `, including “${phrases[0]}”` : ''}.`,
+      reason: `Matches ${matches.length}/${intent.requiredConcepts.length || 1} intent groups with ${intentMatch.taskEvidenceReason}${phrases.length ? `, including “${phrases[0]}”` : ''}.`,
     }
   }
 
   if (
-    almostEnoughConcepts
-    && (lexicalRelevance >= 0.1 || strongSemantic)
+    possibleCoverage
+    && (lexicalRelevance >= 0.08 || strongSemantic || intentMatch.coverage >= 0.6)
     && lensAdjustment > -28
   ) {
     return {
@@ -216,8 +222,9 @@ export function classifyLocalCandidate(
       relevance,
       lexicalRelevance,
       semanticRelevance: normalizedSemantic,
+      intentAdjustment: intentMatch.adjustment,
       matchedConcepts: matches,
-      reason: `Possible match, but only ${matches.length}/${intent.requiredConcepts.length || 1} required concepts are visible.`,
+      reason: `Possible match, but the snippet is missing ${intentMatch.missingGroups.map(group => group.label).join(', ') || intentMatch.taskEvidenceReason}.`,
     }
   }
 
@@ -226,6 +233,7 @@ export function classifyLocalCandidate(
     relevance,
     lexicalRelevance,
     semanticRelevance: normalizedSemantic,
+    intentAdjustment: intentMatch.adjustment,
     matchedConcepts: matches,
     reason: matches.length
       ? `Rejected because only ${matches.length}/${intent.requiredConcepts.length || 1} required concepts matched.`
@@ -318,7 +326,7 @@ export async function applySmartFilter(
   displayLimit: number,
   options: SmartFilterOptions = {}
 ): Promise<{ results: ScrapedResult[]; diagnostics: SmartFilterDiagnostics }> {
-  const intent = analyzeSearchIntent(query)
+  const intent = analyzeSearchIntent(query, lens, options.semanticIntent)
   const localModelEnabled = options.useLocalTransformer === true
     && process.env.DISABLE_LOCAL_SMART_FILTER !== 'true'
   let localModelUsed = false
@@ -328,7 +336,7 @@ export async function applySmartFilter(
   if (localModelEnabled && results.length > 0) {
     try {
       semanticByUrl = await semanticScores(
-        query,
+        intentRerankQuery(intent.semanticPlan),
         results,
         Math.max(1, Math.min(options.semanticCandidateLimit ?? 20, results.length))
       )
@@ -375,7 +383,7 @@ export async function applySmartFilter(
 
     return {
       ...result,
-      score: result.score + statusAdjustment,
+      score: result.score + decision.intentAdjustment + statusAdjustment,
       validation: {
         status: decision.status,
         relevance: Number(decision.relevance.toFixed(3)),

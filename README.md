@@ -7,7 +7,9 @@ Ultra Search Browser is a focused research search app that combines multiple pub
 - Multi-engine search through Bing, DuckDuckGo, Brave, Mojeek, Yahoo, Google,
   and an optional self-hosted SearXNG source
 - Web, PDF, Government, Procurement, Pricing, Provider, Technical, News, Legal, Medical, Academic, and Financial lenses
-- Query expansion and lens-specific ranking signals
+- Task-aware intent planning that separates the requested outcome, subject,
+  capability, geography, dates, exclusions, and source preferences
+- Meaning-preserving query expansion, automatic lens routing, and lens-specific ranking
 - Fast initial results followed by bounded asynchronous enrichment
 - HTML, PDF, and DOCX text extraction
 - Optional OCR for images and scanned documents
@@ -19,6 +21,13 @@ Ultra Search Browser is a focused research search app that combines multiple pub
 - JSON and CSV result export
 
 ## Runtime model
+
+Each search creates one structured intent plan. The same plan controls automatic lens
+routing, multi-engine query variants, local and optional Cloudflare reranking, snippet
+filtering, and destination-page evidence review. Requirements are modeled as concept
+groups, so true equivalents such as “occupational health” and “occupational medicine”
+can match without giving partial credit to an unrelated page containing only the word
+“occupational.”
 
 The first search response returns ranked discovery results immediately. Destination-page
 validation then updates those cards in place through `/api/search/validate`. Sites that
@@ -46,6 +55,10 @@ Open `http://localhost:3000`.
 | --- | --- | --- |
 | `DATABASE_URL` | No | PostgreSQL persistence, bookmarks, history, domain preferences, and pgvector retrieval |
 | `SEARXNG_URL` | No | Enables the SearXNG source |
+| `GEMINI_API_KEY` | No | Adds bounded semantic intent interpretation and local-language query variants |
+| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | No | Adds bounded semantic reranking |
+| `CEREBRAS_API_KEY` | No | Adds destination-page relevance review |
+| `GROQ_API_KEY` | No | Adds fallback and disagreement review for destination-page evidence |
 | `ENABLE_LOCAL_EMBEDDINGS=true` | No | Enables the local MiniLM embedding model; otherwise hash-based 384-dimensional embeddings are used |
 | `ENABLE_OCR=true` | No | Enables Tesseract OCR; disabled by default because it is resource intensive |
 

@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parseBangs } from '../../../lib/bangs'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
 import { rescueProcurementCandidates, type ProcurementRescueDiagnostics } from '../../../lib/procurement-rescue'
 import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
 import { applyIntentCandidateGate } from '../../../lib/search-intent-gate'
-import { routeSearchLens } from '../../../lib/search-intent-routing'
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
 import { buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
@@ -40,14 +38,9 @@ export async function POST(request: NextRequest) {
     const requestedLens: SearchLens = body.lens && VALID_LENSES.has(body.lens)
       ? body.lens
       : 'web'
-    const bangs = parseBangs(query)
-    const lensRouting = routeSearchLens(
-      requestedLens,
-      bangs.forcedVertical,
-      bangs.cleanQuery || query
-    )
     const plan = buildSearchPlan(body.settings)
-    const orchestration = await orchestrateSearch(query, lensRouting.effectiveLens, plan)
+    const orchestration = await orchestrateSearch(query, requestedLens, plan)
+    const lensRouting = orchestration.diagnostics.lensRouting
     const gated = applyIntentCandidateGate(
       orchestration.normalizedQuery,
       orchestration.lens,
@@ -111,6 +104,7 @@ export async function POST(request: NextRequest) {
         // Cerebras/Groq still review actual destination-page evidence in the
         // asynchronous validation stream.
         useExternalProviders: false,
+        semanticIntent: orchestration.diagnostics.semanticIntent,
       }
     )
     orchestration.results = await applyResultFeedbackRanking(smartFilter.results)
@@ -226,12 +220,12 @@ export async function POST(request: NextRequest) {
       sources: orchestration.sources,
       timestamp: intelligence.timestamp,
       confidence: 0,
+      intent: orchestration.diagnostics.semanticIntent,
       diagnostics: {
         runtimeMs,
         enabledSources: [...plan.liveSources, ...(plan.useMemory ? ['memory'] : [])],
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
-        lensRouting,
         intentGate: gated.diagnostics,
         procurementRescue,
         smartFilter: smartFilter.diagnostics,

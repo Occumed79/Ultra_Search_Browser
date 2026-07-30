@@ -40,12 +40,10 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
     description: 'Broad-spectrum web search',
     keywords: [],
     synonymMap: {},
-    expansions: (q) => [
-      `${q} information`,
-      `${q} about`,
-      `${q} services`,
-      `${q} overview`,
-    ],
+    // Broad web expansion comes from the structured intent planner. Appending
+    // generic words such as “information” and “about” pulls precise requests
+    // toward definitions, indexes, and SEO pages.
+    expansions: () => [],
     siteOperators: [],
     scoringRules: [
       { pattern: /about|information|overview/i, score: 10, name: 'general info' },

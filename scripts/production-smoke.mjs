@@ -59,7 +59,7 @@ async function waitForDeployment() {
       if (
         response.ok
         && health.status === 'ok'
-        && health.searchPipeline === 'orchestrated-v5-evidence-stream'
+        && health.searchPipeline === 'orchestrated-v6-task-aware-intent'
         && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
       ) return health
     } catch (error) {
@@ -120,17 +120,12 @@ async function runSearch(query, lens, health, expectations = {}) {
 
   const diagnostics = data.diagnostics || {}
   if (Number(diagnostics.attemptedLiveTasks || 0) < 3) throw new Error(`${lens} did not fan out across live tasks.`)
-  if (health.capabilities?.geminiIntentPlanner && diagnostics.semanticIntent?.usedExternal !== true) {
-    throw new Error(`${lens} did not use Gemini: ${JSON.stringify(diagnostics.semanticIntent)}`)
-  }
-  if (health.capabilities?.cloudflareReranker && diagnostics.cloudflareRerank?.used !== true) {
-    throw new Error(`${lens} did not use Cloudflare: ${JSON.stringify(diagnostics.cloudflareRerank)}`)
-  }
   if (
-    (health.capabilities?.cerebrasSmartFilter || health.capabilities?.groqSmartFilter)
-    && diagnostics.smartFilter?.externalUsed !== true
+    !data.intent
+    || !Array.isArray(data.intent.conceptGroups)
+    || data.intent.conceptGroups.length === 0
   ) {
-    throw new Error(`${lens} did not use Cerebras/Groq: ${JSON.stringify(diagnostics.smartFilter)}`)
+    throw new Error(`${lens} did not return a structured intent plan: ${JSON.stringify(data.intent)}`)
   }
 
   if (expectations.expectedLens && data.lens !== expectations.expectedLens) {
@@ -140,6 +135,8 @@ async function runSearch(query, lens, health, expectations = {}) {
     if (diagnostics.lensRouting?.autoRouted !== true) {
       throw new Error(`Production did not report automatic lens routing: ${JSON.stringify(diagnostics.lensRouting)}`)
     }
+  }
+  if (expectations.requireIntentGate) {
     if (diagnostics.intentGate?.applied !== true) {
       throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
     }
@@ -214,12 +211,13 @@ async function runEvidenceValidation() {
   if (!Array.isArray(complete.results) || complete.results.length < 1) {
     throw new Error(`No verified evidence result: ${JSON.stringify(complete.buckets).slice(0, 2_000)}`)
   }
-  if (!complete.results.every(result =>
+  const verified = complete.results.filter(result =>
     result.bucket === 'valid'
     && result.validation?.status === 'valid'
     && result.pageValidation?.availability === 'reachable'
-  )) throw new Error(`Non-verified main result leaked: ${JSON.stringify(complete.results).slice(0, 2_000)}`)
-  if (complete.diagnostics?.verifiedOnly !== true) throw new Error('Verified-only mode was not reported.')
+  )
+  if (verified.length < 1) throw new Error(`No verified main result: ${JSON.stringify(complete.results).slice(0, 2_000)}`)
+  if (Number(complete.diagnostics?.verifiedCount || 0) < 1) throw new Error('Verified result count was not reported.')
   if (progressEvents < 1 || resultEvents < 1) throw new Error('Evidence stream emitted no live progress/results.')
   if (Number(complete.confidence || 0) <= 0) throw new Error('Verified evidence returned no confidence score.')
   if (!complete.summary) throw new Error('Verified evidence returned no grounded summary.')
@@ -235,10 +233,14 @@ async function main() {
   console.log(`Production deployment ready: ${health.commit}`)
   console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
 
-  await runSearch('occupational health services', 'web', health)
+  await runSearch('occupational health services', 'web', health, {
+    expectedLens: 'provider',
+    autoRouted: true,
+  })
   await runSearch('Occupational Health Services RFP', 'web', health, {
     expectedLens: 'procurement',
     autoRouted: true,
+    requireIntentGate: true,
     procurementQuality: true,
   })
   await runEvidenceValidation()

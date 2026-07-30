@@ -20,11 +20,11 @@ function result(overrides: Partial<ScrapedResult>): ScrapedResult {
   }
 }
 
-test('intent analysis protects every meaningful word in the full query', () => {
+test('intent analysis protects meaning-bearing groups instead of filler words', () => {
   const intent = analyzeSearchIntent('occupational health services Fresno')
 
-  assert.deepEqual(intent.requiredConcepts, ['occupational', 'health', 'services', 'fresno'])
-  assert.equal(intent.minimumRequiredMatches, 3)
+  assert.deepEqual(intent.requiredConcepts, ['occupational health', 'fresno'])
+  assert.equal(intent.minimumRequiredMatches, 2)
   assert.ok(intent.exactPhrases.includes('occupational health'))
   assert.ok(intent.exactPhrases.includes('health services'))
 })
@@ -40,7 +40,7 @@ test('a whole-query occupational health match is valid', () => {
   }))
 
   assert.equal(decision.status, 'valid')
-  assert.deepEqual(decision.matchedConcepts, ['occupational', 'health', 'services', 'fresno'])
+  assert.deepEqual(decision.matchedConcepts, ['occupational health', 'fresno'])
 })
 
 test('a one-word occupational match is rejected', () => {
@@ -54,7 +54,7 @@ test('a one-word occupational match is rejected', () => {
   }))
 
   assert.equal(decision.status, 'rejected')
-  assert.deepEqual(decision.matchedConcepts, ['occupational'])
+  assert.deepEqual(decision.matchedConcepts, [])
 })
 
 test('occupational medicine clinic language satisfies occupational health services intent', () => {
@@ -68,7 +68,7 @@ test('occupational medicine clinic language satisfies occupational health servic
   }))
 
   assert.equal(decision.status, 'valid')
-  assert.deepEqual(decision.matchedConcepts, ['occupational', 'health', 'services'])
+  assert.deepEqual(decision.matchedConcepts, ['occupational health'])
 })
 
 test('technical retailer collisions do not pass the smart filter', () => {
