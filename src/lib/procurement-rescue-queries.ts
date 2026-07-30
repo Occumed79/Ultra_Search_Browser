@@ -1,6 +1,7 @@
 import type { SemanticIntentPlan } from './semantic-intent'
 
 const PROCUREMENT_WORDS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/gi
+const PROCUREMENT_WORD_TEST = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/i
 
 function normalizeSpace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -8,6 +9,16 @@ function normalizeSpace(value: string): string {
 
 function quotedPhrase(value: string): string {
   return `"${normalizeSpace(value).replace(/"/g, '')}"`
+}
+
+function unique(values: string[]): string[] {
+  const seen = new Set<string>()
+  return values.map(normalizeSpace).filter(value => {
+    const key = value.toLowerCase()
+    if (!value || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 export function procurementSubject(query: string): string {
@@ -22,10 +33,27 @@ function semanticSubjects(intent?: SemanticIntentPlan): string[] {
   if (!intent) return []
   const subjects = intent.conceptGroups
     .filter(group => group.required && group.kind !== 'format' && group.kind !== 'time')
-  return Array.from(new Set(subjects.flatMap(group => [
+  return unique(subjects.flatMap(group => [
     group.label,
     ...group.terms.slice(0, 10),
-  ]).map(normalizeSpace).filter(Boolean)))
+  ]))
+}
+
+export function buildProcurementTitleQueries(
+  query: string,
+  intent?: SemanticIntentPlan
+): string[] {
+  const subject = procurementSubject(query)
+  const withoutServices = normalizeSpace(subject.replace(/\bservices?\b/gi, ' '))
+  const aliases = semanticSubjects(intent)
+    .filter(value => !PROCUREMENT_WORD_TEST.test(value))
+    .filter(value => value.split(/\s+/).length >= 2)
+
+  return unique([
+    subject,
+    withoutServices,
+    ...aliases,
+  ]).slice(0, 8)
 }
 
 export function buildProcurementRescueQueries(

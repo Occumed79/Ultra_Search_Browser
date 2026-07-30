@@ -4,8 +4,12 @@ import {
   type ProcurementBrowserRescueTask,
 } from './procurement-browser-rescue-tasks'
 import { searchMojeekHtml } from './public-search-fallbacks'
-import { buildProcurementRescueQueries } from './procurement-rescue-queries'
+import {
+  buildProcurementRescueQueries,
+  buildProcurementTitleQueries,
+} from './procurement-rescue-queries'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
+import { searchSamGovOpportunities } from './sam-gov-opportunities'
 import { applyIntentCandidateGate } from './search-intent-gate'
 import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult } from '../types/search'
@@ -93,21 +97,26 @@ export async function rescueProcurementCandidates(
   options: ProcurementRescueOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
-  const managed = await searchManagedWeb(query, {
-    safeSearch: options.safeSearch,
-    preferredLanguage: options.preferredLanguage,
-    region: options.region,
-    limit: 15,
-    queryVariants: queries,
-  })
-  const managedGate = applyIntentCandidateGate(
+  const titleQueries = buildProcurementTitleQueries(query, options.semanticIntent)
+  const [managed, samGov] = await Promise.all([
+    searchManagedWeb(query, {
+      safeSearch: options.safeSearch,
+      preferredLanguage: options.preferredLanguage,
+      region: options.region,
+      limit: 15,
+      queryVariants: queries,
+    }),
+    searchSamGovOpportunities(titleQueries),
+  ])
+  const indexedResults = mergeUniqueResults([managed.results, samGov.results])
+  const indexedGate = applyIntentCandidateGate(
     query,
     'procurement',
-    managed.results,
+    indexedResults,
     options.semanticIntent
   )
 
-  const browserTasks = managedGate.results.length === 0
+  const browserTasks = indexedGate.results.length === 0
     ? buildProcurementBrowserRescueTasks(queries)
     : []
   const browserSettled = await Promise.allSettled(
@@ -116,7 +125,7 @@ export async function rescueProcurementCandidates(
   const browserResults = browserSettled.flatMap(item =>
     item.status === 'fulfilled' ? item.value : []
   )
-  const rawResults = mergeUniqueResults([managed.results, browserResults])
+  const rawResults = mergeUniqueResults([indexedResults, browserResults])
   const gated = applyIntentCandidateGate(
     query,
     'procurement',
@@ -129,6 +138,7 @@ export async function rescueProcurementCandidates(
     .map(attempt =>
       `${attempt.provider}: ${attempt.error || (attempt.status === 'empty' ? 'no usable links' : 'request failed')}`
     )
+  const samGovFailures = samGov.diagnostics.failures.map(failure => `SAM.gov: ${failure}`)
   const browserFailures = browserSettled.flatMap((item, index) => {
     if (item.status === 'fulfilled') {
       return item.value.length > 0
@@ -143,6 +153,7 @@ export async function rescueProcurementCandidates(
   ).length
   const attemptedQuerySet = new Set([
     ...managed.diagnostics.attempts.map(attempt => attempt.query),
+    ...samGov.diagnostics.queries,
     ...browserTasks.map(task => task.query),
   ])
 
@@ -150,12 +161,16 @@ export async function rescueProcurementCandidates(
     results: gated.results,
     diagnostics: {
       attemptedQueries: attemptedQuerySet.size,
-      attemptedTasks: managed.diagnostics.attemptedRequests + browserTasks.length,
-      successfulTasks: managed.diagnostics.successfulRequests + successfulBrowserTasks,
+      attemptedTasks: managed.diagnostics.attemptedRequests
+        + samGov.diagnostics.attemptedRequests
+        + browserTasks.length,
+      successfulTasks: managed.diagnostics.successfulRequests
+        + samGov.diagnostics.successfulRequests
+        + successfulBrowserTasks,
       rawCandidates: rawResults.length,
       retainedCandidates: gated.results.length,
-      failures: [...managedFailures, ...browserFailures],
-      queries,
+      failures: [...managedFailures, ...samGovFailures, ...browserFailures],
+      queries: [...titleQueries, ...queries],
       rawPreview: rawResults.slice(0, 12).map(result => ({
         source: result.source,
         title: result.title,
