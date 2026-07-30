@@ -1,0 +1,60 @@
+name: Diagnose procurement search engines
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/diagnose-procurement-engines.yml
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/expand-procurement-fallback
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Query public search engines
+        shell: bash
+        run: |
+          cat > /tmp/diagnose.ts <<'TS'
+          import { searchYahooHtml, searchBraveHtml, searchMojeekHtml } from '$GITHUB_WORKSPACE/src/lib/public-search-fallbacks'
+          import { searchBingResilient, searchDuckDuckGoResilient } from '$GITHUB_WORKSPACE/src/lib/resilient-search'
+
+          const queries = [
+            '"Occupational Health Services" (RFP OR RFQ OR solicitation OR bid) 2026',
+            'intitle:RFP "Occupational Health Services"',
+            'site:.gov "Occupational Health Services" (RFP OR RFQ OR solicitation)',
+            'filetype:pdf "Occupational Health Services" ("request for proposals" OR RFP OR RFQ)',
+          ]
+          const engines = [
+            ['Bing', searchBingResilient],
+            ['DuckDuckGo', searchDuckDuckGoResilient],
+            ['Yahoo', searchYahooHtml],
+            ['Brave', searchBraveHtml],
+            ['Mojeek', searchMojeekHtml],
+          ] as const
+
+          for (const query of queries) {
+            console.log(`\n=== QUERY: ${query} ===`)
+            for (const [name, search] of engines) {
+              try {
+                const response = await search(query, { safeSearch: true, preferredLanguage: 'en', region: 'us' })
+                console.log(`\n[${name}] ${response.results.length} results`)
+                for (const result of response.results.slice(0, 10)) {
+                  console.log(`- ${result.title} | ${result.url}`)
+                }
+              } catch (error) {
+                console.log(`\n[${name}] ERROR: ${error instanceof Error ? error.message : String(error)}`)
+              }
+            }
+          }
+          TS
+          sed -i "s|\$GITHUB_WORKSPACE|$GITHUB_WORKSPACE|g" /tmp/diagnose.ts
+          npx tsx /tmp/diagnose.ts
