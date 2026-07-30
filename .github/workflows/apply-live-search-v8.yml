@@ -6,13 +6,18 @@ on:
       - fix/live-search-v8
     paths:
       - .github/workflows/apply-live-search-v8.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-live-search-v8.yml
 
 permissions:
   contents: write
 
 jobs:
   patch-test-commit:
-    if: github.event.head_commit.message == 'Add live search v8 hotfix workflow'
+    if: github.event_name == 'pull_request' || github.event.head_commit.message == 'Add live search v8 hotfix workflow'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
