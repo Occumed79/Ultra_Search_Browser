@@ -11,32 +11,15 @@ def replace_once(path: str, old: str, new: str) -> None:
 
 replace_once(
     "src/lib/search-orchestrator.ts",
-    """const TASK_TIMEOUT_MS = 3_500
-const MEMORY_TIMEOUT_MS = 4_000
-const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500""",
-    """const TASK_TIMEOUT_MS = 3_500
-const MEMORY_TIMEOUT_MS = 4_000
-const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500
-const AUTOMATIC_BROWSER_FALLBACK_SOURCES = new Set<LiveSearchSource>([
-  'bing',
-  'duckduckgo',
-  'mojeek',
-])
+    "import { applySpamPenalty, calculateCombinedSpamScore } from './anti-spam'",
+    """import { applySpamPenalty, calculateCombinedSpamScore } from './anti-spam'
+import { selectAutomaticBrowserFallbackTasks } from './automatic-browser-fallback'""",
+)
 
-export function selectAutomaticBrowserFallbackTasks(
-  tasks: RetrievalTask[],
-  enabled: boolean
-): RetrievalTask[] {
-  if (!enabled) return []
-  const selectedSources = new Set<LiveSearchSource>()
-  return tasks.filter(task => {
-    if (task.purpose !== 'broad') return false
-    if (!AUTOMATIC_BROWSER_FALLBACK_SOURCES.has(task.source)) return false
-    if (selectedSources.has(task.source)) return false
-    selectedSources.add(task.source)
-    return true
-  }).slice(0, AUTOMATIC_BROWSER_FALLBACK_SOURCES.size)
-}""",
+replace_once(
+    "src/lib/search-orchestrator.ts",
+    "import { filterSafeResults, type LiveSearchSource, type SearchPlan } from './search-settings'",
+    "import { filterSafeResults, type SearchPlan } from './search-settings'",
 )
 
 replace_once(
