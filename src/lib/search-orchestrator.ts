@@ -2,6 +2,11 @@ import { applySpamPenalty, calculateCombinedSpamScore } from './anti-spam'
 import { parseBangs } from './bangs'
 import { rerankWithCloudflare, type CloudflareRerankDiagnostics } from './cloudflare-reranker'
 import { applyDomainPreferences, getDomainPreferences } from './domain-memory'
+import {
+  geminiGroundedSearchCapabilities,
+  searchGeminiGroundedWeb,
+  type GeminiGroundedSearchDiagnostics,
+} from './gemini-grounded-search'
 import { expandQuery, scoreSignals } from './intelligence'
 import { evaluateIntentRelevance, intentRerankQuery } from './intent-relevance'
 import {
@@ -37,7 +42,7 @@ const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500
 export interface SourceRunDiagnostic {
   source: string
   query: string
-  purpose: QueryPurpose | 'managed-api' | 'memory' | 'small-web'
+  purpose: QueryPurpose | 'managed-api' | 'gemini-grounded' | 'memory' | 'small-web'
   status: 'success' | 'empty' | 'failed'
   resultCount: number
   runtimeMs: number
@@ -60,6 +65,7 @@ export interface SearchOrchestrationDiagnostics {
   lensRouting: LensRoutingDecision
   cloudflareRerank: CloudflareRerankDiagnostics
   managedSearch: ManagedSearchDiagnostics
+  geminiGroundedSearch: GeminiGroundedSearchDiagnostics
   legacyHtmlSearchEnabled: boolean
   sourceRuns: SourceRunDiagnostic[]
 }
@@ -333,6 +339,20 @@ export async function orchestrateSearch(
     smallWebPromise,
     marginaliaPromise,
   ])
+  const geminiGroundedSearch = managedSearch.results.length === 0
+    ? await searchGeminiGroundedWeb(normalizedQuery, lens)
+    : {
+        text: '',
+        results: [] as ScrapedResult[],
+        diagnostics: {
+          ...geminiGroundedSearchCapabilities(),
+          attempted: false,
+          successful: false,
+          resultCount: 0,
+          runtimeMs: 0,
+          searchQueries: [],
+        },
+      }
 
   const occurrences = new Map<string, Occurrence>()
   const sourceRuns: SourceRunDiagnostic[] = []
@@ -375,6 +395,32 @@ export async function orchestrateSearch(
     const query = result.retrieval?.queries[0] || normalizedQuery
     addResults(occurrences, [result], result.source, query, 'semantic')
   }
+  for (const result of geminiGroundedSearch.results) {
+    addResults(occurrences, [result], result.source, normalizedQuery, 'semantic')
+  }
+  if (geminiGroundedSearch.diagnostics.attempted) {
+    const groundedStatus = geminiGroundedSearch.diagnostics.successful
+      ? 'success'
+      : geminiGroundedSearch.diagnostics.error
+        ? 'failed'
+        : 'empty'
+    sourceRuns.push({
+      source: 'gemini-google-search',
+      query: normalizedQuery,
+      purpose: 'gemini-grounded',
+      status: groundedStatus,
+      resultCount: geminiGroundedSearch.diagnostics.resultCount,
+      runtimeMs: geminiGroundedSearch.diagnostics.runtimeMs,
+      error: geminiGroundedSearch.diagnostics.error,
+    })
+    if (groundedStatus === 'failed') {
+      failures.push(`gemini-google-search: ${geminiGroundedSearch.diagnostics.error || 'grounded search failed'}`)
+    }
+  }
+  if (geminiGroundedSearch.results.length > 0) {
+    sourceLabels.add('Gemini Google Search · grounded-api')
+    if (geminiGroundedSearch.text.trim()) rawTexts.push(geminiGroundedSearch.text)
+  }
   for (const attempt of managedSearch.diagnostics.attempts) {
     sourceRuns.push({
       source: attempt.provider,
@@ -397,7 +443,7 @@ export async function orchestrateSearch(
       sourceLabels.add(`${provider} · managed-api`)
     }
   }
-  if (!managedCapabilities.configured && legacyTasks.length === 0) {
+  if (!managedCapabilities.configured && legacyTasks.length === 0 && !geminiGroundedSearch.diagnostics.configured) {
     failures.push(
       'managed search: no supported API search provider is configured and legacy HTML search is disabled'
     )
@@ -528,11 +574,15 @@ export async function orchestrateSearch(
       queryVariants: orchestration.variants.map(({ query, purpose }) => ({ query, purpose })),
       variantBudget: orchestration.variantBudget,
       taskBudget: orchestration.taskBudget,
-      attemptedLiveTasks: legacyTasks.length + managedSearch.diagnostics.attemptedRequests,
+      attemptedLiveTasks: legacyTasks.length
+        + managedSearch.diagnostics.attemptedRequests
+        + (geminiGroundedSearch.diagnostics.attempted ? 1 : 0),
       successfulLiveTasks: liveSettled.filter(item => item.status === 'fulfilled').length
-        + managedSearch.diagnostics.successfulRequests,
+        + managedSearch.diagnostics.successfulRequests
+        + (geminiGroundedSearch.diagnostics.successful ? 1 : 0),
       failedLiveTasks: liveSettled.filter(item => item.status === 'rejected').length
-        + managedSearch.diagnostics.failedRequests,
+        + managedSearch.diagnostics.failedRequests
+        + (geminiGroundedSearch.diagnostics.attempted && !geminiGroundedSearch.diagnostics.successful ? 1 : 0),
       memoryKeywordMatches: memoryKeyword.length,
       memoryVectorMatches: memoryVector.length,
       smallWebMatches: smallWebEntries.length,
@@ -541,6 +591,7 @@ export async function orchestrateSearch(
       lensRouting,
       cloudflareRerank: cloudflare.diagnostics,
       managedSearch: managedSearch.diagnostics,
+      geminiGroundedSearch: geminiGroundedSearch.diagnostics,
       legacyHtmlSearchEnabled,
       sourceRuns,
     },

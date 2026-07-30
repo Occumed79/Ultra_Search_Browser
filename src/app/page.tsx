@@ -29,6 +29,7 @@ const SOURCE_COLORS: Record<string, string> = {
   Mojeek: 'bg-fuchsia-500/10 text-fuchsia-200 border-fuchsia-500/30',
   Yahoo: 'bg-purple-500/10 text-purple-200 border-purple-500/30',
   SearXNG: 'bg-violet-500/10 text-violet-300 border-violet-500/30',
+  'Gemini Google Search': 'bg-cyan-500/10 text-cyan-200 border-cyan-500/30',
   'memory-vector': 'bg-teal-500/10 text-teal-300 border-teal-500/30',
 }
 

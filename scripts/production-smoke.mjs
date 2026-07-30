@@ -59,7 +59,7 @@ async function waitForDeployment() {
       if (
         response.ok
         && health.status === 'ok'
-        && health.searchPipeline === 'orchestrated-v8-multi-api-failover'
+        && health.searchPipeline === 'orchestrated-v9-gemini-grounded-fallback'
         && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
       ) return health
     } catch (error) {
