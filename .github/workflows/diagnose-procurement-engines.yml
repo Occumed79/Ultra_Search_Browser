@@ -10,7 +10,7 @@ on:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,12 +20,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Query public search engines
+      - name: Query additional public search engines
         shell: bash
         run: |
           cat > /tmp/diagnose.ts <<'TS'
           import { searchYahooHtml, searchBraveHtml, searchMojeekHtml } from '$GITHUB_WORKSPACE/src/lib/public-search-fallbacks'
-          import { searchBingResilient, searchDuckDuckGoResilient } from '$GITHUB_WORKSPACE/src/lib/resilient-search'
 
           async function main() {
             const queries = [
@@ -35,26 +34,25 @@ jobs:
               'filetype:pdf "Occupational Health Services" ("request for proposals" OR RFP OR RFQ)',
             ]
             const engines = [
-              ['Bing', searchBingResilient],
-              ['DuckDuckGo', searchDuckDuckGoResilient],
               ['Yahoo', searchYahooHtml],
               ['Brave', searchBraveHtml],
               ['Mojeek', searchMojeekHtml],
             ] as const
 
-            for (const query of queries) {
-              console.log(`\n=== QUERY: ${query} ===`)
-              for (const [name, search] of engines) {
-                try {
-                  const response = await search(query, { safeSearch: true, preferredLanguage: 'en', region: 'us' })
-                  console.log(`\n[${name}] ${response.results.length} results`)
-                  for (const result of response.results.slice(0, 10)) {
-                    console.log(`- ${result.title} | ${result.url}`)
-                  }
-                } catch (error) {
-                  console.log(`\n[${name}] ERROR: ${error instanceof Error ? error.message : String(error)}`)
-                }
+            const runs = queries.flatMap(query => engines.map(async ([name, search]) => {
+              try {
+                const response = await search(query, { safeSearch: true, preferredLanguage: 'en', region: 'us' })
+                return { query, name, results: response.results.slice(0, 12), error: '' }
+              } catch (error) {
+                return { query, name, results: [], error: error instanceof Error ? error.message : String(error) }
               }
+            }))
+
+            for (const run of await Promise.all(runs)) {
+              console.log(`\n=== ${run.name} | ${run.query} ===`)
+              if (run.error) console.log(`ERROR: ${run.error}`)
+              console.log(`RESULTS: ${run.results.length}`)
+              for (const result of run.results) console.log(`- ${result.title} | ${result.url}`)
             }
           }
 
