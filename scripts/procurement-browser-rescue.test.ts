@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildProcurementBrowserRescueTasks } from '../src/lib/procurement-rescue'
+import { buildProcurementBrowserRescueTasks } from '../src/lib/procurement-browser-rescue-tasks'
 
 test('procurement browser rescue fans targeted variants across resilient sources', () => {
   const queries = [
