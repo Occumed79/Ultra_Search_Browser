@@ -3,6 +3,7 @@ import { externalSmartFilterCapabilities } from '../../../lib/external-smart-fil
 import { geminiGroundedSearchCapabilities } from '../../../lib/gemini-grounded-search'
 import { managedSearchCapabilities } from '../../../lib/managed-search'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
+import { samGovOpportunityCapabilities } from '../../../lib/sam-gov-opportunities'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
 export const dynamic = 'force-dynamic'
@@ -22,11 +23,12 @@ function healthPayload() {
   const geminiSearch = geminiGroundedSearchCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
   const managedSearch = managedSearchCapabilities()
+  const samGov = samGovOpportunityCapabilities()
 
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v10-browser-search-fallback',
+    searchPipeline: 'orchestrated-v11-sam-gov-procurement',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -41,6 +43,7 @@ function healthPayload() {
       managedSearch: managedSearch.configured,
       managedSearchProviders: managedSearch.providers,
       configuredButUnwiredSearchKeys: managedSearch.configuredButUnwired,
+      samGovOpportunities: samGov.configured,
       automaticBrowserSearchFallback: true,
       automaticBrowserSearchSources: ['bing-rss', 'duckduckgo-lite', 'mojeek'],
       legacyHtmlSearch: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
