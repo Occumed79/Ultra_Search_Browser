@@ -1,6 +1,7 @@
 import type { SemanticIntentPlan } from './semantic-intent'
 
 const PROCUREMENT_WORDS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/gi
+const PROCUREMENT_WORD_TEST = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/i
 
 function normalizeSpace(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -45,7 +46,7 @@ export function buildProcurementTitleQueries(
   const subject = procurementSubject(query)
   const withoutServices = normalizeSpace(subject.replace(/\bservices?\b/gi, ' '))
   const aliases = semanticSubjects(intent)
-    .filter(value => !PROCUREMENT_WORDS.test(value))
+    .filter(value => !PROCUREMENT_WORD_TEST.test(value))
     .filter(value => value.split(/\s+/).length >= 2)
 
   return unique([
