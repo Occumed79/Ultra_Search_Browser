@@ -3,7 +3,11 @@ import {
   buildProcurementBrowserRescueTasks,
   type ProcurementBrowserRescueTask,
 } from './procurement-browser-rescue-tasks'
-import { searchMojeekHtml } from './public-search-fallbacks'
+import {
+  searchBraveHtml,
+  searchMojeekHtml,
+  searchYahooHtml,
+} from './public-search-fallbacks'
 import { buildProcurementRescueQueries } from './procurement-rescue-queries'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
 import { applyIntentCandidateGate } from './search-intent-gate'
@@ -75,7 +79,11 @@ async function runBrowserTask(
     ? await searchBingResilient(task.query, searchOptions)
     : task.source === 'duckduckgo'
       ? await searchDuckDuckGoResilient(task.query, searchOptions)
-      : await searchMojeekHtml(task.query, searchOptions)
+      : task.source === 'yahoo'
+        ? await searchYahooHtml(task.query, searchOptions)
+        : task.source === 'brave'
+          ? await searchBraveHtml(task.query, searchOptions)
+          : await searchMojeekHtml(task.query, searchOptions)
 
   return response.results.map(result => ({
     ...result,
