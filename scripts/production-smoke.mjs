@@ -101,7 +101,7 @@ async function runSearch(query, lens, health, expectations = {}) {
       query,
       lens,
       settings: {
-        defaultSources: ['bing', 'duckduckgo', 'memory'],
+        defaultSources: ['bing', 'duckduckgo', 'mojeek', 'memory'],
         resultsPerPage: 20,
         safeSearch: true,
         autoSummarize: true,
