@@ -1,4 +1,8 @@
 import { searchManagedWeb } from './managed-search'
+import {
+  buildProcurementBrowserRescueTasks,
+  type ProcurementBrowserRescueTask,
+} from './procurement-browser-rescue-tasks'
 import { searchMojeekHtml } from './public-search-fallbacks'
 import { buildProcurementRescueQueries } from './procurement-rescue-queries'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
@@ -22,24 +26,6 @@ export interface ProcurementRescueOptions {
   preferredLanguage: string
   region: string
   semanticIntent?: SemanticIntentPlan
-}
-
-interface BrowserRescueTask {
-  source: 'bing' | 'duckduckgo' | 'mojeek'
-  query: string
-}
-
-const MAX_BROWSER_RESCUE_QUERIES = 4
-
-export function buildProcurementBrowserRescueTasks(queries: string[]): BrowserRescueTask[] {
-  const targeted = queries.slice(0, MAX_BROWSER_RESCUE_QUERIES)
-  if (targeted.length === 0) return []
-
-  return [
-    ...targeted.map(query => ({ source: 'bing' as const, query })),
-    { source: 'duckduckgo' as const, query: targeted[0] },
-    { source: 'mojeek' as const, query: targeted[0] },
-  ]
 }
 
 function normalizeUrl(value: string): string {
@@ -77,7 +63,7 @@ function mergeUniqueResults(resultSets: ScrapedResult[][]): ScrapedResult[] {
 }
 
 async function runBrowserTask(
-  task: BrowserRescueTask,
+  task: ProcurementBrowserRescueTask,
   options: ProcurementRescueOptions
 ): Promise<ScrapedResult[]> {
   const searchOptions = {
