@@ -5,6 +5,10 @@ import {
   type OccuMedRelevanceAssessment,
 } from './occumed-rfp-profile'
 import { matchOccuMedHistoricalPatterns } from './occumed-historical-pursuits'
+import {
+  structuredRfpReviewText,
+  type RfpOpportunityIntelligence,
+} from './rfp-opportunity-intelligence'
 import type {
   ResultBucket,
   ScrapedResult,
@@ -25,6 +29,8 @@ export interface OccuMedResultDecision {
   profileVersion: string
   relevance: OccuMedRelevanceAssessment
   historicalMatches: ReturnType<typeof matchOccuMedHistoricalPatterns>
+  opportunityFitScore?: number
+  opportunityFitBand?: RfpOpportunityIntelligence['fitBand']
 }
 
 export interface OccuMedDecisionGateDiagnostics {
@@ -41,14 +47,19 @@ export interface OccuMedGatedOutcome extends DeepValidationOutcome {
   }
 }
 
+type RfpDecisionCandidate = ScrapedResult & {
+  rfpIntelligence?: RfpOpportunityIntelligence
+}
+
 const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|invitation for bids?|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice of intent)\b/i
 const FINAL_LIFECYCLE = new Set(['expired', 'closed', 'cancelled', 'awarded', 'stale', 'dead', 'junk'])
 const ACTIVE_LIFECYCLE = new Set(['open', 'active'])
 const HARD_REJECT_AVAILABILITY = new Set(['dead', 'generic', 'search-page', 'thin'])
 const REVIEW_AVAILABILITY = new Set(['blocked', 'login', 'unsupported', 'error'])
 
-function resultEvidenceText(result: ScrapedResult): string {
+function resultEvidenceText(result: RfpDecisionCandidate): string {
   return [
+    result.rfpIntelligence ? structuredRfpReviewText(result.rfpIntelligence) : undefined,
     result.title,
     result.description,
     result.url,
@@ -70,156 +81,17 @@ function decisionReasonKey(decision: OccuMedResultDecision): string {
   return decision.decision === 'REVIEW' ? 'needs-human-review' : 'rejected-by-evidence'
 }
 
-export function evaluateOccuMedResult(result: ScrapedResult): OccuMedResultDecision {
-  const text = resultEvidenceText(result)
-  const relevance = assessOccuMedRfpText(text)
-  const historicalMatches = matchOccuMedHistoricalPatterns(text)
-  const page = result.pageValidation
-  const lifecycleStatus = page?.lifecycle.status || 'unknown'
-  const procurementConfirmed = PROCUREMENT_EVIDENCE.test(text)
-  const activeConfirmed = ACTIVE_LIFECYCLE.has(lifecycleStatus)
-  const capabilityConfirmed = relevance.status === 'relevant'
-    || (relevance.status === 'uncertain' && relevance.matchedCapabilities.length > 0 && historicalMatches.length > 0)
-  const noHardDisqualifier = relevance.exclusions.length === 0
-
-  if (page && HARD_REJECT_AVAILABILITY.has(page.availability)) {
-    return {
-      decision: 'REJECT',
-      reason: page.reason,
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (FINAL_LIFECYCLE.has(lifecycleStatus)) {
-    return {
-      decision: 'REJECT',
-      reason: page?.lifecycle.reason || `The opportunity is ${lifecycleStatus}.`,
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (!procurementConfirmed) {
-    return {
-      decision: 'REJECT',
-      reason: 'The destination does not provide evidence of a real RFP, RFQ, solicitation, bid, tender, or comparable procurement notice.',
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (!noHardDisqualifier && relevance.matchedCapabilities.length === 0) {
-    return {
-      decision: 'REJECT',
-      reason: relevance.reason,
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (relevance.status === 'irrelevant') {
-    return {
-      decision: 'REJECT',
-      reason: relevance.reason,
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (result.validation?.status === 'rejected') {
-    return {
-      decision: 'REJECT',
-      reason: result.validation.reason,
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (!page || REVIEW_AVAILABILITY.has(page.availability)) {
-    return {
-      decision: 'REVIEW',
-      reason: page?.reason || 'The destination page could not be opened and independently verified.',
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (!activeConfirmed) {
-    return {
-      decision: 'REVIEW',
-      reason: page.lifecycle.reason || 'The response deadline and open status could not be confirmed.',
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
-  if (!capabilityConfirmed || relevance.status === 'uncertain' || result.validation?.status === 'uncertain') {
-    return {
-      decision: 'REVIEW',
-      reason: relevance.status === 'uncertain' ? relevance.reason : (result.validation?.reason || 'Occu-Med capability fit requires review.'),
-      procurementConfirmed,
-      activeConfirmed,
-      capabilityConfirmed,
-      noHardDisqualifier,
-      lifecycleStatus,
-      profileVersion: OCCUMED_PROFILE_VERSION,
-      relevance,
-      historicalMatches,
-    }
-  }
-
+function decisionFields(
+  result: RfpDecisionCandidate,
+  relevance: OccuMedRelevanceAssessment,
+  historicalMatches: ReturnType<typeof matchOccuMedHistoricalPatterns>,
+  procurementConfirmed: boolean,
+  activeConfirmed: boolean,
+  capabilityConfirmed: boolean,
+  noHardDisqualifier: boolean,
+  lifecycleStatus: string
+) {
   return {
-    decision: 'SHOW',
-    reason: relevance.reason,
     procurementConfirmed,
     activeConfirmed,
     capabilityConfirmed,
@@ -228,29 +100,160 @@ export function evaluateOccuMedResult(result: ScrapedResult): OccuMedResultDecis
     profileVersion: OCCUMED_PROFILE_VERSION,
     relevance,
     historicalMatches,
+    opportunityFitScore: result.rfpIntelligence?.fitScore,
+    opportunityFitBand: result.rfpIntelligence?.fitBand,
   }
 }
 
-type DecisionResult = ScrapedResult & { occuMedDecision: OccuMedResultDecision }
+export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDecision {
+  const result = rawResult as RfpDecisionCandidate
+  const text = resultEvidenceText(result)
+  const relevance = assessOccuMedRfpText(text)
+  const historicalMatches = matchOccuMedHistoricalPatterns(text)
+  const intelligence = result.rfpIntelligence
+  const page = result.pageValidation
+  const lifecycleStatus = page?.lifecycle.status || intelligence?.status || 'unknown'
+  const procurementConfirmed = Boolean(
+    (intelligence && intelligence.opportunityType !== 'unknown')
+    || PROCUREMENT_EVIDENCE.test(text)
+  )
+  const activeConfirmed = ACTIVE_LIFECYCLE.has(lifecycleStatus)
+  const structuredCapabilityFit = Boolean(
+    intelligence
+    && ['strong', 'good'].includes(intelligence.fitBand)
+    && intelligence.matchedCapabilities.length > 0
+  )
+  const capabilityConfirmed = structuredCapabilityFit
+    || relevance.status === 'relevant'
+    || (relevance.status === 'uncertain' && relevance.matchedCapabilities.length > 0 && historicalMatches.length > 0)
+  const noHardDisqualifier = relevance.exclusions.length === 0
+  const common = decisionFields(
+    result,
+    relevance,
+    historicalMatches,
+    procurementConfirmed,
+    activeConfirmed,
+    capabilityConfirmed,
+    noHardDisqualifier,
+    lifecycleStatus
+  )
+
+  if (page && HARD_REJECT_AVAILABILITY.has(page.availability)) {
+    return {
+      decision: 'REJECT',
+      reason: page.reason,
+      ...common,
+    }
+  }
+
+  if (FINAL_LIFECYCLE.has(lifecycleStatus)) {
+    return {
+      decision: 'REJECT',
+      reason: page?.lifecycle.reason || `The opportunity is ${lifecycleStatus}.`,
+      ...common,
+    }
+  }
+
+  if (!procurementConfirmed) {
+    return {
+      decision: 'REJECT',
+      reason: 'The destination and linked documents do not provide evidence of a real RFP, RFQ, solicitation, bid, tender, or comparable procurement notice.',
+      ...common,
+    }
+  }
+
+  if (!noHardDisqualifier && relevance.matchedCapabilities.length === 0) {
+    return {
+      decision: 'REJECT',
+      reason: relevance.reason,
+      ...common,
+    }
+  }
+
+  if (relevance.status === 'irrelevant' && !structuredCapabilityFit) {
+    return {
+      decision: 'REJECT',
+      reason: relevance.reason,
+      ...common,
+    }
+  }
+
+  if (result.validation?.status === 'rejected') {
+    return {
+      decision: 'REJECT',
+      reason: result.validation.reason,
+      ...common,
+    }
+  }
+
+  if (!page || REVIEW_AVAILABILITY.has(page.availability)) {
+    return {
+      decision: 'REVIEW',
+      reason: page?.reason || 'The destination page could not be opened and independently verified.',
+      ...common,
+    }
+  }
+
+  if (!activeConfirmed) {
+    return {
+      decision: 'REVIEW',
+      reason: page.lifecycle.reason || 'The response deadline and open status could not be confirmed.',
+      ...common,
+    }
+  }
+
+  if (!capabilityConfirmed || intelligence?.fitBand === 'review' || relevance.status === 'uncertain' || result.validation?.status === 'uncertain') {
+    return {
+      decision: 'REVIEW',
+      reason: intelligence?.fitBand === 'review'
+        ? `Structured fit score is ${intelligence.fitScore}/100 and requires pursuit review.`
+        : relevance.status === 'uncertain'
+          ? relevance.reason
+          : (result.validation?.reason || 'Occu-Med capability fit requires review.'),
+      ...common,
+    }
+  }
+
+  const reason = intelligence
+    ? `Confirmed active ${intelligence.opportunityType} with ${intelligence.fitBand} Occu-Med fit (${intelligence.fitScore}/100). ${relevance.reason}`
+    : relevance.reason
+  return {
+    decision: 'SHOW',
+    reason,
+    ...common,
+  }
+}
+
+type DecisionResult = ScrapedResult & {
+  occuMedDecision: OccuMedResultDecision
+  rfpIntelligence?: RfpOpportunityIntelligence
+}
 
 function annotateResult(result: ScrapedResult, decision: OccuMedResultDecision, bucket: ResultBucket): DecisionResult {
+  const enriched = result as RfpDecisionCandidate
   const status = decision.decision === 'SHOW'
     ? 'valid' as const
     : decision.decision === 'REVIEW'
       ? 'uncertain' as const
       : 'rejected' as const
   const historicalConcepts = decision.historicalMatches.map(match => `${match.client}: ${match.program}`)
+  const structuredCapabilities = enriched.rfpIntelligence?.matchedCapabilities || []
+  const relevanceScore = Math.max(
+    decision.relevance.score,
+    (decision.opportunityFitScore || 0) / 100
+  )
 
   return {
     ...result,
     bucket,
     validation: {
       status,
-      relevance: decision.relevance.score,
+      relevance: relevanceScore,
       reason: `${decision.decision}: ${decision.reason}`,
       matchedConcepts: Array.from(new Set([
         ...(result.validation?.matchedConcepts || []),
         ...decision.relevance.matchedCapabilities,
+        ...structuredCapabilities,
         ...historicalConcepts,
       ])),
       mode: result.validation?.mode || 'local-rules',
