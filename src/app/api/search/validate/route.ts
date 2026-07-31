@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { applyOccuMedDecisionGate } from '../../../../lib/occumed-result-decision'
+import { applyResultFeedbackRanking } from '../../../../lib/result-feedback-ranking'
 import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { insertSearchResult } from '../../../../lib/search-storage'
 import {
@@ -27,39 +28,64 @@ interface ValidationRequest {
   intent?: unknown
 }
 
+type PersistableRfpResult = ScrapedResult & {
+  rfpIntelligence?: unknown
+  packageAnalysis?: unknown
+  occuMedDecision?: unknown
+}
+
 function sseEvent(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`
 }
 
 async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens) {
-  const persisted = await Promise.allSettled(results.slice(0, 30).map(result => insertSearchResult({
-    url: result.url,
-    normalized_url: result.url,
-    domain: result.domain,
-    title: result.title,
-    snippet: result.description,
-    source_engine: result.source,
-    rank: result.rank,
-    score: result.score,
-    final_score: result.score,
-    extraction_status: 'verified-page',
-    extracted_text: result.pageValidation?.evidence.join('\n') || result.description,
-    metadata: {
-      lens,
-      verificationStatus: 'valid',
-      verifiedAt: result.pageValidation?.checkedAt || new Date().toISOString(),
-      retrieval: result.retrieval,
-      validation: result.validation,
-      pageValidation: result.pageValidation,
-      entity: result.entity,
-    },
-  })))
+  const persisted = await Promise.allSettled(results.slice(0, 30).map(rawResult => {
+    const result = rawResult as PersistableRfpResult
+    return insertSearchResult({
+      url: result.url,
+      normalized_url: result.url,
+      domain: result.domain,
+      title: result.title,
+      snippet: result.description,
+      source_engine: result.source,
+      rank: result.rank,
+      score: result.score,
+      final_score: result.score,
+      extraction_status: 'verified-page-and-package',
+      extracted_text: [
+        result.pageValidation?.evidence.join('\n'),
+        result.rfpIntelligence ? JSON.stringify(result.rfpIntelligence) : '',
+      ].filter(Boolean).join('\n'),
+      metadata: {
+        lens,
+        verificationStatus: 'valid',
+        verifiedAt: result.pageValidation?.checkedAt || new Date().toISOString(),
+        retrieval: result.retrieval,
+        validation: result.validation,
+        pageValidation: result.pageValidation,
+        entity: result.entity,
+        rfpIntelligence: result.rfpIntelligence,
+        packageAnalysis: result.packageAnalysis,
+        occuMedDecision: result.occuMedDecision,
+      },
+    })
+  }))
 
   return {
     attempted: results.length,
     persisted: persisted.filter(item => item.status === 'fulfilled' && item.value).length,
     failed: persisted.filter(item => item.status === 'rejected').length,
   }
+}
+
+function applyLearnedOrder<T extends { url: string }>(results: T[], learned: ScrapedResult[]): T[] {
+  const rankByUrl = new Map(learned.map((result, index) => [result.url, { rank: index + 1, score: result.score }]))
+  return results
+    .map(result => {
+      const adjustment = rankByUrl.get(result.url)
+      return adjustment ? { ...result, score: adjustment.score, rank: adjustment.rank } : result
+    })
+    .sort((left, right) => (rankByUrl.get(left.url)?.rank || 9_999) - (rankByUrl.get(right.url)?.rank || 9_999))
 }
 
 export async function POST(request: NextRequest) {
@@ -77,7 +103,7 @@ export async function POST(request: NextRequest) {
     ? body.results.filter(result => Boolean(result?.url && result?.title)).slice(0, 60)
     : []
   const maxTargets = Number.isFinite(Number(body.maxTargets))
-    ? Math.max(1, Math.min(30, Number(body.maxTargets)))
+    ? Math.max(1, Math.min(60, Number(body.maxTargets)))
     : undefined
 
   if (!query) return Response.json({ error: 'Query is required' }, { status: 400 })
@@ -111,12 +137,16 @@ export async function POST(request: NextRequest) {
           },
         })
         const outcome = applyOccuMedDecisionGate(rawOutcome)
+        const learnedResults = await applyResultFeedbackRanking(outcome.results)
+        outcome.results = learnedResults
+        outcome.buckets.valid = applyLearnedOrder(outcome.buckets.valid, learnedResults)
+
         const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
         const [persistentMemory, verifiedPersistence] = await Promise.all([
           indexResultsInPersistentMemory(
             verifiedResults,
             lens,
-            Math.min(16, verifiedResults.length),
+            Math.min(20, verifiedResults.length),
             4_000
           ),
           persistVerifiedResults(verifiedResults, lens),
@@ -126,7 +156,7 @@ export async function POST(request: NextRequest) {
           results: outcome.results,
           summary: verifiedResults.length > 0
             ? verifiedSearchSummary(query, lens, verifiedResults)
-            : 'No active procurement opportunities passed the mandatory Occu-Med relevance and expiration gate.',
+            : 'No active procurement opportunities passed the complete-package, Occu-Med relevance, and expiration gates.',
           confidence: verifiedSearchConfidence(verifiedResults),
           lens,
           requestedLens,
@@ -134,6 +164,7 @@ export async function POST(request: NextRequest) {
             ...outcome.diagnostics,
             verifiedOnly: true,
             verifiedCount: verifiedResults.length,
+            pursuitLearningApplied: true,
             persistentMemory,
             verifiedPersistence,
           },
