@@ -1,0 +1,9 @@
+/*
+ * RFP Finder never presents raw discovery candidates as approved matches.
+ * While destination pages are being opened and evaluated, the progress UI
+ * remains visible but result cards stay hidden. They reappear only after the
+ * server returns the mandatory Occu-Med SHOW decision list.
+ */
+section:has(.animate-pulse) .result-card {
+  display: none;
+}
