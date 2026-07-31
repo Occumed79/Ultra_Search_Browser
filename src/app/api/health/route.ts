@@ -2,6 +2,8 @@ import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { geminiGroundedSearchCapabilities } from '../../../lib/gemini-grounded-search'
 import { managedSearchCapabilities } from '../../../lib/managed-search'
+import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historical-pursuits'
+import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
 
@@ -26,7 +28,8 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    searchPipeline: 'orchestrated-v10-browser-search-fallback',
+    productMode: 'rfp-finder-www',
+    searchPipeline: 'rfp-finder-v3-mandatory-occumed-gate',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
@@ -37,12 +40,20 @@ function healthPayload() {
       geminiGroundedSearch: geminiSearch.configured,
       geminiGroundedSearchModel: geminiSearch.model,
       structuredIntentPlanning: true,
+      procurementOnly: true,
+      sourceAgnosticRfpSearch: true,
+      occuMedRelevanceProfile: true,
+      occuMedRelevanceProfileVersion: OCCUMED_PROFILE_VERSION,
+      occuMedOfficialSources: OCCUMED_OFFICIAL_SOURCES,
+      historicalPursuitSeedCount: OCCUMED_HISTORICAL_PURSUIT_SEEDS.length,
+      mandatoryShowReviewRejectGate: true,
+      primaryResultsRequireShowDecision: true,
+      expiredAndIrrelevantHiddenFromPrimaryResults: true,
       taskAwareReranking: true,
       managedSearch: managedSearch.configured,
       managedSearchProviders: managedSearch.providers,
       configuredButUnwiredSearchKeys: managedSearch.configuredButUnwired,
-      automaticBrowserSearchFallback: true,
-      automaticBrowserSearchSources: ['bing-rss', 'duckduckgo-lite', 'mojeek'],
+      publicWebRfpSources: ['bing-rss', 'duckduckgo-lite', 'mojeek', 'yahoo', 'brave'],
       legacyHtmlSearch: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
       cloudflareReranker: cloudflare.configured,
       cloudflareRerankModel: cloudflare.model,
@@ -58,7 +69,6 @@ function healthPayload() {
       pageValidationMaxTargets: 24,
       pageValidationCache: pageValidationCacheStats(),
       ocr: process.env.ENABLE_OCR === 'true',
-      marginalia: process.env.ENABLE_MARGINALIA !== 'false',
     },
     checkedAt: new Date().toISOString(),
   }

@@ -7,67 +7,122 @@ import { orchestrateSearch } from '../../../lib/search-orchestrator'
 import { buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
 import { applySmartFilter } from '../../../lib/smart-filter'
-import type { SearchLens } from '../../../types/search'
+import type { ScrapedResult, SearchLens } from '../../../types/search'
 
-const VALID_LENSES = new Set<SearchLens>([
-  'web',
-  'pdf',
-  'government',
-  'procurement',
-  'pricing',
-  'provider',
-  'technical',
-  'news',
-  'legal',
-  'medical',
-  'academic',
-  'financial',
-])
+function normalizeUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    return url.toString().replace(/\/$/, '')
+  } catch {
+    return value.trim()
+  }
+}
+
+function mergeUniqueResults(resultSets: ScrapedResult[][]): ScrapedResult[] {
+  const merged = new Map<string, ScrapedResult>()
+
+  for (const result of resultSets.flat()) {
+    const normalizedUrl = normalizeUrl(result.url)
+    const key = normalizedUrl.toLowerCase()
+    if (!key) continue
+
+    const existing = merged.get(key)
+    if (!existing) {
+      merged.set(key, { ...result, url: normalizedUrl })
+      continue
+    }
+
+    merged.set(key, {
+      ...(existing.score >= result.score ? existing : result),
+      url: normalizedUrl,
+      description: existing.description.length >= result.description.length
+        ? existing.description
+        : result.description,
+      retrieval: {
+        sources: Array.from(new Set([
+          ...(existing.retrieval?.sources || [existing.source]),
+          ...(result.retrieval?.sources || [result.source]),
+        ])),
+        queries: Array.from(new Set([
+          ...(existing.retrieval?.queries || []),
+          ...(result.retrieval?.queries || []),
+        ])),
+        purposes: Array.from(new Set([
+          ...(existing.retrieval?.purposes || []),
+          ...(result.retrieval?.purposes || []),
+        ])),
+        overlap: new Set([
+          ...(existing.retrieval?.sources || [existing.source]),
+          ...(result.retrieval?.sources || [result.source]),
+        ]).size,
+      },
+    })
+  }
+
+  return Array.from(merged.values()).map((result, index) => ({
+    ...result,
+    rank: index + 1,
+  }))
+}
 
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
 
   try {
-    const body = (await request.json()) as { query?: string; lens?: SearchLens; settings?: unknown }
+    const body = (await request.json()) as { query?: string; settings?: unknown }
     const query = body.query?.trim() || ''
 
     if (!query) {
       return NextResponse.json({ error: 'Query is required' }, { status: 400 })
     }
 
-    const requestedLens: SearchLens = body.lens && VALID_LENSES.has(body.lens)
-      ? body.lens
-      : 'web'
+    // This application is now an RFP Finder. Every search uses the procurement
+    // lens while preserving the user's exact subject, geography, and exclusions.
+    const requestedLens: SearchLens = 'procurement'
     const plan = buildSearchPlan(body.settings)
     const orchestration = await orchestrateSearch(query, requestedLens, plan)
     const lensRouting = orchestration.diagnostics.lensRouting
-    const gated = applyIntentCandidateGate(
+
+    const initialGate = applyIntentCandidateGate(
       orchestration.normalizedQuery,
-      orchestration.lens,
+      'procurement',
       orchestration.results,
       orchestration.diagnostics.semanticIntent
     )
-    orchestration.results = gated.results
 
-    let procurementRescue: ProcurementRescueDiagnostics | undefined
-    if (orchestration.lens === 'procurement' && orchestration.results.length === 0) {
-      const rescued = await rescueProcurementCandidates(orchestration.normalizedQuery, {
-        safeSearch: plan.safeSearch,
-        preferredLanguage: plan.preferredLanguage,
-        region: plan.region,
-        semanticIntent: orchestration.diagnostics.semanticIntent,
-      })
-      procurementRescue = rescued.diagnostics
-      orchestration.results = rescued.results
-      if (rescued.results.length > 0) {
-        orchestration.sources = Array.from(new Set([
-          ...orchestration.sources,
-          ...rescued.results.map(result => `${result.source} · procurement-rescue`),
-        ]))
-      }
-      if (rescued.diagnostics.failures.length > 0) {
-        orchestration.failures.push(...rescued.diagnostics.failures.map(error => `procurement rescue: ${error}`))
-      }
+    // Search focused procurement variants across independent public web indexes
+    // on every request. Managed APIs have already run in the orchestrator, so
+    // rescue avoids repeating them and wasting limited trial quota.
+    const rescued = await rescueProcurementCandidates(orchestration.normalizedQuery, {
+      safeSearch: plan.safeSearch,
+      preferredLanguage: plan.preferredLanguage,
+      region: plan.region,
+      semanticIntent: orchestration.diagnostics.semanticIntent,
+      skipManagedSearch: true,
+    })
+    const procurementRescue: ProcurementRescueDiagnostics = rescued.diagnostics
+
+    const combinedCandidates = mergeUniqueResults([
+      initialGate.results,
+      rescued.results,
+    ])
+    const finalGate = applyIntentCandidateGate(
+      orchestration.normalizedQuery,
+      'procurement',
+      combinedCandidates,
+      orchestration.diagnostics.semanticIntent
+    )
+    orchestration.results = finalGate.results
+
+    if (rescued.results.length > 0) {
+      orchestration.sources = Array.from(new Set([
+        ...orchestration.sources,
+        ...rescued.results.map(result => `${result.source} · public-web-rfp`),
+      ]))
+    }
+    if (rescued.diagnostics.failures.length > 0) {
+      orchestration.failures.push(...rescued.diagnostics.failures.map(error => `public web RFP search: ${error}`))
     }
 
     const noExternalResults = orchestration.diagnostics.successfulLiveTasks === 0
@@ -75,26 +130,29 @@ export async function POST(request: NextRequest) {
       && orchestration.diagnostics.memoryVectorMatches === 0
       && orchestration.diagnostics.smallWebMatches === 0
       && orchestration.diagnostics.marginaliaMatches === 0
-      && (procurementRescue?.successfulTasks || 0) === 0
+      && procurementRescue.successfulTasks === 0
 
     if (orchestration.results.length === 0 && noExternalResults && orchestration.failures.length > 0) {
-      const failureSummary = orchestration.diagnostics.sourceRuns
-        .filter(run => run.status === 'failed')
-        .slice(0, 6)
-        .map(run => `${run.source}: ${run.error || 'request failed'}`)
-        .join('; ')
+      const failureSummary = [
+        ...orchestration.diagnostics.sourceRuns
+          .filter(run => run.status === 'failed')
+          .slice(0, 5)
+          .map(run => `${run.source}: ${run.error || 'request failed'}`),
+        ...procurementRescue.failures.slice(0, 5),
+      ].join('; ')
+
       return NextResponse.json(
         {
           error: 'All retrieval sources failed',
           detail: failureSummary
-            ? `Every configured search provider failed. ${failureSummary}`
-            : 'Every configured search provider failed before returning usable results.',
+            ? `The public-web RFP search could not retrieve usable pages. ${failureSummary}`
+            : 'The public-web RFP search could not retrieve usable pages.',
           query: orchestration.normalizedQuery,
-          lens: orchestration.lens,
+          lens: 'procurement',
           diagnostics: {
             ...orchestration.diagnostics,
             lensRouting,
-            intentGate: gated.diagnostics,
+            intentGate: finalGate.diagnostics,
             procurementRescue,
           },
         },
@@ -104,14 +162,11 @@ export async function POST(request: NextRequest) {
 
     const smartFilter = await applySmartFilter(
       orchestration.normalizedQuery,
-      orchestration.lens,
+      'procurement',
       orchestration.results,
       plan.resultsPerPage,
       {
         useLocalTransformer: false,
-        // Initial results must not wait on a second external AI round trip.
-        // Cerebras/Groq still review actual destination-page evidence in the
-        // asynchronous validation stream.
         useExternalProviders: false,
         semanticIntent: orchestration.diagnostics.semanticIntent,
       }
@@ -119,19 +174,13 @@ export async function POST(request: NextRequest) {
     orchestration.results = await applyResultFeedbackRanking(smartFilter.results)
 
     const noteParts = [
-      lensRouting.autoRouted
-        ? `The query was automatically routed from ${lensRouting.requestedLens} to ${lensRouting.effectiveLens}: ${lensRouting.reason}`
-        : undefined,
-      gated.diagnostics.rejected > 0
-        ? `${gated.diagnostics.rejected} candidates were removed before AI review because they lacked procurement evidence or the requested subject.`
-        : undefined,
-      procurementRescue
-        ? `A strict procurement rescue attempted ${procurementRescue.attemptedTasks} targeted retrieval tasks and retained ${procurementRescue.retainedCandidates} candidates.`
-        : undefined,
+      `${finalGate.diagnostics.rejected + initialGate.diagnostics.rejected} candidates were excluded because they lacked procurement evidence or did not match the requested subject.`,
+      `The public-web RFP pass attempted ${procurementRescue.attemptedTasks} targeted searches across independent indexes and retained ${procurementRescue.retainedCandidates} relevant candidates.`,
       orchestration.failures.length > 0
-        ? `${orchestration.failures.length} retrieval tasks failed or returned unreadable pages; successful sources were preserved.`
+        ? `${orchestration.failures.length} retrieval tasks failed or returned unusable pages; successful sources were preserved.`
         : undefined,
     ].filter(Boolean)
+
     const intelligence = buildIntelligenceObject(
       orchestration.normalizedQuery,
       orchestration.expanded,
@@ -140,11 +189,8 @@ export async function POST(request: NextRequest) {
       noteParts.join(' ') || undefined
     )
 
-    // Search-engine snippets are discovery candidates, not verified evidence.
-    // The destination-page stream is the only place allowed to produce a
-    // summary or confidence score.
     intelligence.summary = orchestration.results.length === 0
-      ? `No candidates matched the required ${orchestration.lens} intent. Generic definitions, indexes, and unrelated pages were excluded before page verification.`
+      ? 'No relevant RFP, RFQ, solicitation, tender, bid, or comparable procurement notice was found after searching the public web and excluding generic or unrelated pages.'
       : undefined
     intelligence.confidence = 0
     intelligence.signals = []
@@ -153,9 +199,11 @@ export async function POST(request: NextRequest) {
     const enabledSources = Array.from(new Set([
       ...orchestration.diagnostics.managedSearch.configuredProviders,
       ...(orchestration.diagnostics.geminiGroundedSearch.configured ? ['gemini-google-search'] : []),
-      ...(orchestration.diagnostics.automaticBrowserFallbackEnabled
-        ? ['bing-rss', 'duckduckgo-lite', 'mojeek']
-        : []),
+      'bing-rss',
+      'duckduckgo-lite',
+      'mojeek',
+      'yahoo',
+      'brave',
       ...(orchestration.diagnostics.legacyHtmlSearchEnabled
         ? plan.liveSources
         : plan.liveSources.filter(source => source === 'searxng')),
@@ -166,10 +214,10 @@ export async function POST(request: NextRequest) {
 
     try {
       searchRunId = await insertSearchRun({
-        vertical: orchestration.lens,
+        vertical: 'procurement',
         query,
         normalized_query: orchestration.normalizedQuery,
-        lens: orchestration.lens,
+        lens: 'procurement',
         result_count: orchestration.results.length,
         runtime_ms: runtimeMs,
         sources: orchestration.sources,
@@ -179,9 +227,10 @@ export async function POST(request: NextRequest) {
           failures: orchestration.failures,
           enabledSources,
           lensRouting,
-          intentGate: gated.diagnostics,
+          intentGate: finalGate.diagnostics,
           procurementRescue,
           smartFilter: smartFilter.diagnostics,
+          productMode: 'rfp-finder-www',
         },
       })
 
@@ -201,7 +250,7 @@ export async function POST(request: NextRequest) {
               final_score: result.score,
               extraction_status: 'candidate',
               metadata: {
-                lens: orchestration.lens,
+                lens: 'procurement',
                 verificationStatus: 'candidate',
                 retrieval: result.retrieval,
                 validation: result.validation,
@@ -228,12 +277,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       query: orchestration.normalizedQuery,
-      lens: orchestration.lens,
+      lens: 'procurement',
       requestedLens,
       summary: intelligence.summary,
-      expandedQueries: orchestration.diagnostics.queryVariants
-        .map(variant => variant.query)
-        .filter(variant => variant.toLowerCase() !== orchestration.normalizedQuery.toLowerCase()),
+      expandedQueries: Array.from(new Set([
+        ...orchestration.diagnostics.queryVariants.map(variant => variant.query),
+        ...procurementRescue.queries,
+      ])).filter(variant => variant.toLowerCase() !== orchestration.normalizedQuery.toLowerCase()),
       signals: [],
       results: responseResults,
       searchRunId,
@@ -246,21 +296,22 @@ export async function POST(request: NextRequest) {
         enabledSources,
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
-        intentGate: gated.diagnostics,
+        intentGate: finalGate.diagnostics,
         procurementRescue,
         smartFilter: smartFilter.diagnostics,
+        productMode: 'rfp-finder-www',
         ...orchestration.diagnostics,
       },
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown search failure'
-    console.error('Search API failure:', error)
+    console.error('RFP Finder API failure:', error)
 
     return NextResponse.json(
       {
-        error: 'Search failed',
+        error: 'RFP search failed',
         detail: message,
-        stage: 'search-orchestration',
+        stage: 'public-web-rfp-search',
       },
       { status: 500 }
     )

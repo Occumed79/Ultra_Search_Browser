@@ -1,3 +1,4 @@
+import { assessOccuMedRfpText } from './occumed-rfp-profile'
 import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
@@ -8,13 +9,14 @@ export interface IntentGateDiagnostics {
   reasons: Record<string, number>
 }
 
-const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
-const PROCUREMENT_PORTALS = /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
+const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|request for tenders?|rft|invitation to bid|ifb|sources sought|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
+const PROCUREMENT_PORTALS = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
 const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory|therapy)\b/i
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'by', 'for', 'from', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with',
-  'request', 'requests', 'proposal', 'proposals', 'quotation', 'quotations', 'tender', 'tenders', 'rfp', 'rfq', 'rft',
-  'ifb', 'bid', 'bids', 'bidding', 'solicitation', 'procurement', 'contract', 'opportunity', 'vendor', 'current', 'open',
+  'find', 'search', 'show', 'request', 'requests', 'proposal', 'proposals', 'quotation', 'quotations', 'tender', 'tenders',
+  'rfp', 'rfq', 'rfi', 'rft', 'ifb', 'bid', 'bids', 'bidding', 'solicitation', 'procurement', 'contract',
+  'opportunity', 'opportunities', 'vendor', 'current', 'open', 'active',
 ])
 
 function normalize(value: string): string {
@@ -64,19 +66,20 @@ function rejectReason(
   const text = normalize(`${result.title} ${result.description} ${result.url} ${result.domain}`)
   const originalText = `${result.title} ${result.description} ${result.url} ${result.domain}`
 
-  // These page types are structurally wrong for a procurement query even when
-  // they happen to contain words such as occupational, health, or services.
   if (GENERIC_PAGE_TITLE.test(result.title)) return 'generic-definition-or-index'
 
   const hasProcurementEvidence = PROCUREMENT_TERMS.test(originalText)
     || PROCUREMENT_PORTALS.test(result.url)
   if (!hasProcurementEvidence) return 'missing-procurement-evidence'
 
-  // Search-engine snippets and portal titles are often abbreviated. Requiring
-  // half of every subject token before opening the page caused genuine RFPs to
-  // be discarded. One meaningful subject match is enough to reach the stricter
-  // page-level Cerebras/Groq evidence review; zero subject matches is not.
   if (!subjectMatches(query, text, semanticIntent)) return 'missing-query-subject'
+
+  // At snippet stage, reject only explicit out-of-scope evidence. Sparse snippets
+  // are still allowed through so destination-page review can make the final call.
+  const occuMed = assessOccuMedRfpText(originalText)
+  if (occuMed.status === 'irrelevant' && occuMed.exclusions.length > 0) {
+    return 'outside-occumed-service-model'
+  }
 
   if (!title && !result.description.trim()) return 'empty-result'
   return undefined

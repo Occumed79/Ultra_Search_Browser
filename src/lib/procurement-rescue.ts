@@ -3,7 +3,7 @@ import {
   buildProcurementBrowserRescueTasks,
   type ProcurementBrowserRescueTask,
 } from './procurement-browser-rescue-tasks'
-import { searchMojeekHtml } from './public-search-fallbacks'
+import { searchBraveHtml, searchMojeekHtml, searchYahooHtml } from './public-search-fallbacks'
 import { buildProcurementRescueQueries } from './procurement-rescue-queries'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
 import { applyIntentCandidateGate } from './search-intent-gate'
@@ -26,6 +26,7 @@ export interface ProcurementRescueOptions {
   preferredLanguage: string
   region: string
   semanticIntent?: SemanticIntentPlan
+  skipManagedSearch?: boolean
 }
 
 function normalizeUrl(value: string): string {
@@ -71,11 +72,16 @@ async function runBrowserTask(
     preferredLanguage: options.preferredLanguage,
     region: options.region,
   }
+
   const response = task.source === 'bing'
     ? await searchBingResilient(task.query, searchOptions)
     : task.source === 'duckduckgo'
       ? await searchDuckDuckGoResilient(task.query, searchOptions)
-      : await searchMojeekHtml(task.query, searchOptions)
+      : task.source === 'mojeek'
+        ? await searchMojeekHtml(task.query, searchOptions)
+        : task.source === 'yahoo'
+          ? await searchYahooHtml(task.query, searchOptions)
+          : await searchBraveHtml(task.query, searchOptions)
 
   return response.results.map(result => ({
     ...result,
@@ -93,23 +99,34 @@ export async function rescueProcurementCandidates(
   options: ProcurementRescueOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
-  const managed = await searchManagedWeb(query, {
-    safeSearch: options.safeSearch,
-    preferredLanguage: options.preferredLanguage,
-    region: options.region,
-    limit: 15,
-    queryVariants: queries,
-  })
-  const managedGate = applyIntentCandidateGate(
-    query,
-    'procurement',
-    managed.results,
-    options.semanticIntent
-  )
+  const managed = options.skipManagedSearch
+    ? {
+        results: [] as ScrapedResult[],
+        diagnostics: {
+          attempts: [] as Array<{
+            provider: string
+            query: string
+            status: 'success' | 'empty' | 'failed'
+            resultCount: number
+            runtimeMs: number
+            error?: string
+          }>,
+          attemptedRequests: 0,
+          successfulRequests: 0,
+        },
+      }
+    : await searchManagedWeb(query, {
+        safeSearch: options.safeSearch,
+        preferredLanguage: options.preferredLanguage,
+        region: options.region,
+        limit: 20,
+        queryVariants: queries,
+      })
 
-  const browserTasks = managedGate.results.length === 0
-    ? buildProcurementBrowserRescueTasks(queries)
-    : []
+  // RFP Finder is deliberately source-agnostic. Public web indexes run even
+  // when managed APIs already returned candidates so one provider cannot
+  // silently define the entire result pool.
+  const browserTasks = buildProcurementBrowserRescueTasks(queries)
   const browserSettled = await Promise.allSettled(
     browserTasks.map(task => runBrowserTask(task, options))
   )
