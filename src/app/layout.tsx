@@ -4,10 +4,11 @@ import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "next-themes";
 import { Header } from "../components/header";
 import "./globals.css";
+import "./rfp-decision-gate.css";
 
 export const metadata: Metadata = {
-  title: "Ultra Search Browser | Kagi-Style Search",
-  description: "Multi-engine search browser with query intelligence and signal scoring",
+  title: "Occu-Med RFP Finder",
+  description: "Public-web RFP discovery filtered for active opportunities that match Occu-Med capabilities",
 };
 
 export const viewport: Viewport = {
