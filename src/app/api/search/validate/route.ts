@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
+import { applyOccuMedDecisionGate } from '../../../../lib/occumed-result-decision'
 import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { insertSearchResult } from '../../../../lib/search-storage'
 import {
@@ -70,7 +71,8 @@ export async function POST(request: NextRequest) {
   }
 
   const query = body.query?.trim() || ''
-  const lens = body.lens && VALID_LENSES.has(body.lens) ? body.lens : 'web'
+  const requestedLens = body.lens && VALID_LENSES.has(body.lens) ? body.lens : 'procurement'
+  const lens: SearchLens = 'procurement'
   const results = Array.isArray(body.results)
     ? body.results.filter(result => Boolean(result?.url && result?.title)).slice(0, 60)
     : []
@@ -95,17 +97,20 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      write('ready', { query, lens, candidateCount: results.length })
+      write('ready', { query, lens, requestedLens, candidateCount: results.length })
 
       try {
-        const outcome = await deepValidateResults(query, lens, results, {
+        const rawOutcome = await deepValidateResults(query, lens, results, {
           maxTargets,
           semanticIntent,
           onEvent: async (event: DeepValidationEvent) => {
             if (event.type === 'complete') return
-            write(event.type, event)
+            // Progress is streamed, but individual candidate cards are not
+            // promoted before the mandatory Occu-Med decision gate completes.
+            if (event.type === 'progress') write(event.type, event)
           },
         })
+        const outcome = applyOccuMedDecisionGate(rawOutcome)
         const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
         const [persistentMemory, verifiedPersistence] = await Promise.all([
           indexResultsInPersistentMemory(
@@ -118,16 +123,16 @@ export async function POST(request: NextRequest) {
         ])
         write('complete', {
           ...outcome,
-          // Keep useful but unverifiable results in the primary list. A site
-          // blocking server-side fetches is not evidence that the search
-          // result itself is irrelevant.
           results: outcome.results,
-          summary: verifiedSearchSummary(query, lens, verifiedResults),
+          summary: verifiedResults.length > 0
+            ? verifiedSearchSummary(query, lens, verifiedResults)
+            : 'No active procurement opportunities passed the mandatory Occu-Med relevance and expiration gate.',
           confidence: verifiedSearchConfidence(verifiedResults),
           lens,
+          requestedLens,
           diagnostics: {
             ...outcome.diagnostics,
-            verifiedOnly: false,
+            verifiedOnly: true,
             verifiedCount: verifiedResults.length,
             persistentMemory,
             verifiedPersistence,
