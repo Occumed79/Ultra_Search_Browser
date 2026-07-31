@@ -6,6 +6,14 @@ import {
   type ExtractedDocument,
 } from './document-extraction'
 import { classifyResultStatus, type ResultStatusAssessment } from './result-status'
+import {
+  extractRfpOpportunityIntelligence,
+  type RfpOpportunityIntelligence,
+} from './rfp-opportunity-intelligence'
+import {
+  inspectSolicitationPackage,
+  type SolicitationPackageAnalysis,
+} from './solicitation-package'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
 export type PageAvailability =
@@ -34,6 +42,8 @@ export interface PageValidationResult {
   contentHash?: string
   cached: boolean
   lifecycle: ResultStatusAssessment
+  packageAnalysis?: SolicitationPackageAnalysis
+  rfpIntelligence?: RfpOpportunityIntelligence
 }
 
 export interface PageSignalAssessment {
@@ -46,9 +56,9 @@ interface CacheEntry {
   value: PageValidationResult
 }
 
-const PAGE_TIMEOUT_MS = 7_500
+const PAGE_TIMEOUT_MS = 10_000
 const MAX_RESPONSE_BYTES = 6 * 1024 * 1024
-const MAX_EXTRACTED_TEXT = 120_000
+const MAX_EXTRACTED_TEXT = 180_000
 const PAGE_CACHE_TTL_MS = 10 * 60 * 1000
 const MAX_REDIRECTS = 5
 const cache = new Map<string, CacheEntry>()
@@ -170,35 +180,42 @@ export function inspectPageSignals(
 function evidenceExcerpts(text: string, query: string, lifecycle: ResultStatusAssessment): string[] {
   const normalized = clean(text)
   if (!normalized) return []
-  const terms = Array.from(new Set(query.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 4)))
+  const terms = Array.from(new Set([
+    ...query.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 4),
+    'deadline', 'due date', 'scope of work', 'medical', 'occupational', 'solicitation',
+  ]))
   const lower = normalized.toLowerCase()
   const excerpts: string[] = []
 
   for (const term of terms) {
     const index = lower.indexOf(term)
     if (index < 0) continue
-    const excerpt = clean(normalized.slice(Math.max(0, index - 90), Math.min(normalized.length, index + 230)))
+    const excerpt = clean(normalized.slice(Math.max(0, index - 90), Math.min(normalized.length, index + 260)))
     if (excerpt && !excerpts.some(item => item.includes(excerpt) || excerpt.includes(item))) excerpts.push(excerpt)
-    if (excerpts.length >= 2) break
+    if (excerpts.length >= 4) break
   }
 
-  for (const date of lifecycle.dates.slice(0, 2)) {
+  for (const date of lifecycle.dates.slice(0, 3)) {
     if (date.context && !excerpts.includes(date.context)) excerpts.push(date.context)
-    if (excerpts.length >= 3) break
+    if (excerpts.length >= 6) break
   }
 
-  if (excerpts.length === 0) excerpts.push(normalized.slice(0, 320))
-  return excerpts.slice(0, 3)
+  if (excerpts.length === 0) excerpts.push(normalized.slice(0, 360))
+  return excerpts.slice(0, 6)
 }
 
-async function extractResponse(response: Response, type: 'pdf' | 'docx' | 'html'): Promise<ExtractedDocument> {
+async function extractResponse(
+  response: Response,
+  type: 'pdf' | 'docx' | 'html',
+  baseUrl: string
+): Promise<ExtractedDocument> {
   const contentLength = Number(response.headers.get('content-length') || 0)
   if (contentLength > MAX_RESPONSE_BYTES) throw new Error(`Response exceeded ${MAX_RESPONSE_BYTES} bytes`)
 
   if (type === 'html') {
     const text = await response.text()
     if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) throw new Error(`Response exceeded ${MAX_RESPONSE_BYTES} bytes`)
-    return extractFromHTML(text)
+    return extractFromHTML(text, baseUrl)
   }
 
   const bytes = await response.arrayBuffer()
@@ -272,7 +289,12 @@ export async function validateCandidatePage(
   result: ScrapedResult,
   lens: SearchLens,
   query: string,
-  options: { timeoutMs?: number; bypassCache?: boolean; fetchImpl?: typeof fetch } = {}
+  options: {
+    timeoutMs?: number
+    bypassCache?: boolean
+    fetchImpl?: typeof fetch
+    inspectPackage?: boolean
+  } = {}
 ): Promise<PageValidationResult> {
   const key = cacheKey(result.url)
   const cached = cache.get(key)
@@ -311,17 +333,46 @@ export async function validateCandidatePage(
       return failureResult(result, 'unsupported', `Unsupported content type: ${contentType || 'unknown'}.`, 'unknown', response.status, finalUrl, contentType)
     }
 
-    const document = await extractResponse(response, type)
-    const extractedText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
-    const signal = inspectPageSignals(extractedText, finalUrl, result.url, document.title || result.title)
+    const document = await extractResponse(response, type, finalUrl)
+    const primaryText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
+    const signal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
+    let packageAnalysis: SolicitationPackageAnalysis | undefined
+
+    if (
+      lens === 'procurement'
+      && signal.availability === 'reachable'
+      && options.inspectPackage !== false
+    ) {
+      try {
+        packageAnalysis = await inspectSolicitationPackage(finalUrl, document, {
+          maxAttachments: 4,
+          attachmentTimeoutMs: 4_500,
+          maxCombinedText: MAX_EXTRACTED_TEXT,
+          fetchImpl,
+        })
+      } catch (error) {
+        console.warn('Solicitation package inspection failed:', finalUrl, error)
+      }
+    }
+
+    const extractedText = clean(packageAnalysis?.combinedText || primaryText).slice(0, MAX_EXTRACTED_TEXT)
     const lifecycle = signal.availability === 'reachable'
-      ? classifyResultStatus(`${document.title || ''} ${extractedText}`, lens)
+      ? (packageAnalysis?.lifecycle || classifyResultStatus(`${document.title || ''} ${extractedText}`, lens))
       : {
           status: signal.availability === 'dead' ? 'dead' as const : 'junk' as const,
           reason: signal.reason,
           confidence: 0.94,
           dates: [],
         }
+    const rfpIntelligence = lens === 'procurement' && signal.availability === 'reachable'
+      ? extractRfpOpportunityIntelligence({
+          text: extractedText,
+          title: document.title || result.title,
+          url: finalUrl,
+          lifecycle,
+          documents: packageAnalysis?.documents,
+        })
+      : undefined
 
     const value: PageValidationResult = {
       checkedAt: new Date().toISOString(),
@@ -330,7 +381,9 @@ export async function validateCandidatePage(
       httpStatus: response.status,
       contentType,
       availability: signal.availability,
-      reason: signal.reason,
+      reason: packageAnalysis && packageAnalysis.inspectedCount > 0
+        ? `${signal.reason} Inspected ${packageAnalysis.inspectedCount} linked solicitation document${packageAnalysis.inspectedCount === 1 ? '' : 's'}.`
+        : signal.reason,
       evidence: evidenceExcerpts(extractedText, query, lifecycle),
       extractedText,
       extractedTextLength: extractedText.length,
@@ -338,6 +391,8 @@ export async function validateCandidatePage(
       contentHash: extractedText ? hashText(extractedText) : undefined,
       cached: false,
       lifecycle,
+      packageAnalysis,
+      rfpIntelligence,
     }
 
     cache.set(key, { expiresAt: Date.now() + PAGE_CACHE_TTL_MS, value })
