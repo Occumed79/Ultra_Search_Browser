@@ -185,13 +185,24 @@ export async function inspectSolicitationPackage(
 
   const combinedText = clean(extractedTexts.join('\n\n')).slice(0, maxCombinedText)
   const lifecycle = classifyResultStatus(combinedText, 'procurement')
-  return {
+  const analysis = {
     documents,
-    combinedText,
     lifecycle,
     discoveredCount: links.length,
     inspectedCount: inspected.filter(item => item.evidence.extracted).length,
     failedCount: inspected.filter(item => !item.evidence.extracted).length,
     latestDeadline: latestDeadline(lifecycle),
-  }
+  } as SolicitationPackageAnalysis
+
+  // Package text is used internally for lifecycle and fit analysis but must not
+  // be serialized into every SSE event, API response, or database metadata
+  // object. Non-enumerable keeps it accessible to page validation while
+  // preventing multi-megabyte response payloads.
+  Object.defineProperty(analysis, 'combinedText', {
+    value: combinedText,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  })
+  return analysis
 }
