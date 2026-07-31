@@ -315,6 +315,8 @@ export default function Home() {
 
   const visibleResults = useMemo(() => {
     const filtered = (scrapedResults as ResultWithId[]).filter(result => {
+      const approved = result.bucket === 'valid' || result.validation?.status === 'valid'
+      if (!approved) return false
       if (filterSource && result.source !== filterSource) return false
       if (fitFilter !== 'all' && result.rfpIntelligence?.fitBand !== fitFilter) return false
       if (deadlineFilter !== 'all') {
