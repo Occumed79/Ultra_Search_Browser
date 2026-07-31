@@ -7,3 +7,12 @@
 section:has(.animate-pulse) .result-card {
   display: none;
 }
+
+/*
+ * If deep validation fails and the legacy fallback marks candidates as
+ * uncertain, keep them out of the primary result list rather than presenting
+ * unverifiable opportunities as matches.
+ */
+.result-card:has([class*="border-amber-300/20"]) {
+  display: none;
+}
