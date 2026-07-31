@@ -34,7 +34,7 @@ function result(
   let validationStatus: NonNullable<ScrapedResult['validation']>['status']
 
   if (category === 'active') {
-    text = `RFP Number: ACTIVE-${id}. ${buyer} procurement for ${service}. Proposals are currently open. The contractor may coordinate services through a distributed provider network.`
+    text = `RFP Number: ACTIVE-${id}. ${buyer} procurement for ${service}. The scope includes pre-employment medical evaluations, medical surveillance, audiograms, spirometry, laboratory testing, vaccinations, medical review, and provider-network coordination. Proposals are currently open. The contractor may coordinate services through a distributed provider network.`
     assessment = openLifecycle
     validationStatus = 'valid'
   } else if (category === 'irrelevant') {
