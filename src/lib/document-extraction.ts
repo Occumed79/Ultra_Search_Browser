@@ -29,6 +29,10 @@ export interface ExtractedDocument {
     paragraphs: string[]
     tables: string[][]
   }
+  links?: Array<{
+    url: string
+    text: string
+  }>
 }
 
 export interface ExtractionResult {
@@ -44,6 +48,16 @@ function normalizeText(value: string): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+}
+
+function uniqueLinks(values: Array<{ url: string; text: string }>): Array<{ url: string; text: string }> {
+  const seen = new Set<string>()
+  return values.filter(link => {
+    const key = link.url.trim().toLowerCase()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 function textSections(text: string, paragraphMinimum = 30) {
@@ -80,8 +94,25 @@ export function extractEntities(text: string) {
   }
 }
 
-export function extractFromHTML(html: string): ExtractedDocument {
+export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocument {
   const $ = cheerio.load(html)
+  const links = uniqueLinks(
+    $('a[href]').map((_, element) => {
+      const href = String($(element).attr('href') || '').trim()
+      if (!href || href.startsWith('#') || /^(?:javascript|mailto|tel):/i.test(href)) return null
+      try {
+        const url = baseUrl ? new URL(href, baseUrl).toString() : href
+        if (!/^https?:\/\//i.test(url)) return null
+        return {
+          url,
+          text: normalizeText($(element).text()) || normalizeText($(element).attr('title') || '') || url,
+        }
+      } catch {
+        return null
+      }
+    }).get().filter((link): link is { url: string; text: string } => Boolean(link))
+  )
+
   $('script, style, nav, header, footer, iframe, noscript').remove()
 
   const text = normalizeText($('body').text())
@@ -106,16 +137,20 @@ export function extractFromHTML(html: string): ExtractedDocument {
     if (cells.length) tables.push(cells)
   })
 
+  const entities = extractEntities(text)
+  entities.urls = unique([...entities.urls, ...links.map(link => link.url)])
+
   return {
     text,
     title,
     metadata: { fileType: 'html' },
-    entities: extractEntities(text),
+    entities,
     sections: {
       headers: unique(headers),
       paragraphs: unique(paragraphs),
       tables,
     },
+    links,
   }
 }
 
@@ -250,11 +285,15 @@ export async function extractFromImage(imageBuffer: Buffer, timeout = 30_000): P
   }
 }
 
-export async function fetchAndExtractFromURL(url: string, timeout = 10_000): Promise<ExtractionResult> {
+export async function fetchAndExtractFromURL(
+  url: string,
+  timeout = 10_000,
+  fetchImpl: typeof fetch = fetch
+): Promise<ExtractionResult> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
   try {
-    const response = await fetch(url, {
+    const response = await fetchImpl(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         Accept: 'text/html,application/xhtml+xml,application/xml,application/pdf;q=0.9,*/*;q=0.8',
@@ -281,7 +320,8 @@ export async function fetchAndExtractFromURL(url: string, timeout = 10_000): Pro
       return { ...result, source: url }
     }
 
-    return { success: true, document: extractFromHTML(await response.text()), source: url }
+    const baseUrl = response.url || url
+    return { success: true, document: extractFromHTML(await response.text(), baseUrl), source: url }
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : 'Fetch failed', source: url }
   } finally {
