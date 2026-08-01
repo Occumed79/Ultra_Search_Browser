@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
+import { applyOccuMedSmartFilter } from '../../../lib/occumed-smart-filter'
 import { rescueProcurementCandidates, type ProcurementRescueDiagnostics } from '../../../lib/procurement-rescue'
 import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
 import { applyIntentCandidateGate } from '../../../lib/search-intent-gate'
 import { orchestrateSearch } from '../../../lib/search-orchestrator'
 import { buildSearchPlan } from '../../../lib/search-settings'
 import { insertSearchResult, insertSearchRun } from '../../../lib/search-storage'
-import { applySmartFilter } from '../../../lib/smart-filter'
 import type { ScrapedResult, SearchLens } from '../../../types/search'
 
 function normalizeUrl(value: string): string {
@@ -160,7 +160,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const smartFilter = await applySmartFilter(
+    const smartFilter = await applyOccuMedSmartFilter(
       orchestration.normalizedQuery,
       'procurement',
       orchestration.results,
