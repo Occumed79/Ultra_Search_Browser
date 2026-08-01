@@ -1,11 +1,14 @@
 /**
- * Federal Register public JSON API → procurement index entries
+ * Federal Register public JSON API → Occu-Med–relevant index entries
  * https://www.federalregister.gov/developers/documentation/api/v1
+ *
+ * Structured feed only — results filtered to occupational health / exam scope.
  */
 
 import crypto from 'crypto'
 import type { FeedEntry } from './small-web'
 import { addFeedSource, storeFeedEntries, updateFeedLastFetched } from './small-web'
+import { isOccuMedRelevant } from './occumed-index-filters'
 
 const FR_JSON = 'https://www.federalregister.gov/api/v1/documents.json'
 
@@ -15,41 +18,39 @@ export interface FrIngestTarget {
   category: string
   type?: string
   agency?: string
+  /** Full-text term search (FR conditions[term]) */
+  term?: string
   perPage?: number
 }
 
+/**
+ * Priority agencies + term searches for Occu-Med scope.
+ * Broad “all notices” dumps removed — too much noise.
+ */
 export const FR_INGEST_TARGETS: FrIngestTarget[] = [
-  { id: 'fr-json-notices', title: 'FR JSON — Notices', category: 'government', type: 'NOTICE', perPage: 100 },
-  { id: 'fr-json-prorule', title: 'FR JSON — Proposed Rules', category: 'government', type: 'PRORULE', perPage: 50 },
-  { id: 'fr-json-rule', title: 'FR JSON — Rules', category: 'government', type: 'RULE', perPage: 50 },
-  { id: 'fr-json-gsa', title: 'FR JSON — GSA', category: 'procurement', agency: 'general-services-administration', perPage: 50 },
-  { id: 'fr-json-hhs', title: 'FR JSON — HHS', category: 'healthcare_procurement', agency: 'health-and-human-services-department', perPage: 50 },
-  { id: 'fr-json-va', title: 'FR JSON — VA', category: 'healthcare_procurement', agency: 'veterans-affairs-department', perPage: 50 },
-  { id: 'fr-json-dod', title: 'FR JSON — Defense', category: 'procurement', agency: 'defense-department', perPage: 50 },
-  { id: 'fr-json-labor', title: 'FR JSON — Labor', category: 'procurement', agency: 'labor-department', perPage: 50 },
-  { id: 'fr-json-dhs', title: 'FR JSON — Homeland Security', category: 'procurement', agency: 'homeland-security-department', perPage: 50 },
-  { id: 'fr-json-dot', title: 'FR JSON — Transportation', category: 'transit', agency: 'transportation-department', perPage: 50 },
-  { id: 'fr-json-epa', title: 'FR JSON — EPA', category: 'water_utility', agency: 'environmental-protection-agency', perPage: 50 },
-  { id: 'fr-json-energy', title: 'FR JSON — Energy', category: 'procurement', agency: 'energy-department', perPage: 50 },
-  { id: 'fr-json-usda', title: 'FR JSON — Agriculture', category: 'procurement', agency: 'agriculture-department', perPage: 50 },
-  { id: 'fr-json-commerce', title: 'FR JSON — Commerce', category: 'procurement', agency: 'commerce-department', perPage: 50 },
-  { id: 'fr-json-interior', title: 'FR JSON — Interior', category: 'procurement', agency: 'interior-department', perPage: 50 },
-  { id: 'fr-json-ed', title: 'FR JSON — Education', category: 'education', agency: 'education-department', perPage: 50 },
-  { id: 'fr-json-hud', title: 'FR JSON — HUD', category: 'procurement', agency: 'housing-and-urban-development-department', perPage: 50 },
-  { id: 'fr-json-justice', title: 'FR JSON — Justice', category: 'procurement', agency: 'justice-department', perPage: 50 },
-  { id: 'fr-json-treasury', title: 'FR JSON — Treasury', category: 'procurement', agency: 'treasury-department', perPage: 50 },
-  { id: 'fr-json-nasa', title: 'FR JSON — NASA', category: 'procurement', agency: 'national-aeronautics-and-space-administration', perPage: 30 },
-  { id: 'fr-json-nrc', title: 'FR JSON — Nuclear Regulatory Commission', category: 'procurement', agency: 'nuclear-regulatory-commission', perPage: 30 },
-  { id: 'fr-json-ssa', title: 'FR JSON — Social Security Administration', category: 'procurement', agency: 'social-security-administration', perPage: 30 },
-  { id: 'fr-json-opm', title: 'FR JSON — OPM', category: 'procurement', agency: 'personnel-management-office', perPage: 30 },
-  { id: 'fr-json-sba', title: 'FR JSON — Small Business Administration', category: 'procurement', agency: 'small-business-administration', perPage: 30 },
+  // Agency lenses (still filtered client-side)
+  { id: 'fr-hhs', title: 'FR — HHS (Occu-Med filter)', category: 'healthcare_procurement', agency: 'health-and-human-services-department', type: 'NOTICE', perPage: 50 },
+  { id: 'fr-va', title: 'FR — VA (Occu-Med filter)', category: 'healthcare_procurement', agency: 'veterans-affairs-department', type: 'NOTICE', perPage: 50 },
+  { id: 'fr-labor', title: 'FR — Labor (Occu-Med filter)', category: 'healthcare_procurement', agency: 'labor-department', type: 'NOTICE', perPage: 50 },
+  { id: 'fr-dhs', title: 'FR — DHS (Occu-Med filter)', category: 'healthcare_procurement', agency: 'homeland-security-department', type: 'NOTICE', perPage: 40 },
+  { id: 'fr-dod', title: 'FR — Defense (Occu-Med filter)', category: 'healthcare_procurement', agency: 'defense-department', type: 'NOTICE', perPage: 40 },
+  { id: 'fr-dot', title: 'FR — Transportation (Occu-Med filter)', category: 'healthcare_procurement', agency: 'transportation-department', type: 'NOTICE', perPage: 40 },
+  { id: 'fr-gsa', title: 'FR — GSA (Occu-Med filter)', category: 'healthcare_procurement', agency: 'general-services-administration', type: 'NOTICE', perPage: 40 },
+  { id: 'fr-osha', title: 'FR — OSHA / Labor rules', category: 'healthcare_procurement', agency: 'labor-department', type: 'PRORULE', perPage: 30 },
+  // Term searches across FR
+  { id: 'fr-term-occ-health', title: 'FR term — occupational health', category: 'healthcare_procurement', term: '"occupational health"', type: 'NOTICE', perPage: 40 },
+  { id: 'fr-term-med-surv', title: 'FR term — medical surveillance', category: 'healthcare_procurement', term: '"medical surveillance"', type: 'NOTICE', perPage: 30 },
+  { id: 'fr-term-drug-test', title: 'FR term — drug testing', category: 'healthcare_procurement', term: '"drug testing"', type: 'NOTICE', perPage: 30 },
+  { id: 'fr-term-fit-duty', title: 'FR term — fitness for duty', category: 'healthcare_procurement', term: '"fitness for duty"', type: 'NOTICE', perPage: 20 },
+  { id: 'fr-term-respirator', title: 'FR term — respirator medical', category: 'healthcare_procurement', term: '"respirator" medical', type: 'NOTICE', perPage: 20 },
 ]
 
 function sourceUrl(target: FrIngestTarget): string {
   const u = new URL(FR_JSON)
   if (target.type) u.searchParams.append('conditions[type][]', target.type)
   if (target.agency) u.searchParams.append('conditions[agencies][]', target.agency)
-  u.searchParams.set('per_page', String(target.perPage || 50))
+  if (target.term) u.searchParams.set('conditions[term]', target.term)
+  u.searchParams.set('per_page', String(target.perPage || 40))
   u.searchParams.set('order', 'newest')
   return u.toString()
 }
@@ -103,6 +104,8 @@ export async function fetchFederalRegisterJson(target: FrIngestTarget): Promise<
     const typeLabel = typeof row.type === 'string' ? row.type : target.type || 'Document'
     const description = [typeLabel, agencies, abstract].filter(Boolean).join(' — ').slice(0, 2000)
 
+    if (!isOccuMedRelevant({ title, description })) continue
+
     entries.push({
       id: entryId(feedUrl, docNumber, htmlUrl),
       url: htmlUrl,
@@ -113,7 +116,7 @@ export async function fetchFederalRegisterJson(target: FrIngestTarget): Promise<
       publishedAt,
       feedUrl,
       feedTitle: target.title,
-      category: target.category,
+      category: 'healthcare_procurement',
     })
   }
 
@@ -139,8 +142,8 @@ export async function ingestFederalRegisterTargets(
       })
       const entries = await fetchFederalRegisterJson(target)
       if (!entries.length) {
-        failures.push(`${target.title}: empty result set`)
-        perTarget.push({ id: target.id, stored: 0, error: 'empty' })
+        // Not a hard failure — filter may legitimately drop everything
+        perTarget.push({ id: target.id, stored: 0, error: 'no Occu-Med–relevant items' })
         continue
       }
       const n = await storeFeedEntries(entries)
