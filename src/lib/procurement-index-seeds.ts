@@ -1,17 +1,17 @@
 /**
  * Procurement / RFP local index — seed sources
  *
- * These are PUBLIC sources that do not require a vendor login to *read*
- * opportunity listings or RSS. Use them to populate feed_sources / feed_entries
- * once DATABASE_URL is configured.
+ * PUBLIC sources only (no vendor login to read listings/RSS).
  *
  * Types:
- *   - rss   → fetch with scripts/fetch-feeds.ts (XML)
- *   - portal → public list/search pages (future HTML indexer; do not scrape behind login)
- *   - api   → documented public API (may need free API key later)
+ *   - rss   → scripts/fetch-feeds.ts + POST /api/index/bootstrap
+ *   - portal → future HTML list indexer
+ *   - api   → free public API (e.g. SAM.gov key)
  *
- * Prefer official .gov sources. Commercial aggregators (BidNet, DemandStar, etc.)
- * are omitted because they typically require accounts.
+ * Verified 2026-07-31:
+ *   Federal Register API RSS works (200 + <item>s)
+ *   Grants.gov RSS returns HTML challenge (disabled until fixed)
+ *   GSA /rss/news.xml returns 404 (disabled)
  */
 
 export type IndexSourceKind = 'rss' | 'portal' | 'api'
@@ -23,27 +23,159 @@ export type IndexCategory =
   | 'healthcare_procurement'
 
 export interface ProcurementIndexSeed {
-  /** Stable id for logging / dedupe */
   id: string
-  /** Human label */
   title: string
-  /** Feed or page URL */
   url: string
   kind: IndexSourceKind
   category: IndexCategory
-  /** Jurisdiction hint */
   jurisdiction: string
-  /** Why this source is useful */
   notes?: string
-  /** If false, skip automatic RSS fetch (portal/api only) */
   active: boolean
 }
 
-/**
- * Tier 1 — verified public RSS / Atom feeds (safe for fetch-feeds.ts today)
- */
+const FR = 'https://www.federalregister.gov/api/v1/documents.rss'
+
 export const PROCUREMENT_RSS_SEEDS: ProcurementIndexSeed[] = [
-  // ── Federal grants (not pure contracts, but adjacent public opportunities) ──
+  // ── Federal Register (verified working) ──
+  {
+    id: 'fr-notices',
+    title: 'Federal Register — Notices',
+    url: `${FR}?conditions%5Btype%5D%5B%5D=NOTICE`,
+    kind: 'rss',
+    category: 'government',
+    jurisdiction: 'US Federal',
+    notes: 'Verified: returns RSS items',
+    active: true,
+  },
+  {
+    id: 'fr-proposed-rules',
+    title: 'Federal Register — Proposed Rules',
+    url: `${FR}?conditions%5Btype%5D%5B%5D=PRORULE`,
+    kind: 'rss',
+    category: 'government',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-rules',
+    title: 'Federal Register — Rules',
+    url: `${FR}?conditions%5Btype%5D%5B%5D=RULE`,
+    kind: 'rss',
+    category: 'government',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-gsa',
+    title: 'Federal Register — GSA',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=general-services-administration`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-hhs',
+    title: 'Federal Register — HHS',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=health-and-human-services-department`,
+    kind: 'rss',
+    category: 'healthcare_procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-va',
+    title: 'Federal Register — Veterans Affairs',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=veterans-affairs-department`,
+    kind: 'rss',
+    category: 'healthcare_procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-dod',
+    title: 'Federal Register — Defense',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=defense-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-labor',
+    title: 'Federal Register — Labor',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=labor-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    notes: 'Often includes workplace / occupational health related notices',
+    active: true,
+  },
+  {
+    id: 'fr-interior',
+    title: 'Federal Register — Interior',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=interior-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-transportation',
+    title: 'Federal Register — Transportation',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=transportation-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-homeland',
+    title: 'Federal Register — Homeland Security',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=homeland-security-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-agriculture',
+    title: 'Federal Register — Agriculture',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=agriculture-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-commerce',
+    title: 'Federal Register — Commerce',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=commerce-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-energy',
+    title: 'Federal Register — Energy',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=energy-department`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+  {
+    id: 'fr-epa',
+    title: 'Federal Register — EPA',
+    url: `${FR}?conditions%5Bagencies%5D%5B%5D=environmental-protection-agency`,
+    kind: 'rss',
+    category: 'procurement',
+    jurisdiction: 'US Federal',
+    active: true,
+  },
+
+  // ── Temporarily disabled (bot challenge / 404) ──
   {
     id: 'grants-gov-new-by-agency',
     title: 'Grants.gov — New Opportunities by Agency',
@@ -51,8 +183,8 @@ export const PROCUREMENT_RSS_SEEDS: ProcurementIndexSeed[] = [
     kind: 'rss',
     category: 'grants',
     jurisdiction: 'US Federal',
-    notes: 'Official Grants.gov RSS; no login',
-    active: true,
+    notes: 'Disabled: returns HTML challenge instead of RSS (2026-07-31)',
+    active: false,
   },
   {
     id: 'grants-gov-new-by-category',
@@ -61,87 +193,9 @@ export const PROCUREMENT_RSS_SEEDS: ProcurementIndexSeed[] = [
     kind: 'rss',
     category: 'grants',
     jurisdiction: 'US Federal',
-    active: true,
+    notes: 'Disabled: HTML challenge',
+    active: false,
   },
-  {
-    id: 'grants-gov-mod-by-agency',
-    title: 'Grants.gov — Modified Opportunities by Agency',
-    url: 'https://www.grants.gov/rss/GG_OppModByAgency.xml',
-    kind: 'rss',
-    category: 'grants',
-    jurisdiction: 'US Federal',
-    active: true,
-  },
-  {
-    id: 'grants-gov-mod-by-category',
-    title: 'Grants.gov — Modified Opportunities by Category',
-    url: 'https://www.grants.gov/rss/GG_OppModByCategory.xml',
-    kind: 'rss',
-    category: 'grants',
-    jurisdiction: 'US Federal',
-    active: true,
-  },
-
-  // ── Federal Register (public notices; procurement-adjacent) ──
-  {
-    id: 'fr-notices',
-    title: 'Federal Register — Notices',
-    url: 'https://www.federalregister.gov/api/v1/documents.rss?conditions%5Btype%5D%5B%5D=NOTICE',
-    kind: 'rss',
-    category: 'government',
-    jurisdiction: 'US Federal',
-    notes: 'Official FR RSS via documents API path',
-    active: true,
-  },
-  {
-    id: 'fr-proposed-rules',
-    title: 'Federal Register — Proposed Rules',
-    url: 'https://www.federalregister.gov/api/v1/documents.rss?conditions%5Btype%5D%5B%5D=PRORULE',
-    kind: 'rss',
-    category: 'government',
-    jurisdiction: 'US Federal',
-    active: true,
-  },
-  {
-    id: 'fr-gsa',
-    title: 'Federal Register — GSA documents',
-    url: 'https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=general-services-administration',
-    kind: 'rss',
-    category: 'procurement',
-    jurisdiction: 'US Federal',
-    notes: 'GSA often posts acquisition-related notices',
-    active: true,
-  },
-  {
-    id: 'fr-hhs',
-    title: 'Federal Register — HHS documents',
-    url: 'https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=health-and-human-services-department',
-    kind: 'rss',
-    category: 'healthcare_procurement',
-    jurisdiction: 'US Federal',
-    notes: 'Useful for occupational health / clinical services adjacent RFPs',
-    active: true,
-  },
-  {
-    id: 'fr-va',
-    title: 'Federal Register — Veterans Affairs',
-    url: 'https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=veterans-affairs-department',
-    kind: 'rss',
-    category: 'healthcare_procurement',
-    jurisdiction: 'US Federal',
-    active: true,
-  },
-  {
-    id: 'fr-dod',
-    title: 'Federal Register — Defense Department',
-    url: 'https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5D%5B%5D=defense-department',
-    kind: 'rss',
-    category: 'procurement',
-    jurisdiction: 'US Federal',
-    active: true,
-  },
-
-  // ── Agency newsrooms (weak signal; still public, no login) ──
   {
     id: 'gsa-news',
     title: 'GSA Newsroom RSS',
@@ -149,18 +203,12 @@ export const PROCUREMENT_RSS_SEEDS: ProcurementIndexSeed[] = [
     kind: 'rss',
     category: 'government',
     jurisdiction: 'US Federal',
-    notes: 'Verify URL if GSA changes feed paths; disable if 404',
-    active: true,
+    notes: 'Disabled: HTTP 404',
+    active: false,
   },
 ]
 
-/**
- * Tier 2 — public portals (list pages visible without login).
- * Not RSS; intended for a future list-page / sitemap indexer.
- * Still recorded so the index catalog is complete when DATABASE_URL is set.
- */
 export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
-  // Federal
   {
     id: 'sam-gov-opportunities',
     title: 'SAM.gov Contract Opportunities',
@@ -168,7 +216,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
     kind: 'portal',
     category: 'procurement',
     jurisdiction: 'US Federal',
-    notes: 'Primary federal contract board. Public search UI; bulk/API may need free API key.',
+    notes: 'Primary federal contract board',
     active: true,
   },
   {
@@ -178,7 +226,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
     kind: 'api',
     category: 'procurement',
     jurisdiction: 'US Federal',
-    notes: 'Requires free SAM.gov public API key — best long-term federal indexer',
+    notes: 'Free public API key required for production indexer',
     active: true,
   },
   {
@@ -188,11 +236,8 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
     kind: 'portal',
     category: 'procurement',
     jurisdiction: 'US Federal',
-    notes: 'Awards / spend transparency, not open solicitations',
     active: true,
   },
-
-  // State e-procurement (public browse; posting may require login)
   {
     id: 'ca-caleprocure',
     title: 'California — Cal eProcure',
@@ -204,7 +249,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'tx-esbd',
-    title: 'Texas — Electronic State Business Daily (ESBD)',
+    title: 'Texas — ESBD',
     url: 'https://www.txsmartbuy.com/esbd',
     kind: 'portal',
     category: 'procurement',
@@ -231,7 +276,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'fl-mfmp',
-    title: 'Florida — MyFloridaMarketPlace / Vendor Information Portal',
+    title: 'Florida — MyFloridaMarketPlace',
     url: 'https://vendor.myfloridamarketplace.com/',
     kind: 'portal',
     category: 'procurement',
@@ -258,7 +303,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'co-vss',
-    title: 'Colorado — ColoradoVSS / BIDS',
+    title: 'Colorado — VSS',
     url: 'https://www.colorado.gov/vss',
     kind: 'portal',
     category: 'procurement',
@@ -267,7 +312,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'az-app',
-    title: 'Arizona — APP (Arizona Procurement Portal)',
+    title: 'Arizona — APP',
     url: 'https://app.az.gov/',
     kind: 'portal',
     category: 'procurement',
@@ -285,7 +330,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'nc-ips',
-    title: 'North Carolina — Interactive Purchasing System',
+    title: 'North Carolina — IPS',
     url: 'https://www.ips.state.nc.us/',
     kind: 'portal',
     category: 'procurement',
@@ -294,7 +339,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'pa-emarket',
-    title: 'Pennsylvania — PA eMarketplace',
+    title: 'Pennsylvania — eMarketplace',
     url: 'https://www.emarketplace.state.pa.us/',
     kind: 'portal',
     category: 'procurement',
@@ -303,7 +348,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'oh-procure',
-    title: 'Ohio — OhioBuys / Procurement',
+    title: 'Ohio — OhioBuys',
     url: 'https://ohiobuys.ohio.gov/',
     kind: 'portal',
     category: 'procurement',
@@ -339,7 +384,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'md-emaryland',
-    title: 'Maryland — eMaryland Marketplace Advantage',
+    title: 'Maryland — eMMA',
     url: 'https://emma.maryland.gov/',
     kind: 'portal',
     category: 'procurement',
@@ -357,7 +402,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'mn-swift',
-    title: 'Minnesota — SWIFT Supplier Portal',
+    title: 'Minnesota — SWIFT',
     url: 'https://supplier.swift.state.mn.us/',
     kind: 'portal',
     category: 'procurement',
@@ -374,100 +419,8 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
     active: true,
   },
   {
-    id: 'in-ionwave',
-    title: 'Indiana — IDOA Procurement',
-    url: 'https://www.in.gov/idoa/procurement/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Indiana',
-    active: true,
-  },
-  {
-    id: 'tn-edison',
-    title: 'Tennessee — Edison Supplier Portal',
-    url: 'https://www.tn.gov/generalservices/procurement.html',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Tennessee',
-    active: true,
-  },
-  {
-    id: 'mo-missouribuys',
-    title: 'Missouri — MissouriBUYS',
-    url: 'https://missouribuys.mo.gov/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Missouri',
-    active: true,
-  },
-  {
-    id: 'la-lapac',
-    title: 'Louisiana — LaPAC',
-    url: 'https://wwwcfprd.doa.louisiana.gov/osp/lapac/pubMain.cfm',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Louisiana',
-    active: true,
-  },
-  {
-    id: 'ok-okgov',
-    title: 'Oklahoma — OMES Central Purchasing',
-    url: 'https://oklahoma.gov/omes/services/purchasing.html',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Oklahoma',
-    active: true,
-  },
-  {
-    id: 'nm-gsa',
-    title: 'New Mexico — State Purchasing',
-    url: 'https://www.generalservices.state.nm.us/statepurchasing/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'New Mexico',
-    active: true,
-  },
-  {
-    id: 'nv-nevadaepro',
-    title: 'Nevada — NevadaEPro',
-    url: 'https://nevadaepro.com/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Nevada',
-    active: true,
-  },
-  {
-    id: 'ut-purchasing',
-    title: 'Utah — State Purchasing',
-    url: 'https://purchasing.utah.gov/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Utah',
-    active: true,
-  },
-  {
-    id: 'hi-hands',
-    title: 'Hawaii — HIePRO',
-    url: 'https://hiepro.ehawaii.gov/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Hawaii',
-    active: true,
-  },
-  {
-    id: 'ak-iris',
-    title: 'Alaska — IRIS / Procurement',
-    url: 'https://iris-vss.alaska.gov/',
-    kind: 'portal',
-    category: 'procurement',
-    jurisdiction: 'Alaska',
-    active: true,
-  },
-
-  // Large local / special districts often post publicly
-  {
     id: 'nyc-passport',
-    title: 'New York City — PASSPort / City Record',
+    title: 'NYC — PASSPort',
     url: 'https://www.nyc.gov/site/mocs/passport/about-passport.page',
     kind: 'portal',
     category: 'procurement',
@@ -476,7 +429,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'la-city',
-    title: 'City of Los Angeles — Business Assistance Virtual Network',
+    title: 'Los Angeles — BAVN',
     url: 'https://www.labavn.org/',
     kind: 'portal',
     category: 'procurement',
@@ -485,7 +438,7 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
   {
     id: 'chicago-procurement',
-    title: 'City of Chicago — Procurement Services',
+    title: 'Chicago — Procurement Services',
     url: 'https://www.chicago.gov/city/en/depts/dps.html',
     kind: 'portal',
     category: 'procurement',
@@ -494,18 +447,15 @@ export const PROCUREMENT_PORTAL_SEEDS: ProcurementIndexSeed[] = [
   },
 ]
 
-/** All seeds */
 export const ALL_PROCUREMENT_INDEX_SEEDS: ProcurementIndexSeed[] = [
   ...PROCUREMENT_RSS_SEEDS,
   ...PROCUREMENT_PORTAL_SEEDS,
 ]
 
-/** Only RSS rows suitable for the current feed fetcher */
 export function getActiveRssSeeds(): ProcurementIndexSeed[] {
   return PROCUREMENT_RSS_SEEDS.filter(s => s.active && s.kind === 'rss')
 }
 
-/** Map seed → shape expected by small-web addFeedSource */
 export function rssSeedToFeedSource(seed: ProcurementIndexSeed) {
   return {
     url: seed.url,
