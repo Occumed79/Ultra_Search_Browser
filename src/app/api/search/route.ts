@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildIntelligenceObject } from '../../../lib/intelligence'
 import { applyOccuMedSmartFilter } from '../../../lib/occumed-smart-filter'
+import { searchOccuMedSupplementalSources } from '../../../lib/occumed-supplemental-search'
 import { rescueProcurementCandidates, type ProcurementRescueDiagnostics } from '../../../lib/procurement-rescue'
 import { applyResultFeedbackRanking } from '../../../lib/result-feedback-ranking'
 import { applyIntentCandidateGate } from '../../../lib/search-intent-gate'
@@ -81,15 +82,39 @@ export async function POST(request: NextRequest) {
     // lens while preserving the user's exact subject, geography, and exclusions.
     const requestedLens: SearchLens = 'procurement'
     const plan = buildSearchPlan(body.settings)
-    const orchestration = await orchestrateSearch(query, requestedLens, plan)
+
+    // Run the normal orchestration and the previously missing buyer-language
+    // index pass at the same time. The supplemental pass searches Parallel with
+    // all capability-family variants and searches verified keyword, vector,
+    // structured metadata, and procurement-index records with the same variants.
+    const [orchestration, supplementalSearch] = await Promise.all([
+      orchestrateSearch(query, requestedLens, plan),
+      searchOccuMedSupplementalSources(query, { useVectorMemory: plan.useMemory }),
+    ])
     const lensRouting = orchestration.diagnostics.lensRouting
 
+    const initialCandidates = mergeUniqueResults([
+      orchestration.results,
+      supplementalSearch.results,
+    ])
     const initialGate = applyIntentCandidateGate(
       orchestration.normalizedQuery,
       'procurement',
-      orchestration.results,
+      initialCandidates,
       orchestration.diagnostics.semanticIntent
     )
+
+    if (supplementalSearch.results.length > 0) {
+      orchestration.sources = Array.from(new Set([
+        ...orchestration.sources,
+        ...supplementalSearch.results.map(result => `${result.source} · buyer-language-index`),
+      ]))
+    }
+    if (supplementalSearch.diagnostics.failures.length > 0) {
+      orchestration.failures.push(...supplementalSearch.diagnostics.failures.map(error =>
+        `supplemental RFP search: ${error}`
+      ))
+    }
 
     // Search focused procurement variants across independent public web indexes
     // on every request. Managed APIs have already run in the orchestrator, so
@@ -130,6 +155,7 @@ export async function POST(request: NextRequest) {
       && orchestration.diagnostics.memoryVectorMatches === 0
       && orchestration.diagnostics.smallWebMatches === 0
       && orchestration.diagnostics.marginaliaMatches === 0
+      && supplementalSearch.results.length === 0
       && procurementRescue.successfulTasks === 0
 
     if (orchestration.results.length === 0 && noExternalResults && orchestration.failures.length > 0) {
@@ -138,6 +164,7 @@ export async function POST(request: NextRequest) {
           .filter(run => run.status === 'failed')
           .slice(0, 5)
           .map(run => `${run.source}: ${run.error || 'request failed'}`),
+        ...supplementalSearch.diagnostics.failures.slice(0, 5),
         ...procurementRescue.failures.slice(0, 5),
       ].join('; ')
 
@@ -153,6 +180,7 @@ export async function POST(request: NextRequest) {
             ...orchestration.diagnostics,
             lensRouting,
             intentGate: finalGate.diagnostics,
+            supplementalSearch: supplementalSearch.diagnostics,
             procurementRescue,
           },
         },
@@ -173,8 +201,14 @@ export async function POST(request: NextRequest) {
     )
     orchestration.results = await applyResultFeedbackRanking(smartFilter.results)
 
+    const supplementalCount = supplementalSearch.diagnostics.parallel.resultCount
+      + supplementalSearch.diagnostics.keywordMatches
+      + supplementalSearch.diagnostics.vectorMatches
+      + supplementalSearch.diagnostics.metadataMatches
+      + supplementalSearch.diagnostics.smallWebMatches
     const noteParts = [
       `${finalGate.diagnostics.rejected + initialGate.diagnostics.rejected} candidates were excluded because they lacked procurement evidence or did not match the requested subject.`,
+      `The buyer-language index pass searched Parallel, verified memory, structured metadata, and the procurement index using ${supplementalSearch.diagnostics.queries.length} capability-family queries and returned ${supplementalCount} raw matches.`,
       `The public-web RFP pass attempted ${procurementRescue.attemptedTasks} targeted searches across independent indexes and retained ${procurementRescue.retainedCandidates} relevant candidates.`,
       orchestration.failures.length > 0
         ? `${orchestration.failures.length} retrieval tasks failed or returned unusable pages; successful sources were preserved.`
@@ -190,7 +224,7 @@ export async function POST(request: NextRequest) {
     )
 
     intelligence.summary = orchestration.results.length === 0
-      ? 'No relevant RFP, RFQ, solicitation, tender, bid, or comparable procurement notice was found after searching the public web and excluding generic or unrelated pages.'
+      ? 'No relevant RFP, RFQ, solicitation, tender, bid, or comparable procurement notice was found after searching the public web, Parallel, verified metadata, and local procurement indexes and excluding generic or unrelated pages.'
       : undefined
     intelligence.confidence = 0
     intelligence.signals = []
@@ -198,6 +232,8 @@ export async function POST(request: NextRequest) {
     const runtimeMs = Date.now() - startedAt
     const enabledSources = Array.from(new Set([
       ...orchestration.diagnostics.managedSearch.configuredProviders,
+      ...(supplementalSearch.diagnostics.parallel.configured ? ['parallel-expanded-index'] : []),
+      ...(supplementalSearch.diagnostics.metadataMatches > 0 ? ['memory-metadata'] : []),
       ...(orchestration.diagnostics.geminiGroundedSearch.configured ? ['gemini-google-search'] : []),
       'bing-rss',
       'duckduckgo-lite',
@@ -228,6 +264,7 @@ export async function POST(request: NextRequest) {
           enabledSources,
           lensRouting,
           intentGate: finalGate.diagnostics,
+          supplementalSearch: supplementalSearch.diagnostics,
           procurementRescue,
           smartFilter: smartFilter.diagnostics,
           productMode: 'rfp-finder-www',
@@ -282,6 +319,7 @@ export async function POST(request: NextRequest) {
       summary: intelligence.summary,
       expandedQueries: Array.from(new Set([
         ...orchestration.diagnostics.queryVariants.map(variant => variant.query),
+        ...supplementalSearch.diagnostics.queries,
         ...procurementRescue.queries,
       ])).filter(variant => variant.toLowerCase() !== orchestration.normalizedQuery.toLowerCase()),
       signals: [],
@@ -297,6 +335,7 @@ export async function POST(request: NextRequest) {
         safeSearch: plan.safeSearch,
         failures: orchestration.failures,
         intentGate: finalGate.diagnostics,
+        supplementalSearch: supplementalSearch.diagnostics,
         procurementRescue,
         smartFilter: smartFilter.diagnostics,
         productMode: 'rfp-finder-www',
