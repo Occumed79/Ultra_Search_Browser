@@ -1,8 +1,6 @@
 /**
  * Federal Register public JSON API → procurement index entries
  * https://www.federalregister.gov/developers/documentation/api/v1
- *
- * More reliable than RSS from some cloud egress IPs.
  */
 
 import crypto from 'crypto'
@@ -12,18 +10,14 @@ import { addFeedSource, storeFeedEntries, updateFeedLastFetched } from './small-
 const FR_JSON = 'https://www.federalregister.gov/api/v1/documents.json'
 
 export interface FrIngestTarget {
-  /** Stable source key */
   id: string
   title: string
   category: string
-  /** FR type: NOTICE | RULE | PRORULE | ... */
   type?: string
-  /** FR agency slug e.g. general-services-administration */
   agency?: string
   perPage?: number
 }
 
-/** Default targets to load into the local index */
 export const FR_INGEST_TARGETS: FrIngestTarget[] = [
   { id: 'fr-json-notices', title: 'FR JSON — Notices', category: 'government', type: 'NOTICE', perPage: 100 },
   { id: 'fr-json-prorule', title: 'FR JSON — Proposed Rules', category: 'government', type: 'PRORULE', perPage: 50 },
@@ -34,12 +28,21 @@ export const FR_INGEST_TARGETS: FrIngestTarget[] = [
   { id: 'fr-json-dod', title: 'FR JSON — Defense', category: 'procurement', agency: 'defense-department', perPage: 50 },
   { id: 'fr-json-labor', title: 'FR JSON — Labor', category: 'procurement', agency: 'labor-department', perPage: 50 },
   { id: 'fr-json-dhs', title: 'FR JSON — Homeland Security', category: 'procurement', agency: 'homeland-security-department', perPage: 50 },
-  { id: 'fr-json-dot', title: 'FR JSON — Transportation', category: 'procurement', agency: 'transportation-department', perPage: 50 },
-  { id: 'fr-json-epa', title: 'FR JSON — EPA', category: 'procurement', agency: 'environmental-protection-agency', perPage: 50 },
+  { id: 'fr-json-dot', title: 'FR JSON — Transportation', category: 'transit', agency: 'transportation-department', perPage: 50 },
+  { id: 'fr-json-epa', title: 'FR JSON — EPA', category: 'water_utility', agency: 'environmental-protection-agency', perPage: 50 },
   { id: 'fr-json-energy', title: 'FR JSON — Energy', category: 'procurement', agency: 'energy-department', perPage: 50 },
   { id: 'fr-json-usda', title: 'FR JSON — Agriculture', category: 'procurement', agency: 'agriculture-department', perPage: 50 },
   { id: 'fr-json-commerce', title: 'FR JSON — Commerce', category: 'procurement', agency: 'commerce-department', perPage: 50 },
   { id: 'fr-json-interior', title: 'FR JSON — Interior', category: 'procurement', agency: 'interior-department', perPage: 50 },
+  { id: 'fr-json-ed', title: 'FR JSON — Education', category: 'education', agency: 'education-department', perPage: 50 },
+  { id: 'fr-json-hud', title: 'FR JSON — HUD', category: 'procurement', agency: 'housing-and-urban-development-department', perPage: 50 },
+  { id: 'fr-json-justice', title: 'FR JSON — Justice', category: 'procurement', agency: 'justice-department', perPage: 50 },
+  { id: 'fr-json-treasury', title: 'FR JSON — Treasury', category: 'procurement', agency: 'treasury-department', perPage: 50 },
+  { id: 'fr-json-nasa', title: 'FR JSON — NASA', category: 'procurement', agency: 'national-aeronautics-and-space-administration', perPage: 30 },
+  { id: 'fr-json-nrc', title: 'FR JSON — Nuclear Regulatory Commission', category: 'procurement', agency: 'nuclear-regulatory-commission', perPage: 30 },
+  { id: 'fr-json-ssa', title: 'FR JSON — Social Security Administration', category: 'procurement', agency: 'social-security-administration', perPage: 30 },
+  { id: 'fr-json-opm', title: 'FR JSON — OPM', category: 'procurement', agency: 'personnel-management-office', perPage: 30 },
+  { id: 'fr-json-sba', title: 'FR JSON — Small Business Administration', category: 'procurement', agency: 'small-business-administration', perPage: 30 },
 ]
 
 function sourceUrl(target: FrIngestTarget): string {
