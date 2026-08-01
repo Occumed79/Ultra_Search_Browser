@@ -1,62 +1,60 @@
 #!/usr/bin/env tsx
 // ─── BACKGROUND JOB TO FETCH RSS FEEDS ───
-// Run this periodically (e.g., via cron) to keep small web index fresh
+// Run periodically (cron / Render cron) to keep the local procurement index fresh.
+// Requires DATABASE_URL.
 
-import { initializeSmallWeb, addFeedSource, fetchAllFeeds, getFeedSources } from '../src/lib/small-web'
-
-// Default feed sources to add
-const DEFAULT_FEEDS = [
-  {
-    url: 'https://www.whitehouse.gov/feed/',
-    title: 'White House Briefing Room',
-    category: 'government',
-    active: true,
-    lastFetched: null,
-  },
-  {
-    url: 'https://www.federalregister.gov/api/v1/notice.rss',
-    title: 'Federal Register',
-    category: 'government',
-    active: true,
-    lastFetched: null,
-  },
-  {
-    url: 'https://sam.gov/api/prod/sgs/v1/opportunities/rss',
-    title: 'SAM.gov Opportunities',
-    category: 'procurement',
-    active: true,
-    lastFetched: null,
-  },
-]
+import {
+  initializeSmallWeb,
+  addFeedSource,
+  fetchAllFeeds,
+  getFeedSources,
+} from '../src/lib/small-web'
+import {
+  getActiveRssSeeds,
+  rssSeedToFeedSource,
+  ALL_PROCUREMENT_INDEX_SEEDS,
+} from '../src/lib/procurement-index-seeds'
 
 async function main() {
-  console.log('=== RSS FEED FETCHER START ===\n')
+  console.log('=== PROCUREMENT INDEX FEED FETCHER ===\n')
+
+  if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL is required. Set it, then re-run this script.')
+    process.exit(1)
+  }
 
   try {
-    // Initialize small web tables
-    console.log('Initializing small web tables...')
+    console.log('Initializing small-web / index tables...')
     await initializeSmallWeb()
-    console.log('✓ Tables initialized\n')
+    console.log('✓ Tables ready\n')
 
-    // Add default feed sources if none exist
-    const existingSources = await getFeedSources()
-    if (existingSources.length === 0) {
-      console.log('Adding default feed sources...')
-      for (const feed of DEFAULT_FEEDS) {
-        await addFeedSource(feed)
-        console.log(`  ✓ Added: ${feed.title}`)
-      }
-      console.log()
-    } else {
-      console.log(`Found ${existingSources.length} existing feed sources\n`)
+    const rssSeeds = getActiveRssSeeds()
+    console.log(`Seeding ${rssSeeds.length} active RSS sources from procurement-index-seeds...`)
+    for (const seed of rssSeeds) {
+      await addFeedSource(rssSeedToFeedSource(seed))
+      console.log(`  ✓ ${seed.title}`)
+      console.log(`      ${seed.url}`)
     }
+    console.log()
 
-    // Fetch all feeds
-    console.log('Fetching all feeds...')
+    const portalCount = ALL_PROCUREMENT_INDEX_SEEDS.filter(s => s.kind === 'portal' || s.kind === 'api').length
+    console.log(
+      `Note: ${portalCount} portal/API seeds are catalogued in src/lib/procurement-index-seeds.ts`
+    )
+    console.log('      but are not fetched as RSS yet (list-page indexer is a later step).\n')
+
+    const sources = await getFeedSources()
+    console.log(`Active feed_sources in DB: ${sources.length}`)
+    for (const s of sources) {
+      console.log(`  - [${s.category}] ${s.title}`)
+    }
+    console.log()
+
+    console.log('Fetching all active feeds...')
     await fetchAllFeeds()
     console.log('✓ Feed fetch complete\n')
 
-    console.log('=== RSS FEED FETCHER END ===')
+    console.log('=== DONE ===')
   } catch (error) {
     console.error('Feed fetcher failed:', error)
     process.exit(1)
