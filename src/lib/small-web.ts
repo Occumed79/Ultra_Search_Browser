@@ -1,5 +1,7 @@
 // ─── SMALL WEB / PROCUREMENT INDEX ───
 // Curated index stored in Postgres (Neon) for always-on retrieval
+// Sources: Federal Register JSON, SAM.gov API (optional key), RSS seeds
+// No HTML crawler.
 
 import crypto from 'crypto'
 import pg from 'pg'
@@ -267,6 +269,18 @@ export async function storeFeedEntries(entries: FeedEntry[]): Promise<number> {
   return stored
 }
 
+const PROCUREMENT_CATEGORIES = [
+  'procurement',
+  'grants',
+  'healthcare_procurement',
+  'government',
+  'education',
+  'fire_ems',
+  'water_utility',
+  'transit',
+  'special_district',
+]
+
 export async function searchSmallWeb(query: string, category?: string, limit: number = 10): Promise<FeedEntry[]> {
   const client = getPool()
   try {
@@ -280,7 +294,7 @@ export async function searchSmallWeb(query: string, category?: string, limit: nu
     if (category) {
       if (category === 'procurement') {
         sql += ` AND category = ANY($2::text[])`
-        params.push(['procurement', 'grants', 'healthcare_procurement', 'government'])
+        params.push(PROCUREMENT_CATEGORIES)
       } else {
         sql += ` AND category = $2`
         params.push(category)
@@ -386,27 +400,29 @@ export async function getIndexStats(): Promise<IndexStats> {
 }
 
 /**
- * Bootstrap: tables + Federal Register JSON ingest (primary) + optional RSS seeds.
+ * Bootstrap: tables + FR JSON + SAM.gov API (if key) + optional RSS.
+ * No HTML crawler.
  */
 export async function bootstrapProcurementIndex(): Promise<{
   seeded: number
   fetch: { feeds: number; entries: number; failures: string[] }
   frJson?: { attempted: number; stored: number; failures: string[] }
+  samGov?: { attempted: boolean; stored: number; skipped?: string; error?: string }
   stats: IndexStats
 }> {
   await initializeSmallWeb()
 
-  // Primary path: Federal Register JSON API (reliable from cloud hosts)
   const { ingestFederalRegisterTargets } = await import('./federal-register-index')
   const fr = await ingestFederalRegisterTargets()
 
-  // Secondary: any remaining active RSS seeds (may be empty if FR-only)
+  const { ingestSamGov } = await import('./sam-gov-index')
+  const sam = await ingestSamGov({ daysBack: 14, limit: 200 })
+
   const { getActiveRssSeeds, rssSeedToFeedSource } = await import('./procurement-index-seeds')
   const seeds = getActiveRssSeeds()
   for (const seed of seeds) {
     await addFeedSource(rssSeedToFeedSource(seed))
   }
-  // Skip RSS re-fetch of FR URLs that already failed; only attempt non-FR seeds
   const rssOnly = seeds.filter(s => !s.url.includes('federalregister.gov'))
   let rssEntries = 0
   const rssFailures: string[] = []
@@ -420,15 +436,20 @@ export async function bootstrapProcurementIndex(): Promise<{
     }
   }
 
+  const failures = [...fr.failures, ...rssFailures]
+  if (sam.error) failures.push(`SAM.gov: ${sam.error}`)
+  if (sam.skipped) failures.push(`SAM.gov: ${sam.skipped}`)
+
   const stats = await getIndexStats()
   return {
-    seeded: seeds.length + fr.attempted,
+    seeded: seeds.length + fr.attempted + (sam.attempted ? 1 : 0),
     fetch: {
-      feeds: fr.attempted + rssOnly.length,
-      entries: fr.stored + rssEntries,
-      failures: [...fr.failures, ...rssFailures],
+      feeds: fr.attempted + rssOnly.length + (sam.attempted ? 1 : 0),
+      entries: fr.stored + rssEntries + sam.stored,
+      failures,
     },
     frJson: { attempted: fr.attempted, stored: fr.stored, failures: fr.failures },
+    samGov: sam,
     stats,
   }
 }
