@@ -1,6 +1,7 @@
-// ─── SMALL WEB ENRICHMENT LAYER ───
-// Curated RSS/Atom/blog index for non-commercial content
+// ─── SMALL WEB / PROCUREMENT INDEX ───
+// Curated RSS/Atom index stored in Postgres (Neon) for always-on retrieval
 
+import crypto from 'crypto'
 import pg from 'pg'
 
 const { Pool: PgPool } = pg
@@ -26,166 +27,219 @@ export interface FeedSource {
   lastFetched: Date | null
 }
 
+export interface IndexStats {
+  sources: number
+  activeSources: number
+  entries: number
+  byCategory: Record<string, number>
+  lastFetchedAt: string | null
+}
+
 let pool: pg.Pool | null = null
 
 function getPool(): pg.Pool {
   if (!pool) {
     const databaseUrl = process.env.DATABASE_URL
     if (!databaseUrl) {
-      throw new Error('DATABASE_URL is required for small web enrichment')
+      throw new Error('DATABASE_URL is required for small web / procurement index')
     }
-    pool = new PgPool({ connectionString: databaseUrl })
+    pool = new PgPool({
+      connectionString: databaseUrl,
+      ssl: databaseUrl.includes('sslmode=') || databaseUrl.includes('neon.tech')
+        ? { rejectUnauthorized: false }
+        : undefined,
+      max: 4,
+    })
   }
   return pool
 }
 
-/**
- * Initialize small web tables
- */
 export async function initializeSmallWeb(): Promise<void> {
   const client = getPool()
-  try {
-    // Feed sources table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS feed_sources (
-        url TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        category TEXT NOT NULL,
-        active BOOLEAN DEFAULT true,
-        last_fetched TIMESTAMP,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS feed_sources (
+      url TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      active BOOLEAN DEFAULT true,
+      last_fetched TIMESTAMP,
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `)
 
-    // Feed entries table
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS feed_entries (
-        id TEXT PRIMARY KEY,
-        url TEXT NOT NULL,
-        title TEXT NOT NULL,
-        description TEXT,
-        content TEXT,
-        author TEXT,
-        published_at TIMESTAMP,
-        feed_url TEXT NOT NULL,
-        feed_title TEXT NOT NULL,
-        category TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        CONSTRAINT fk_feed FOREIGN KEY (feed_url) REFERENCES feed_sources(url) ON DELETE CASCADE
-      )
-    `)
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS feed_entries (
+      id TEXT PRIMARY KEY,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      content TEXT,
+      author TEXT,
+      published_at TIMESTAMP,
+      feed_url TEXT NOT NULL,
+      feed_title TEXT NOT NULL,
+      category TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      CONSTRAINT fk_feed FOREIGN KEY (feed_url) REFERENCES feed_sources(url) ON DELETE CASCADE
+    )
+  `)
 
-    // Indexes for fast search
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS feed_entries_content_idx 
-      ON feed_entries USING gin(to_tsvector('english', title || ' ' || description || ' ' || COALESCE(content, '')))
-    `)
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS feed_entries_category_idx 
-      ON feed_entries (category)
-    `)
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS feed_entries_published_idx 
-      ON feed_entries (published_at DESC)
-    `)
-
-    console.log('Small web tables initialized')
-  } catch (error) {
-    console.error('Failed to initialize small web tables:', error)
-    throw error
-  }
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS feed_entries_content_idx
+    ON feed_entries USING gin(to_tsvector('english', title || ' ' || COALESCE(description, '') || ' ' || COALESCE(content, '')))
+  `)
+  await client.query(`CREATE INDEX IF NOT EXISTS feed_entries_category_idx ON feed_entries (category)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS feed_entries_published_idx ON feed_entries (published_at DESC)`)
+  await client.query(`CREATE INDEX IF NOT EXISTS feed_entries_url_idx ON feed_entries (url)`)
 }
 
-/**
- * Add a feed source
- */
 export async function addFeedSource(source: FeedSource): Promise<void> {
   const client = getPool()
-  try {
-    await client.query(
-      `
-      INSERT INTO feed_sources (url, title, category, active, last_fetched)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (url) DO UPDATE SET
-        title = EXCLUDED.title,
-        category = EXCLUDED.category,
-        active = EXCLUDED.active,
-        last_fetched = EXCLUDED.last_fetched
-      `,
-      [source.url, source.title, source.category, source.active, source.lastFetched]
-    )
-  } catch (error) {
-    console.error('Failed to add feed source:', error)
-    throw error
-  }
+  await client.query(
+    `
+    INSERT INTO feed_sources (url, title, category, active, last_fetched)
+    VALUES ($1, $2, $3, $4, $5)
+    ON CONFLICT (url) DO UPDATE SET
+      title = EXCLUDED.title,
+      category = EXCLUDED.category,
+      active = EXCLUDED.active
+    `,
+    [source.url, source.title, source.category, source.active, source.lastFetched]
+  )
+}
+
+function stripTags(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/&/g, '&')
+    .replace(/"/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function tagText(block: string, tag: string): string {
+  const cdata = block.match(new RegExp(`<${tag}[^>]*>\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*</${tag}>`, 'i'))
+  if (cdata?.[1]) return cdata[1].trim()
+  const plain = block.match(new RegExp(`<${tag}[^>]*>([\s\S]*?)</${tag}>`, 'i'))
+  if (plain?.[1]) return stripTags(plain[1])
+  return ''
+}
+
+function linkFromBlock(block: string): string {
+  const href = block.match(/<link[^>]*href=["']([^"']+)["'][^>]*\/?>/i)
+  if (href?.[1]) return href[1].trim()
+  const text = tagText(block, 'link')
+  if (text.startsWith('http')) return text
+  const guid = tagText(block, 'guid')
+  if (guid.startsWith('http')) return guid
+  const id = tagText(block, 'id')
+  if (id.startsWith('http')) return id
+  return ''
+}
+
+function stableEntryId(feedUrl: string, url: string, title: string): string {
+  return crypto.createHash('sha256').update(`${feedUrl}|${url}|${title}`).digest('hex').slice(0, 40)
 }
 
 /**
- * Fetch and parse RSS/Atom feed
+ * Parse RSS 2.0 or Atom XML into feed entries.
  */
-export async function fetchFeed(feedUrl: string): Promise<FeedEntry[]> {
+export function parseFeedXml(xml: string, feedUrl: string, category: string): FeedEntry[] {
+  const entries: FeedEntry[] = []
+  const channelTitle =
+    tagText(xml.slice(0, 4000), 'title') || feedUrl
+
+  const itemBlocks =
+    xml.match(/<item\b[^>]*>[\s\S]*?<\/item>/gi)
+    || xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/gi)
+    || []
+
+  for (const block of itemBlocks) {
+    const title = tagText(block, 'title')
+    const link = linkFromBlock(block)
+    if (!title || !link) continue
+    try {
+      const parsed = new URL(link)
+      if (!['http:', 'https:'].includes(parsed.protocol)) continue
+    } catch {
+      continue
+    }
+
+    const description =
+      tagText(block, 'description')
+      || tagText(block, 'summary')
+      || tagText(block, 'content')
+      || ''
+    const author =
+      tagText(block, 'dc:creator')
+      || tagText(block, 'author')
+      || tagText(block, 'creator')
+      || ''
+    const pubRaw =
+      tagText(block, 'pubDate')
+      || tagText(block, 'published')
+      || tagText(block, 'updated')
+      || tagText(block, 'dc:date')
+      || ''
+    const publishedAt = pubRaw ? new Date(pubRaw) : new Date()
+    const safeDate = Number.isNaN(publishedAt.getTime()) ? new Date() : publishedAt
+
+    entries.push({
+      id: stableEntryId(feedUrl, link, title),
+      url: link,
+      title: title.slice(0, 500),
+      description: description.slice(0, 2000),
+      content: description.slice(0, 4000),
+      author: author.slice(0, 200),
+      publishedAt: safeDate,
+      feedUrl,
+      feedTitle: channelTitle.slice(0, 300),
+      category,
+    })
+  }
+
+  return entries
+}
+
+export async function fetchFeed(feedUrl: string, category = 'procurement'): Promise<FeedEntry[]> {
   try {
     const response = await fetch(feedUrl, {
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20_000),
       headers: {
-        'User-Agent': 'UltraSearchBrowser/1.0',
+        'User-Agent': 'UltraSearchBrowser/1.0 (procurement-index; +https://github.com/Occumed79/Ultra_Search_Browser)',
+        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
       },
+      cache: 'no-store',
+      redirect: 'follow',
     })
 
     if (!response.ok) {
-      throw new Error(`Feed fetch error: ${response.status}`)
+      throw new Error(`Feed fetch HTTP ${response.status}`)
     }
 
     const text = await response.text()
-    
-    // Simple XML parsing for RSS/Atom
-    // In production, use a proper XML parser like 'fast-xml-parser' or 'rss-parser'
-    const entries: FeedEntry[] = []
-    
-    // Try to parse as RSS
-    const items = text.match(/<item[^>]*>[\s\S]*?<\/item>/gi) || []
-    const channelTitle = text.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || feedUrl
-    
-    items.forEach((item, index) => {
-      const title = item.match(/<title[^>]*>([^<]+)<\/title>/i)?.[1] || ''
-      const link = item.match(/<link[^>]*>([^<]+)<\/link>/i)?.[1] || 
-                   item.match(/<link[^>]*href="([^"]+)"/i)?.[1] || ''
-      const description = item.match(/<description[^>]*>([^<]+)<\/description>/i)?.[1] || ''
-      const pubDate = item.match(/<pubDate[^>]*>([^<]+)<\/pubDate>/i)?.[1] || ''
-      const author = item.match(/<author[^>]*>([^<]+)<\/author>/i)?.[1] || ''
-      
-      if (title && link) {
-        entries.push({
-          id: `${feedUrl}-${index}`,
-          url: link,
-          title,
-          description: description.replace(/<[^>]*>/g, ''),
-          content: description.replace(/<[^>]*>/g, ''),
-          author,
-          publishedAt: pubDate ? new Date(pubDate) : new Date(),
-          feedUrl,
-          feedTitle: channelTitle,
-          category: 'general',
-        })
-      }
-    })
+    // Reject obvious HTML challenge pages
+    if (/<!DOCTYPE html>/i.test(text) && !/<rss\b|<feed\b/i.test(text)) {
+      throw new Error('Feed returned HTML instead of RSS/Atom (blocked or wrong URL)')
+    }
 
-    return entries
+    return parseFeedXml(text, feedUrl, category)
   } catch (error) {
     console.error(`Failed to fetch feed ${feedUrl}:`, error)
     return []
   }
 }
 
-/**
- * Store feed entries in database
- */
-export async function storeFeedEntries(entries: FeedEntry[]): Promise<void> {
+export async function storeFeedEntries(entries: FeedEntry[]): Promise<number> {
+  if (!entries.length) return 0
   const client = getPool()
-  try {
-    for (const entry of entries) {
+  let stored = 0
+  for (const entry of entries) {
+    try {
       await client.query(
         `
         INSERT INTO feed_entries (id, url, title, description, content, author, published_at, feed_url, feed_title, category)
@@ -194,7 +248,8 @@ export async function storeFeedEntries(entries: FeedEntry[]): Promise<void> {
           title = EXCLUDED.title,
           description = EXCLUDED.description,
           content = EXCLUDED.content,
-          published_at = EXCLUDED.published_at
+          published_at = EXCLUDED.published_at,
+          category = EXCLUDED.category
         `,
         [
           entry.id,
@@ -209,43 +264,45 @@ export async function storeFeedEntries(entries: FeedEntry[]): Promise<void> {
           entry.category,
         ]
       )
+      stored += 1
+    } catch (error) {
+      console.warn('Failed to store entry', entry.url, error)
     }
-  } catch (error) {
-    console.error('Failed to store feed entries:', error)
-    throw error
   }
+  return stored
 }
 
-/**
- * Search small web entries
- */
 export async function searchSmallWeb(query: string, category?: string, limit: number = 10): Promise<FeedEntry[]> {
   const client = getPool()
   try {
+    const params: unknown[] = [query]
     let sql = `
       SELECT id, url, title, description, content, author, published_at, feed_url, feed_title, category
       FROM feed_entries
-      WHERE to_tsvector('english', title || ' ' || description || ' ' || COALESCE(content, '')) @@ plainto_tsquery('english', $1)
+      WHERE to_tsvector('english', title || ' ' || COALESCE(description, '') || ' ' || COALESCE(content, ''))
+            @@ plainto_tsquery('english', $1)
     `
-    const params: any[] = [query]
-    
     if (category) {
-      sql += ` AND category = $2`
-      params.push(category)
+      // procurement searches also include grants + healthcare_procurement
+      if (category === 'procurement') {
+        sql += ` AND category = ANY($2::text[])`
+        params.push(['procurement', 'grants', 'healthcare_procurement', 'government'])
+      } else {
+        sql += ` AND category = $2`
+        params.push(category)
+      }
     }
-    
-    sql += ` ORDER BY published_at DESC LIMIT $${params.length + 1}`
+    sql += ` ORDER BY published_at DESC NULLS LAST LIMIT $${params.length + 1}`
     params.push(limit)
-    
+
     const result = await client.query(sql, params)
-    
     return result.rows.map(row => ({
       id: row.id,
       url: row.url,
       title: row.title,
-      description: row.description,
-      content: row.content,
-      author: row.author,
+      description: row.description || '',
+      content: row.content || '',
+      author: row.author || '',
       publishedAt: row.published_at,
       feedUrl: row.feed_url,
       feedTitle: row.feed_title,
@@ -257,13 +314,12 @@ export async function searchSmallWeb(query: string, category?: string, limit: nu
   }
 }
 
-/**
- * Get all feed sources
- */
 export async function getFeedSources(): Promise<FeedSource[]> {
   const client = getPool()
   try {
-    const result = await client.query('SELECT url, title, category, active, last_fetched FROM feed_sources WHERE active = true')
+    const result = await client.query(
+      'SELECT url, title, category, active, last_fetched FROM feed_sources WHERE active = true ORDER BY title'
+    )
     return result.rows.map(row => ({
       url: row.url,
       title: row.title,
@@ -277,37 +333,79 @@ export async function getFeedSources(): Promise<FeedSource[]> {
   }
 }
 
-/**
- * Update feed source last fetched time
- */
 export async function updateFeedLastFetched(feedUrl: string): Promise<void> {
   const client = getPool()
   try {
-    await client.query(
-      'UPDATE feed_sources SET last_fetched = NOW() WHERE url = $1',
-      [feedUrl]
-    )
+    await client.query('UPDATE feed_sources SET last_fetched = NOW() WHERE url = $1', [feedUrl])
   } catch (error) {
     console.error('Failed to update feed last fetched:', error)
   }
 }
 
-/**
- * Fetch all active feeds and store entries
- */
-export async function fetchAllFeeds(): Promise<void> {
+export async function fetchAllFeeds(): Promise<{ feeds: number; entries: number; failures: string[] }> {
   const sources = await getFeedSources()
-  
+  let entries = 0
+  const failures: string[] = []
+
   for (const source of sources) {
     try {
-      const entries = await fetchFeed(source.url)
-      if (entries.length > 0) {
-        await storeFeedEntries(entries)
+      const items = await fetchFeed(source.url, source.category)
+      if (items.length > 0) {
+        const stored = await storeFeedEntries(items)
+        entries += stored
         await updateFeedLastFetched(source.url)
-        console.log(`Fetched ${entries.length} entries from ${source.title}`)
+        console.log(`Fetched ${items.length} (stored ${stored}) from ${source.title}`)
+      } else {
+        failures.push(`${source.title}: no parseable items`)
       }
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      failures.push(`${source.title}: ${msg}`)
       console.error(`Failed to fetch feed ${source.url}:`, error)
     }
   }
+
+  return { feeds: sources.length, entries, failures }
+}
+
+export async function getIndexStats(): Promise<IndexStats> {
+  const client = getPool()
+  const sources = await client.query(
+    'SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE active)::int AS active FROM feed_sources'
+  )
+  const entries = await client.query('SELECT COUNT(*)::int AS total FROM feed_entries')
+  const byCat = await client.query(
+    'SELECT category, COUNT(*)::int AS n FROM feed_entries GROUP BY category'
+  )
+  const last = await client.query(
+    'SELECT MAX(last_fetched) AS last FROM feed_sources'
+  )
+  const byCategory: Record<string, number> = {}
+  for (const row of byCat.rows) byCategory[row.category] = row.n
+  return {
+    sources: sources.rows[0]?.total ?? 0,
+    activeSources: sources.rows[0]?.active ?? 0,
+    entries: entries.rows[0]?.total ?? 0,
+    byCategory,
+    lastFetchedAt: last.rows[0]?.last ? new Date(last.rows[0].last).toISOString() : null,
+  }
+}
+
+/**
+ * Bootstrap: ensure tables, seed active RSS sources, fetch all.
+ */
+export async function bootstrapProcurementIndex(): Promise<{
+  seeded: number
+  fetch: { feeds: number; entries: number; failures: string[] }
+  stats: IndexStats
+}> {
+  const { getActiveRssSeeds, rssSeedToFeedSource } = await import('./procurement-index-seeds')
+  await initializeSmallWeb()
+  const seeds = getActiveRssSeeds()
+  for (const seed of seeds) {
+    await addFeedSource(rssSeedToFeedSource(seed))
+  }
+  const fetch = await fetchAllFeeds()
+  const stats = await getIndexStats()
+  return { seeded: seeds.length, fetch, stats }
 }
