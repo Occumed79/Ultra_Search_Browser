@@ -12,6 +12,8 @@ export interface IntentGateDiagnostics {
 const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|request for tenders?|rft|invitation to bid|ifb|sources sought|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
 const PROCUREMENT_PORTALS = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
 const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory|therapy)\b/i
+const BROAD_OCCUMED_SERVICE_QUERY = /\b(?:employment|employee|occupational|workforce|pre employment|medical|fitness for duty|fit for duty)\b.*\b(?:evaluation|evaluations|exam|exams|examination|examinations|physical|physicals|screening|screenings|health|medicine|clearance)\b/i
+const NON_MEDICAL_EMPLOYMENT_QUERY = /\b(?:performance|appraisal|employee review|human resources|hr evaluation|training evaluation)\b/i
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'by', 'for', 'from', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with',
   'find', 'search', 'show', 'request', 'requests', 'proposal', 'proposals', 'quotation', 'quotations', 'tender', 'tenders',
@@ -42,6 +44,21 @@ function subjectMatches(
   text: string,
   semanticIntent?: SemanticIntentPlan
 ): boolean {
+  const normalizedQuery = normalize(query)
+
+  // Buyers rarely call this work “employment evaluations.” They use terms such
+  // as occupational health, employee health, pre-employment physicals, fitness
+  // for duty, and medical surveillance. For a broad medical-employment query,
+  // treat any positive Occu-Med capability signal as a subject match while still
+  // excluding non-medical HR/performance-evaluation searches.
+  if (
+    BROAD_OCCUMED_SERVICE_QUERY.test(normalizedQuery)
+    && !NON_MEDICAL_EMPLOYMENT_QUERY.test(normalizedQuery)
+    && assessOccuMedRfpText(text).status !== 'irrelevant'
+  ) {
+    return true
+  }
+
   const subjectGroups = semanticIntent?.conceptGroups.filter(group =>
     group.required && group.kind !== 'format' && group.kind !== 'geography' && group.kind !== 'time'
   ) || []
