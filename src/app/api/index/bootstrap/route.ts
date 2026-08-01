@@ -5,6 +5,7 @@ import {
   initializeSmallWeb,
 } from '../../../../lib/small-web'
 import { seedCatalogSummary } from '../../../../lib/procurement-index-seeds'
+import { samApiKeyConfigured } from '../../../../lib/sam-gov-index'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -23,7 +24,12 @@ function authorized(request: NextRequest): boolean {
 export async function GET() {
   if (!process.env.DATABASE_URL) {
     return NextResponse.json(
-      { error: 'DATABASE_URL not configured', index: null, catalog: seedCatalogSummary() },
+      {
+        error: 'DATABASE_URL not configured',
+        index: null,
+        catalog: seedCatalogSummary(),
+        samGov: { configured: samApiKeyConfigured() },
+      },
       { status: 503 }
     )
   }
@@ -34,11 +40,15 @@ export async function GET() {
       ok: true,
       index: stats,
       catalog: seedCatalogSummary(),
+      samGov: { configured: samApiKeyConfigured() },
       checkedAt: new Date().toISOString(),
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return NextResponse.json({ error: message, catalog: seedCatalogSummary() }, { status: 500 })
+    return NextResponse.json(
+      { error: message, catalog: seedCatalogSummary(), samGov: { configured: samApiKeyConfigured() } },
+      { status: 500 }
+    )
   }
 }
 
@@ -63,6 +73,7 @@ export async function POST(request: NextRequest) {
       entriesStored: result.fetch.entries,
       failures: result.fetch.failures,
       frJson: result.frJson,
+      samGov: result.samGov,
       index: result.stats,
       catalog: seedCatalogSummary(),
       runtimeMs: Date.now() - startedAt,
