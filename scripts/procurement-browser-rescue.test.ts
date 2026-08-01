@@ -18,7 +18,9 @@ test('procurement browser rescue fans targeted variants across resilient sources
     { source: 'bing', query: queries[2] },
     { source: 'bing', query: queries[3] },
     { source: 'duckduckgo', query: queries[0] },
-    { source: 'mojeek', query: queries[0] },
+    { source: 'mojeek', query: queries[1] },
+    { source: 'yahoo', query: queries[0] },
+    { source: 'brave', query: queries[1] },
   ])
 })
 

@@ -162,10 +162,15 @@ export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDe
     }
   }
 
-  if (!noHardDisqualifier && relevance.matchedCapabilities.length === 0) {
+  // Hard exclusions are decisive even when a page incidentally contains medical
+  // or occupational-health words. An EHR/software procurement is not an Occu-Med
+  // opportunity merely because its inherited package text mentions examinations.
+  if (!noHardDisqualifier) {
     return {
       decision: 'REJECT',
-      reason: relevance.reason,
+      reason: relevance.exclusions.length
+        ? `Outside Occu-Med's service model: ${relevance.exclusions.slice(0, 3).join(', ')}.`
+        : relevance.reason,
       ...common,
     }
   }

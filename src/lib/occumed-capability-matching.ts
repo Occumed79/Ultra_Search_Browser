@@ -23,6 +23,17 @@ export function normalizeOccuMedLanguage(value: string): string {
     .trim()
 }
 
+function unique(values: string[]): string[] {
+  const seen = new Set<string>()
+  return values.filter(value => {
+    const cleaned = value.replace(/\s+/g, ' ').trim()
+    const key = normalizeOccuMedLanguage(cleaned)
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function tokens(value: string): string[] {
   return Array.from(new Set(
     normalizeOccuMedLanguage(value)
@@ -137,6 +148,39 @@ export function buyerLanguageTermsForQuery(
   }
 
   return output
+}
+
+/**
+ * Shared retrieval variants for every discovery path: managed API indexes,
+ * SearXNG/browser search, verified keyword memory, metadata, Small Web, and
+ * semantic memory. Keep these as natural-language queries so providers and
+ * Postgres full-text search do not need to interpret search-engine operators.
+ */
+export function buyerLanguageRetrievalQueries(
+  query: string,
+  limit = 4
+): string[] {
+  const aliases = buyerLanguageTermsForQuery(query, 8)
+  const groups = matchOccuMedCapabilityGroups(query, 2)
+  const procurementSuffix = 'RFP RFQ solicitation bid tender'
+  const variants = [
+    query,
+    groups[0] ? `${groups[0].label} ${procurementSuffix}` : '',
+    aliases[0] ? `${aliases[0]} ${procurementSuffix}` : '',
+    aliases[1] ? `${aliases[1]} procurement solicitation` : '',
+    aliases[2] ? `${aliases[2]} request for proposals` : '',
+  ]
+  return unique(variants).slice(0, Math.max(1, limit))
+}
+
+/**
+ * A single expanded semantic sentence for embedding/vector retrieval. This
+ * preserves the user's wording while adding equivalent buyer terminology.
+ */
+export function buyerLanguageSemanticQuery(query: string): string {
+  const aliases = buyerLanguageTermsForQuery(query, 8)
+  if (aliases.length === 0) return query
+  return `${query}. Equivalent buyer language: ${aliases.join(', ')}. Active RFP RFQ solicitation bid tender.`
 }
 
 export function alignOccuMedSemanticIntent(

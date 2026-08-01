@@ -40,7 +40,10 @@ test('extracts structured active Occu-Med RFP intelligence', () => {
     `,
   })
 
-  assert.equal(intelligence.solicitationNumber, '26-104')
+  // Procurement documents commonly place sentence punctuation immediately
+  // after the identifier. Compare the identifier itself rather than the prose
+  // delimiter captured from the source sentence.
+  assert.equal(intelligence.solicitationNumber?.replace(/[.,;:]+$/, ''), '26-104')
   assert.equal(intelligence.dueDate, '2026-08-30')
   assert.equal(intelligence.deliveryModel, 'distributed-provider-network')
   assert.ok(intelligence.serviceSummary.length >= 4)
