@@ -32,18 +32,19 @@ import { routeSearchLens, type LensRoutingDecision } from './search-intent-routi
 import { planSemanticIntent, type SemanticIntentPlan } from './semantic-intent'
 import { filterSafeResults, type LiveSearchSource, type SearchPlan } from './search-settings'
 import { rerankResults } from './semantic-search'
-import { searchSearXNG } from './searxng'
+import { isSearxngConfigured, searchSearXNG } from './searxng'
 import { searchSmallWeb } from './small-web'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
 const TASK_TIMEOUT_MS = 3_500
 const MEMORY_TIMEOUT_MS = 4_000
 const OPTIONAL_SOURCE_TIMEOUT_MS = 3_500
+const SEARXNG_TIMEOUT_MS = 10_500
 
 export interface SourceRunDiagnostic {
   source: string
   query: string
-  purpose: QueryPurpose | 'managed-api' | 'gemini-grounded' | 'memory' | 'small-web'
+  purpose: QueryPurpose | 'managed-api' | 'gemini-grounded' | 'memory' | 'small-web' | 'always-on'
   status: 'success' | 'empty' | 'failed'
   resultCount: number
   runtimeMs: number
@@ -62,6 +63,8 @@ export interface SearchOrchestrationDiagnostics {
   memoryVectorMatches: number
   smallWebMatches: number
   marginaliaMatches: number
+  searxngAlwaysOn: boolean
+  localIndexAlwaysOn: boolean
   semanticIntent: SemanticIntentPlan
   lensRouting: LensRoutingDecision
   cloudflareRerank: CloudflareRerankDiagnostics
@@ -189,6 +192,9 @@ function lensBonus(result: ScrapedResult, lens: SearchLens): number {
   if (lens === 'provider' && /clinic|provider|medical center|occupational health|occupational medicine/.test(text)) score += 24
   if (lens === 'academic' && (domain.endsWith('.edu') || /journal|abstract|doi|research/.test(text))) score += 24
   if (lens === 'technical' && /github\.com|stackoverflow\.com|documentation|api reference/.test(`${domain} ${text}`)) score += 24
+  // Prefer results that came from our always-on local index / SearXNG when they look procurement-relevant
+  if (result.source === 'SearXNG' && lens === 'procurement' && /\b(rfp|rfq|bid|solicitation)\b/.test(text)) score += 8
+  if (result.source === 'small-web' || result.source === 'procurement-index') score += 12
   return score
 }
 
@@ -217,9 +223,10 @@ function sourceExecutor(source: LiveSearchSource, options: SearchEngineOptions) 
 
 async function runLiveTask(task: RetrievalTask, options: SearchEngineOptions): Promise<TaskSuccess> {
   const startedAt = Date.now()
+  const timeout = task.source === 'searxng' ? SEARXNG_TIMEOUT_MS : TASK_TIMEOUT_MS
   const data = await withTimeout(
     sourceExecutor(task.source, options)(task.query),
-    TASK_TIMEOUT_MS,
+    timeout,
     `${task.source} search`
   )
   const results = data.results
@@ -265,6 +272,49 @@ function addResults(
   }
 }
 
+/**
+ * Always-on SearXNG tasks: run every search when SEARXNG_URL is configured,
+ * independent of user source toggles and independent of managed API health.
+ */
+function buildAlwaysOnSearxngTasks(
+  variants: Array<{ query: string; purpose: QueryPurpose }>,
+  normalizedQuery: string
+): RetrievalTask[] {
+  if (!isSearxngConfigured()) return []
+
+  const preferred = variants.filter(v =>
+    v.purpose === 'broad'
+    || v.purpose === 'intent-core'
+    || v.purpose === 'portal'
+    || v.purpose === 'official'
+    || v.purpose === 'freshness'
+  )
+  const chosen = (preferred.length > 0 ? preferred : variants).slice(0, 3)
+  const tasks: RetrievalTask[] = chosen.map(variant => ({
+    source: 'searxng' as const,
+    query: variant.query,
+    purpose: variant.purpose,
+  }))
+
+  // Ensure the literal user query always hits SearXNG at least once
+  if (!tasks.some(t => t.query.toLowerCase() === normalizedQuery.toLowerCase())) {
+    tasks.unshift({
+      source: 'searxng',
+      query: normalizedQuery,
+      purpose: 'broad',
+    })
+  }
+
+  // Dedupe by query
+  const seen = new Set<string>()
+  return tasks.filter(task => {
+    const key = task.query.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 4)
+}
+
 export async function orchestrateSearch(
   rawQuery: string,
   requestedLens: SearchLens,
@@ -304,12 +354,28 @@ export async function orchestrateSearch(
     orchestration.tasks,
     automaticBrowserFallbackEnabled
   )
-  const legacyTasks = orchestration.tasks.filter(task =>
-    task.source === 'searxng'
-    || legacyHtmlSearchEnabled
-    || automaticBrowserTasks.includes(task)
+
+  // User-selected / legacy live tasks (excluding SearXNG — handled as always-on below)
+  const planLiveTasks = orchestration.tasks.filter(task =>
+    (task.source !== 'searxng' && (legacyHtmlSearchEnabled || automaticBrowserTasks.includes(task)))
+    || (task.source === 'searxng' && plan.liveSources.includes('searxng'))
   )
-  const livePromise = Promise.allSettled(legacyTasks.map(task => runLiveTask(task, options)))
+
+  // ALWAYS-ON: SearXNG runs on every request when configured
+  const alwaysOnSearxng = buildAlwaysOnSearxngTasks(
+    orchestration.variants,
+    normalizedQuery
+  )
+  const searxngAlwaysOn = alwaysOnSearxng.length > 0
+
+  // Merge without duplicate source:query pairs
+  const liveTaskKeys = new Set(planLiveTasks.map(t => `${t.source}:${t.query.toLowerCase()}`))
+  const mergedLiveTasks = [
+    ...planLiveTasks,
+    ...alwaysOnSearxng.filter(t => !liveTaskKeys.has(`${t.source}:${t.query.toLowerCase()}`)),
+  ]
+
+  const livePromise = Promise.allSettled(mergedLiveTasks.map(task => runLiveTask(task, options)))
   const managedPromise = searchManagedWeb(normalizedQuery, {
     safeSearch: plan.safeSearch,
     preferredLanguage: plan.preferredLanguage,
@@ -324,14 +390,18 @@ export async function orchestrateSearch(
       )
       .map(variant => variant.query),
   })
-  const keywordPromise = plan.useMemory
+
+  const hasDatabase = Boolean(process.env.DATABASE_URL)
+  // ALWAYS-ON: local index (keyword memory + small-web feeds) whenever DB is configured
+  const localIndexAlwaysOn = hasDatabase
+  const keywordPromise = hasDatabase
     ? withTimeout(keywordSearchStoredResults(normalizedQuery, lens, operators, 20), MEMORY_TIMEOUT_MS, 'keyword memory search').catch(() => [] as ScrapedResult[])
     : Promise.resolve([] as ScrapedResult[])
-  const vectorPromise = plan.useMemory
+  const vectorPromise = hasDatabase && plan.useMemory
     ? withTimeout(vectorSearchStoredResults(normalizedQuery, lens, 12), MEMORY_TIMEOUT_MS, 'vector memory search').catch(() => [] as ScrapedResult[])
     : Promise.resolve([] as ScrapedResult[])
-  const smallWebPromise: Promise<Awaited<ReturnType<typeof searchSmallWeb>>> = plan.useMemory && Boolean(process.env.DATABASE_URL)
-    ? withTimeout(searchSmallWeb(normalizedQuery, smallWebCategory(lens), 10), MEMORY_TIMEOUT_MS, 'small web search').catch(() => [])
+  const smallWebPromise: Promise<Awaited<ReturnType<typeof searchSmallWeb>>> = hasDatabase
+    ? withTimeout(searchSmallWeb(normalizedQuery, smallWebCategory(lens), 15), MEMORY_TIMEOUT_MS, 'small web / procurement index search').catch(() => [])
     : Promise.resolve([])
   const useMarginalia = process.env.ENABLE_MARGINALIA !== 'false'
     && ['web', 'provider', 'pricing', 'academic', 'news'].includes(lens)
@@ -374,17 +444,17 @@ export async function orchestrateSearch(
   const rawTexts: string[] = []
 
   liveSettled.forEach((settled, index) => {
-    const task = legacyTasks[index]
+    const task = mergedLiveTasks[index]
     if (settled.status === 'rejected') {
       const error = settled.reason instanceof Error ? settled.reason.message : String(settled.reason)
       failures.push(`${task.source}: ${error}`)
       sourceRuns.push({
         source: task.source,
         query: task.query,
-        purpose: task.purpose,
+        purpose: task.source === 'searxng' && searxngAlwaysOn ? 'always-on' : task.purpose,
         status: 'failed',
         resultCount: 0,
-        runtimeMs: TASK_TIMEOUT_MS,
+        runtimeMs: task.source === 'searxng' ? SEARXNG_TIMEOUT_MS : TASK_TIMEOUT_MS,
         error,
       })
       return
@@ -394,14 +464,18 @@ export async function orchestrateSearch(
     sourceRuns.push({
       source: task.source,
       query: task.query,
-      purpose: task.purpose,
+      purpose: task.source === 'searxng' && searxngAlwaysOn ? 'always-on' : task.purpose,
       status: 'success',
       resultCount: data.results.length,
       runtimeMs,
     })
-    sourceLabels.add(`${task.source} · ${task.purpose}`)
+    sourceLabels.add(
+      task.source === 'searxng'
+        ? 'SearXNG · always-on'
+        : `${task.source} · ${task.purpose}`
+    )
     if (data.text.trim()) rawTexts.push(data.text)
-    addResults(occurrences, data.results, task.source, task.query, task.purpose)
+    addResults(occurrences, data.results, task.source === 'searxng' ? 'SearXNG' : task.source, task.query, task.purpose)
   })
 
   for (const result of managedSearch.results) {
@@ -456,9 +530,9 @@ export async function orchestrateSearch(
       sourceLabels.add(`${provider} · managed-api`)
     }
   }
-  if (!managedCapabilities.configured && legacyTasks.length === 0 && !geminiGroundedSearch.diagnostics.configured) {
+  if (!managedCapabilities.configured && mergedLiveTasks.length === 0 && !geminiGroundedSearch.diagnostics.configured) {
     failures.push(
-      'managed search: no supported API search provider is configured and legacy HTML search is disabled'
+      'managed search: no supported API search provider is configured and no always-on sources returned results'
     )
   }
 
@@ -474,18 +548,29 @@ export async function orchestrateSearch(
       domain: (() => {
         try { return new URL(entry.url).hostname.replace(/^www\./, '') } catch { return '' }
       })(),
-      source: 'small-web',
+      source: entry.category === 'procurement' ? 'procurement-index' : 'small-web',
       rank: index + 1,
       score: 0,
     })),
-    'small-web',
+    entryCategorySource(smallWebEntries),
     normalizedQuery
   )
 
-  if (memoryKeyword.length) sourceLabels.add('memory-keyword')
+  if (memoryKeyword.length) sourceLabels.add('memory-keyword · always-on')
   if (memoryVector.length) sourceLabels.add('memory-vector')
-  if (smallWebEntries.length) sourceLabels.add('small-web')
+  if (smallWebEntries.length) sourceLabels.add('procurement-index / small-web · always-on')
   if (marginalia.results.length) sourceLabels.add('marginalia')
+
+  if (localIndexAlwaysOn) {
+    sourceRuns.push({
+      source: 'procurement-index',
+      query: normalizedQuery,
+      purpose: 'always-on',
+      status: smallWebEntries.length > 0 || memoryKeyword.length > 0 ? 'success' : 'empty',
+      resultCount: smallWebEntries.length + memoryKeyword.length,
+      runtimeMs: 0,
+    })
+  }
 
   let results: ScrapedResult[] = Array.from(occurrences.values()).map(({ result, sources, queries, purposes }) => {
     const signalScore = scoreSignals(`${result.title} ${result.description}`, result.url)
@@ -566,9 +651,6 @@ export async function orchestrateSearch(
   }
 
   results.sort((left, right) => right.score - left.score)
-  // Keep a wider candidate pool until the complete-query smart filter runs.
-  // Truncating to the display count here allowed high-ranked one-word matches
-  // to crowd out more relevant full-query results before filtering.
   results = results
     .slice(0, searchCandidateLimit(plan.resultsPerPage))
     .map((result, index) => ({ ...result, rank: index + 1 }))
@@ -587,7 +669,7 @@ export async function orchestrateSearch(
       queryVariants: orchestration.variants.map(({ query, purpose }) => ({ query, purpose })),
       variantBudget: orchestration.variantBudget,
       taskBudget: orchestration.taskBudget,
-      attemptedLiveTasks: legacyTasks.length
+      attemptedLiveTasks: mergedLiveTasks.length
         + managedSearch.diagnostics.attemptedRequests
         + (geminiGroundedSearch.diagnostics.attempted ? 1 : 0),
       successfulLiveTasks: liveSettled.filter(item => item.status === 'fulfilled').length
@@ -600,6 +682,8 @@ export async function orchestrateSearch(
       memoryVectorMatches: memoryVector.length,
       smallWebMatches: smallWebEntries.length,
       marginaliaMatches: marginalia.results.length,
+      searxngAlwaysOn,
+      localIndexAlwaysOn,
       semanticIntent,
       lensRouting,
       cloudflareRerank: cloudflare.diagnostics,
@@ -610,4 +694,9 @@ export async function orchestrateSearch(
       sourceRuns,
     },
   }
+}
+
+function entryCategorySource(entries: Array<{ category?: string }>): string {
+  if (entries.some(e => e.category === 'procurement')) return 'procurement-index'
+  return 'small-web'
 }
