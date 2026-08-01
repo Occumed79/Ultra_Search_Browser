@@ -3,6 +3,7 @@ import {
   type SmartFilterDiagnostics,
   type SmartFilterOptions,
 } from './smart-filter'
+import { alignOccuMedSemanticIntent } from './occumed-capability-matching'
 import { augmentOccuMedSemanticIntent } from './occumed-rfp-profile'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
@@ -19,8 +20,11 @@ export async function applyOccuMedSmartFilter(
     return applySmartFilter(query, lens, results, displayLimit, options)
   }
 
+  const augmentedIntent = augmentOccuMedSemanticIntent(options.semanticIntent)
+  const alignedIntent = alignOccuMedSemanticIntent(query, augmentedIntent)
+
   return applySmartFilter(query, lens, results, displayLimit, {
     ...options,
-    semanticIntent: augmentOccuMedSemanticIntent(options.semanticIntent),
+    semanticIntent: alignedIntent,
   })
 }

@@ -12,11 +12,12 @@ export function buildProcurementBrowserRescueTasks(
   if (targeted.length === 0) return []
 
   const exactQuery = targeted[0]
+  const expandedQuery = targeted[1] || exactQuery
   return [
     ...targeted.map(query => ({ source: 'bing' as const, query })),
     { source: 'duckduckgo' as const, query: exactQuery },
-    { source: 'mojeek' as const, query: exactQuery },
+    { source: 'mojeek' as const, query: expandedQuery },
     { source: 'yahoo' as const, query: exactQuery },
-    { source: 'brave' as const, query: exactQuery },
+    { source: 'brave' as const, query: expandedQuery },
   ]
 }
