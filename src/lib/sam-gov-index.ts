@@ -1,20 +1,22 @@
 /**
- * SAM.gov Get Opportunities Public API → local index entries
+ * SAM.gov Get Opportunities Public API → Occu-Med–relevant index entries
  * https://open.gsa.gov/api/get-opportunities-public-api/
  *
- * Free API key required (Account Details on sam.gov).
  * Env: SAM_API_KEY or SAM_GOV_API_KEY
- *
- * This is a structured feed — not a crawler.
+ * Structured feed only — not a crawler.
  */
 
 import crypto from 'crypto'
 import type { FeedEntry } from './small-web'
 import { addFeedSource, storeFeedEntries, updateFeedLastFetched } from './small-web'
+import {
+  OCCUMED_NAICS,
+  OCCUMED_SAM_TITLE_QUERIES,
+  isOccuMedRelevant,
+} from './occumed-index-filters'
 
 const SAM_SEARCH = 'https://api.sam.gov/opportunities/v2/search'
 
-/** Procurement type codes (ptype) */
 export const SAM_PTYPES = {
   solicitation: 'o',
   combined: 'k',
@@ -26,16 +28,11 @@ export const SAM_PTYPES = {
 } as const
 
 export interface SamIngestOptions {
-  /** Days of posted history to pull (default 14, max ~365 but we keep small for rate limits) */
   daysBack?: number
-  /** Max records per request (API max 1000, default 100) */
-  limit?: number
-  /** Optional keyword filter */
-  title?: string
-  /** Optional NAICS filter */
-  ncode?: string
-  /** Optional ptype filters; default solicitations + combined + sources sought + special */
-  ptypes?: string[]
+  /** Max records per API call (default 50 to stay under daily limits) */
+  limitPerQuery?: number
+  /** Max total API calls this run (default 12) */
+  maxQueries?: number
 }
 
 export function samApiKeyConfigured(): boolean {
@@ -80,13 +77,6 @@ function opportunityUrl(row: Record<string, unknown>): string {
   return 'https://sam.gov/opportunities'
 }
 
-function categoryForType(typeLabel: string): string {
-  const t = typeLabel.toLowerCase()
-  if (t.includes('award')) return 'procurement'
-  if (t.includes('health') || t.includes('medical')) return 'healthcare_procurement'
-  return 'procurement'
-}
-
 function mapOpportunity(row: Record<string, unknown>, feedUrl: string, feedTitle: string): FeedEntry | null {
   const title = asString(row.title)
   if (!title) return null
@@ -117,6 +107,8 @@ function mapOpportunity(row: Record<string, unknown>, feedUrl: string, feedTitle
     .join(' — ')
     .slice(0, 2000)
 
+  if (!isOccuMedRelevant({ title, description, naics })) return null
+
   return {
     id: entryId(noticeId || solNum || url, solNum, title),
     url,
@@ -127,43 +119,53 @@ function mapOpportunity(row: Record<string, unknown>, feedUrl: string, feedTitle
     publishedAt,
     feedUrl,
     feedTitle,
-    category: categoryForType(typeLabel),
+    category: 'healthcare_procurement',
   }
 }
 
-/**
- * Fetch one page of SAM opportunities for a date window.
- */
-export async function fetchSamOpportunities(options: SamIngestOptions = {}): Promise<FeedEntry[]> {
-  const apiKey = getApiKey()
-  if (!apiKey) {
-    throw new Error('SAM_API_KEY (or SAM_GOV_API_KEY) is not configured')
+interface SamQuery {
+  title?: string
+  ncode?: string
+}
+
+function buildOccuMedQueries(maxQueries: number): SamQuery[] {
+  const queries: SamQuery[] = []
+  // Prefer NAICS first (high precision), then title keywords
+  for (const ncode of OCCUMED_NAICS) {
+    if (queries.length >= maxQueries) break
+    queries.push({ ncode })
   }
+  for (const title of OCCUMED_SAM_TITLE_QUERIES) {
+    if (queries.length >= maxQueries) break
+    queries.push({ title })
+  }
+  return queries
+}
 
-  const daysBack = Math.min(Math.max(options.daysBack ?? 14, 1), 90)
-  const limit = Math.min(Math.max(options.limit ?? 100, 1), 1000)
-  const to = new Date()
-  const from = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
-  const postedFrom = formatMmDdYyyy(from)
-  const postedTo = formatMmDdYyyy(to)
-
-  const ptypes =
-    options.ptypes ??
-    [SAM_PTYPES.solicitation, SAM_PTYPES.combined, SAM_PTYPES.sourcesSought, SAM_PTYPES.specialNotice]
-
+async function fetchSamPage(
+  apiKey: string,
+  postedFrom: string,
+  postedTo: string,
+  limit: number,
+  query: SamQuery
+): Promise<Record<string, unknown>[]> {
   const u = new URL(SAM_SEARCH)
   u.searchParams.set('api_key', apiKey)
   u.searchParams.set('postedFrom', postedFrom)
   u.searchParams.set('postedTo', postedTo)
   u.searchParams.set('limit', String(limit))
   u.searchParams.set('offset', '0')
-  for (const p of ptypes) u.searchParams.append('ptype', p)
-  if (options.title) u.searchParams.set('title', options.title)
-  if (options.ncode) u.searchParams.set('ncode', options.ncode)
-
-  // Stable source key without embedding the secret
-  const feedUrl = `${SAM_SEARCH}?postedFrom=${postedFrom}&postedTo=${postedTo}&limit=${limit}`
-  const feedTitle = 'SAM.gov Contract Opportunities'
+  for (const p of [
+    SAM_PTYPES.solicitation,
+    SAM_PTYPES.combined,
+    SAM_PTYPES.sourcesSought,
+    SAM_PTYPES.specialNotice,
+    SAM_PTYPES.presolicitation,
+  ]) {
+    u.searchParams.append('ptype', p)
+  }
+  if (query.title) u.searchParams.set('title', query.title)
+  if (query.ncode) u.searchParams.set('ncode', query.ncode)
 
   const response = await fetch(u.toString(), {
     signal: AbortSignal.timeout(45_000),
@@ -187,46 +189,74 @@ export async function fetchSamOpportunities(options: SamIngestOptions = {}): Pro
       : Array.isArray(payload.results)
         ? payload.results
         : []
-
-  const entries: FeedEntry[] = []
-  for (const raw of rows) {
-    const mapped = mapOpportunity(asRecord(raw), feedUrl, feedTitle)
-    if (mapped) entries.push(mapped)
-  }
-  return entries
+  return rows.map(asRecord)
 }
 
 /**
- * Ingest SAM opportunities into Neon when API key is present.
- * Skips cleanly (no throw) when key is missing so bootstrap still works.
+ * Fetch Occu-Med–relevant SAM opportunities (multiple targeted API queries).
  */
+export async function fetchSamOpportunities(options: SamIngestOptions = {}): Promise<FeedEntry[]> {
+  const apiKey = getApiKey()
+  if (!apiKey) {
+    throw new Error('SAM_API_KEY (or SAM_GOV_API_KEY) is not configured')
+  }
+
+  const daysBack = Math.min(Math.max(options.daysBack ?? 30, 1), 90)
+  const limit = Math.min(Math.max(options.limitPerQuery ?? 50, 1), 200)
+  const maxQueries = Math.min(Math.max(options.maxQueries ?? 12, 1), 25)
+
+  const to = new Date()
+  const from = new Date(Date.now() - daysBack * 24 * 60 * 60 * 1000)
+  const postedFrom = formatMmDdYyyy(from)
+  const postedTo = formatMmDdYyyy(to)
+
+  const sourceUrl = 'https://api.sam.gov/opportunities/v2/search'
+  const feedTitle = 'SAM.gov — Occu-Med relevant'
+  const byId = new Map<string, FeedEntry>()
+
+  const queries = buildOccuMedQueries(maxQueries)
+  for (const q of queries) {
+    try {
+      const rows = await fetchSamPage(apiKey, postedFrom, postedTo, limit, q)
+      for (const row of rows) {
+        const mapped = mapOpportunity(row, sourceUrl, feedTitle)
+        if (mapped) byId.set(mapped.id, mapped)
+      }
+    } catch (error) {
+      console.warn('SAM query failed', q, error)
+      // Stop on hard rate-limit so we don't burn the daily quota
+      const msg = error instanceof Error ? error.message : String(error)
+      if (/HTTP 429|rate/i.test(msg)) break
+    }
+  }
+
+  return [...byId.values()]
+}
+
 export async function ingestSamGov(
   options: SamIngestOptions = {}
-): Promise<{ attempted: boolean; stored: number; skipped?: string; error?: string; totalRecords?: number }> {
+): Promise<{ attempted: boolean; stored: number; skipped?: string; error?: string }> {
   if (!samApiKeyConfigured()) {
     return { attempted: false, stored: 0, skipped: 'SAM_API_KEY not set' }
   }
 
-  const feedTitle = 'SAM.gov Contract Opportunities'
-  // Canonical source row (no secret in URL)
   const sourceUrl = 'https://api.sam.gov/opportunities/v2/search'
+  const feedTitle = 'SAM.gov — Occu-Med relevant'
 
   try {
     await addFeedSource({
       url: sourceUrl,
       title: feedTitle,
-      category: 'procurement',
+      category: 'healthcare_procurement',
       active: true,
       lastFetched: null,
     })
 
     const entries = await fetchSamOpportunities(options)
-    // Re-point feedUrl on entries to the stable source URL for FK
-    const normalized = entries.map(e => ({ ...e, feedUrl: sourceUrl, feedTitle }))
-    if (!normalized.length) {
-      return { attempted: true, stored: 0, error: 'empty result set' }
+    if (!entries.length) {
+      return { attempted: true, stored: 0, error: 'no Occu-Med–relevant opportunities in window' }
     }
-    const stored = await storeFeedEntries(normalized)
+    const stored = await storeFeedEntries(entries)
     await updateFeedLastFetched(sourceUrl)
     return { attempted: true, stored }
   } catch (error) {
