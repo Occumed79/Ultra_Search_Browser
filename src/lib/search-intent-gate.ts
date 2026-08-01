@@ -1,3 +1,4 @@
+import { matchOccuMedCapabilityGroups } from './occumed-capability-matching'
 import { assessOccuMedRfpText } from './occumed-rfp-profile'
 import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult, SearchLens } from '../types/search'
@@ -45,16 +46,28 @@ function subjectMatches(
   semanticIntent?: SemanticIntentPlan
 ): boolean {
   const normalizedQuery = normalize(query)
+  const queryCapabilities = new Set(
+    matchOccuMedCapabilityGroups(query, 3).map(group => group.label)
+  )
+  const candidateCapability = assessOccuMedRfpText(text)
 
-  // Buyers rarely call this work “employment evaluations.” They use terms such
-  // as occupational health, employee health, pre-employment physicals, fitness
-  // for duty, and medical surveillance. For a broad medical-employment query,
-  // treat any positive Occu-Med capability signal as a subject match while still
-  // excluding non-medical HR/performance-evaluation searches.
+  // A buyer may describe the same capability with a different phrase. Match
+  // within the requested capability family—for example, pre-deployment health
+  // assessment can match medical readiness or contractor medical clearance,
+  // and program management can match occupational-health administration.
+  if (
+    queryCapabilities.size > 0
+    && candidateCapability.matchedCapabilities.some(label => queryCapabilities.has(label))
+  ) {
+    return true
+  }
+
+  // Preserve a broader fallback for vague medical-employment searches while
+  // keeping non-medical HR/performance-evaluation queries outside the product.
   if (
     BROAD_OCCUMED_SERVICE_QUERY.test(normalizedQuery)
     && !NON_MEDICAL_EMPLOYMENT_QUERY.test(normalizedQuery)
-    && assessOccuMedRfpText(text).status !== 'irrelevant'
+    && candidateCapability.status !== 'irrelevant'
   ) {
     return true
   }
