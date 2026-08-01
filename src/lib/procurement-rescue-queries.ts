@@ -1,4 +1,4 @@
-import { OCCUMED_CAPABILITY_GROUPS } from './occumed-rfp-profile'
+import { buyerLanguageTermsForQuery } from './occumed-capability-matching'
 import type { SemanticIntentPlan } from './semantic-intent'
 
 const PROCUREMENT_WORDS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/gi
@@ -38,25 +38,6 @@ function semanticSubjects(intent?: SemanticIntentPlan): string[] {
   ]).map(normalizeSpace).filter(Boolean)))
 }
 
-function occuMedDiscoverySubjects(subject: string): string[] {
-  const subjectTokens = new Set(normalize(subject).split(' ').filter(token => token.length >= 3))
-  const candidates = OCCUMED_CAPABILITY_GROUPS.flatMap(group => [
-    ...group.terms,
-    group.label,
-  ]).map(normalizeSpace).filter(Boolean)
-
-  const overlapScore = (value: string): number => {
-    const tokens = normalize(value).split(' ').filter(token => token.length >= 3)
-    return tokens.reduce((score, token) => score + (subjectTokens.has(token) ? 1 : 0), 0)
-  }
-
-  return Array.from(new Set(candidates)).sort((left, right) => {
-    const scoreDelta = overlapScore(right) - overlapScore(left)
-    if (scoreDelta !== 0) return scoreDelta
-    return left.length - right.length
-  })
-}
-
 export function buildProcurementRescueQueries(
   query: string,
   intent?: SemanticIntentPlan
@@ -64,31 +45,34 @@ export function buildProcurementRescueQueries(
   const subject = procurementSubject(query)
   const quotedSubject = quotedPhrase(subject)
   const currentYear = new Date().getUTCFullYear()
-  const aliases = semanticSubjects(intent)
-    .filter(value => value.toLowerCase() !== subject.toLowerCase())
-    .slice(0, 8)
-  const profileAliases = occuMedDiscoverySubjects(subject)
-    .filter(value => !subject.toLowerCase().includes(value.toLowerCase()))
-    .slice(0, 10)
+  const semanticAliases = semanticSubjects(intent)
+    .filter(value => normalize(value) !== normalize(subject))
+  const buyerAliases = buyerLanguageTermsForQuery(subject, 10)
+  const discoveryTerms = Array.from(new Map(
+    [...buyerAliases, ...semanticAliases]
+      .filter(Boolean)
+      .filter(value => normalize(value) !== normalize(subject))
+      .map(value => [normalize(value), value])
+  ).values()).slice(0, 8)
+  const familyClause = discoveryTerms.length > 0
+    ? `(${discoveryTerms.slice(0, 6).map(quotedPhrase).join(' OR ')})`
+    : quotedSubject
 
-  const profileQueries = profileAliases.map(alias =>
+  const individualAliasQueries = discoveryTerms.map(alias =>
     `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
   )
-  const semanticQueries = aliases.map(alias =>
-    `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation)`
-  )
 
-  // The browser rescue executes only a small query budget. Keep the literal
-  // subject, one official-site variant, and two Occu-Med vocabulary aliases in
-  // the first four slots so broad wording such as “employment evaluations” does
-  // not prevent searches for the terms buyers actually use.
+  // The browser rescue executes only four Bing variants. Use those slots for
+  // genuinely different discovery strategies: the literal phrase, the related
+  // buyer-language family, government pages using that family, and direct PDF
+  // solicitations. This avoids wasting the budget on punctuation variants of
+  // the same phrase.
   return Array.from(new Set([
     `${quotedSubject} (RFP OR RFQ OR solicitation OR bid OR tender) ${currentYear}`,
-    `site:.gov ${quotedSubject} (RFP OR RFQ OR solicitation OR "sources sought")`,
-    ...profileQueries.slice(0, 2),
+    `${familyClause} (RFP OR RFQ OR solicitation OR bid OR tender OR "sources sought") ${currentYear}`,
+    `site:.gov ${familyClause} (RFP OR RFQ OR solicitation OR "sources sought")`,
+    `filetype:pdf ${familyClause} ("request for proposals" OR RFP OR RFQ OR IFB OR solicitation)`,
     `intitle:RFP ${quotedSubject}`,
-    `filetype:pdf ${quotedSubject} ("request for proposals" OR RFP OR RFQ OR IFB)`,
-    ...semanticQueries,
-    ...profileQueries.slice(2),
+    ...individualAliasQueries,
   ]))
 }
