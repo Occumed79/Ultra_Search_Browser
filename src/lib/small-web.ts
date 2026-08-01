@@ -1,5 +1,5 @@
 // ─── SMALL WEB / PROCUREMENT INDEX ───
-// Curated RSS/Atom index stored in Postgres (Neon) for always-on retrieval
+// Curated index stored in Postgres (Neon) for always-on retrieval
 
 import crypto from 'crypto'
 import pg from 'pg'
@@ -145,13 +145,9 @@ function stableEntryId(feedUrl: string, url: string, title: string): string {
   return crypto.createHash('sha256').update(`${feedUrl}|${url}|${title}`).digest('hex').slice(0, 40)
 }
 
-/**
- * Parse RSS 2.0 or Atom XML into feed entries.
- */
 export function parseFeedXml(xml: string, feedUrl: string, category: string): FeedEntry[] {
   const entries: FeedEntry[] = []
-  const channelTitle =
-    tagText(xml.slice(0, 4000), 'title') || feedUrl
+  const channelTitle = tagText(xml.slice(0, 4000), 'title') || feedUrl
 
   const itemBlocks =
     xml.match(/<item\b[^>]*>[\s\S]*?<\/item>/gi)
@@ -222,7 +218,6 @@ export async function fetchFeed(feedUrl: string, category = 'procurement'): Prom
     }
 
     const text = await response.text()
-    // Reject obvious HTML challenge pages
     if (/<!DOCTYPE html>/i.test(text) && !/<rss\b|<feed\b/i.test(text)) {
       throw new Error('Feed returned HTML instead of RSS/Atom (blocked or wrong URL)')
     }
@@ -283,7 +278,6 @@ export async function searchSmallWeb(query: string, category?: string, limit: nu
             @@ plainto_tsquery('english', $1)
     `
     if (category) {
-      // procurement searches also include grants + healthcare_procurement
       if (category === 'procurement') {
         sql += ` AND category = ANY($2::text[])`
         params.push(['procurement', 'grants', 'healthcare_procurement', 'government'])
@@ -392,20 +386,49 @@ export async function getIndexStats(): Promise<IndexStats> {
 }
 
 /**
- * Bootstrap: ensure tables, seed active RSS sources, fetch all.
+ * Bootstrap: tables + Federal Register JSON ingest (primary) + optional RSS seeds.
  */
 export async function bootstrapProcurementIndex(): Promise<{
   seeded: number
   fetch: { feeds: number; entries: number; failures: string[] }
+  frJson?: { attempted: number; stored: number; failures: string[] }
   stats: IndexStats
 }> {
-  const { getActiveRssSeeds, rssSeedToFeedSource } = await import('./procurement-index-seeds')
   await initializeSmallWeb()
+
+  // Primary path: Federal Register JSON API (reliable from cloud hosts)
+  const { ingestFederalRegisterTargets } = await import('./federal-register-index')
+  const fr = await ingestFederalRegisterTargets()
+
+  // Secondary: any remaining active RSS seeds (may be empty if FR-only)
+  const { getActiveRssSeeds, rssSeedToFeedSource } = await import('./procurement-index-seeds')
   const seeds = getActiveRssSeeds()
   for (const seed of seeds) {
     await addFeedSource(rssSeedToFeedSource(seed))
   }
-  const fetch = await fetchAllFeeds()
+  // Skip RSS re-fetch of FR URLs that already failed; only attempt non-FR seeds
+  const rssOnly = seeds.filter(s => !s.url.includes('federalregister.gov'))
+  let rssEntries = 0
+  const rssFailures: string[] = []
+  for (const seed of rssOnly) {
+    const items = await fetchFeed(seed.url, seed.category === 'grants' ? 'procurement' : seed.category)
+    if (items.length) {
+      rssEntries += await storeFeedEntries(items)
+      await updateFeedLastFetched(seed.url)
+    } else {
+      rssFailures.push(`${seed.title}: no parseable items`)
+    }
+  }
+
   const stats = await getIndexStats()
-  return { seeded: seeds.length, fetch, stats }
+  return {
+    seeded: seeds.length + fr.attempted,
+    fetch: {
+      feeds: fr.attempted + rssOnly.length,
+      entries: fr.stored + rssEntries,
+      failures: [...fr.failures, ...rssFailures],
+    },
+    frJson: { attempted: fr.attempted, stored: fr.stored, failures: fr.failures },
+    stats,
+  }
 }
