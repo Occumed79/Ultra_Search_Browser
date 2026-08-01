@@ -1,7 +1,7 @@
 // ─── SMALL WEB / PROCUREMENT INDEX ───
 // Curated index stored in Postgres (Neon) for always-on retrieval
 // Sources: Federal Register JSON, SAM.gov API (optional key), RSS seeds
-// No HTML crawler.
+// Filtered to Occu-Med relevance. No HTML crawler.
 
 import crypto from 'crypto'
 import pg from 'pg'
@@ -400,7 +400,7 @@ export async function getIndexStats(): Promise<IndexStats> {
 }
 
 /**
- * Bootstrap: tables + FR JSON + SAM.gov API (if key) + optional RSS.
+ * Bootstrap: FR + SAM (Occu-Med filtered) + optional RSS.
  * No HTML crawler.
  */
 export async function bootstrapProcurementIndex(): Promise<{
@@ -416,7 +416,8 @@ export async function bootstrapProcurementIndex(): Promise<{
   const fr = await ingestFederalRegisterTargets()
 
   const { ingestSamGov } = await import('./sam-gov-index')
-  const sam = await ingestSamGov({ daysBack: 14, limit: 200 })
+  // Occu-Med targeted queries; keep under personal SAM daily rate limits
+  const sam = await ingestSamGov({ daysBack: 30, limitPerQuery: 50, maxQueries: 12 })
 
   const { getActiveRssSeeds, rssSeedToFeedSource } = await import('./procurement-index-seeds')
   const seeds = getActiveRssSeeds()
