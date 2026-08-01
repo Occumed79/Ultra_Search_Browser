@@ -119,10 +119,10 @@ export const FEATURE_CAPABILITIES: FeatureCapability[] = [
   {
     id: 'searxng_integration',
     label: 'SearXNG Integration',
-    description: 'Self-hosted metasearch backbone for privacy-preserving multi-source search',
-    status: 'experimental',
+    description: 'Self-hosted metasearch — always-on parallel source when SEARXNG_URL is set',
+    status: 'active',
     runtimeEnabled: true,
-    notes: 'Automatically adds SearXNG as a search source when SEARXNG_URL is configured. Supports DuckDuckGo, Bing, Google, Brave engines through SearXNG.',
+    notes: 'Runs on every search in parallel with managed APIs when SEARXNG_URL is configured. Not a fallback-only path. Uses DuckDuckGo, Bing, Google, Brave via the SearXNG instance.',
   },
   {
     id: 'marginalia_integration',
@@ -134,11 +134,11 @@ export const FEATURE_CAPABILITIES: FeatureCapability[] = [
   },
   {
     id: 'small_web_enrichment',
-    label: 'Small Web Enrichment',
-    description: 'Curated RSS/Atom/blog index for non-commercial content',
-    status: 'experimental',
+    label: 'Local Procurement / Small Web Index',
+    description: 'Curated RSS/Atom index of public RFP and related feeds — always-on when DATABASE_URL is set',
+    status: 'active',
     runtimeEnabled: true,
-    notes: 'RSS/Atom feed parser with PostgreSQL storage. Full-text search on feed entries. Requires DATABASE_URL and manual feed source configuration.',
+    notes: 'Runs on every search when DATABASE_URL is configured. Seed with scripts/fetch-feeds.ts (SAM.gov, Federal Register, etc.). Full-text search on feed_entries; category=procurement preferred for RFP lens.',
   },
 ]
 
