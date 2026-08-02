@@ -43,6 +43,21 @@ const DICTIONARY_AND_DEFINITION_HOSTS = new Set([
   'project-management.com',
 ])
 
+const JOB_BOARD_HOSTS = new Set([
+  'indeed.com',
+  'linkedin.com',
+  'monster.com',
+  'glassdoor.com',
+  'careerbuilder.com',
+  'ziprecruiter.com',
+  'simplyhired.com',
+  'dice.com',
+  'govtjobs.com',
+  'governmentjobs.com',
+  'caljobs.ca.gov',
+  'edd.ca.gov',
+])
+
 function extractDomain(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '')
@@ -66,6 +81,7 @@ export function isUsableExternalResult(
     if (SEARCH_ENGINE_HOSTS.has(host)) return false
     if (AUTHENTICATION_HOSTS.has(host)) return false
     if (DICTIONARY_AND_DEFINITION_HOSTS.has(host)) return false
+    if (JOB_BOARD_HOSTS.has(host)) return false
     if (/\b(?:create|register|sign\s*up)\s+(?:a\s+|your\s+)?(?:new\s+)?account\b/.test(text)) return false
     if (/\b(?:sign|log)\s*in\b/.test(text) && /\/(?:login|signin|sign-in|account|oauth|authorize|auth)(?:\/|$)/.test(path)) return false
     if (/\/(?:oauth|authorize|sso)(?:\/|$)/.test(path)) return false
@@ -85,6 +101,13 @@ export function isUsableExternalResult(
     // Filter out generic RFP explanation sites
     const genericRfpIndicators = ['what a request for proposal is', 'rfp process', 'complete guide', 'understanding the differences', 'requirements and a sample']
     if (genericRfpIndicators.some(indicator => text.includes(indicator))) {
+      return false
+    }
+    
+    // Filter out job board content
+    const jobBoardIndicators = ['jobs', 'employment', 'careers', 'hiring', 'job search', 'job openings', 'job opportunities']
+    if (jobBoardIndicators.some(indicator => text.includes(indicator)) && 
+        (text.includes('indeed') || text.includes('linkedin') || text.includes('monster') || text.includes('career'))) {
       return false
     }
     

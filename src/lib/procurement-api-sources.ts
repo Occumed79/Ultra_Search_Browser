@@ -41,11 +41,18 @@ export interface SamGovOpportunity {
 
 export async function searchSamGov(query: string, limit = 10): Promise<ScrapedResult[]> {
   try {
+    // SAM.gov requires an API key. Without it, we'll use site-specific search queries instead
+    // This function now serves as a placeholder for when API key is available
+    if (!process.env.SAM_GOV_API_KEY) {
+      console.log('SAM.gov API key not configured, skipping direct API access')
+      return []
+    }
+
     const params = new URLSearchParams({
       q: query,
       limit: limit.toString(),
       mode: 'json',
-      api_key: '', // SAM.gov allows basic access without API key
+      api_key: process.env.SAM_GOV_API_KEY,
     })
 
     const response = await fetch(`${SAM_API_BASE}?${params}`, {
@@ -312,13 +319,99 @@ export async function searchStateProcurement(query: string, limit = 10): Promise
   return results.slice(0, limit)
 }
 
+// Additional free procurement RSS feeds
+const PROCUREMENT_RSS_FEEDS = [
+  'https://www.grants.gov/rss/opportunities.xml',
+  'https://www.fbo.gov/rss',
+  'https://www.fbo.gov/rss2',
+]
+
+export async function searchProcurementRssFeeds(query: string, limit = 10): Promise<ScrapedResult[]> {
+  const results: ScrapedResult[] = []
+  const queryLower = query.toLowerCase()
+  
+  for (const feedUrl of PROCUREMENT_RSS_FEEDS.slice(0, 2)) {
+    try {
+      const response = await fetch(feedUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      })
+      
+      if (!response.ok) continue
+      
+      const text = await response.text()
+      const items = text.match(/<item>[\s\S]*?<\/item>/g) || []
+      
+      for (const item of items.slice(0, limit)) {
+        const titleMatch = item.match(/<title>(.*?)<\/title>/)
+        const linkMatch = item.match(/<link>(.*?)<\/link>/)
+        const descMatch = item.match(/<description>(.*?)<\/description>/)
+        const dateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/)
+        
+        if (!titleMatch || !linkMatch) continue
+        
+        const title = titleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/, '$1')
+        const link = linkMatch[1]
+        const description = descMatch ? descMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/, '$1') : ''
+        const pubDate = dateMatch ? dateMatch[1] : undefined
+        
+        const itemText = `${title} ${description}`.toLowerCase()
+        if (!itemText.includes(queryLower)) continue
+        
+        if (!isOpportunityActive(undefined, pubDate)) continue
+        
+        const domain = new URL(link).hostname.replace('www.', '')
+        results.push({
+          title,
+          url: link,
+          description,
+          domain,
+          source: 'Procurement RSS',
+          rank: 0,
+          score: 0.85,
+          pageValidation: {
+            checkedAt: new Date().toISOString(),
+            requestedUrl: link,
+            finalUrl: link,
+            availability: 'reachable',
+            reason: 'Procurement opportunity from RSS feed',
+            evidence: pubDate ? [`Posted: ${pubDate}`] : [],
+            extractedTextLength: description.length,
+            cached: false,
+            lifecycle: {
+              status: 'open',
+              reason: 'From RSS feed',
+              confidence: 0.7,
+              dates: pubDate ? [{
+                kind: 'posted',
+                value: pubDate,
+                iso: pubDate,
+                context: 'RSS publication date',
+              }] : [],
+            },
+          },
+        })
+        
+        if (results.length >= limit) break
+      }
+      
+      if (results.length >= limit) break
+    } catch (error) {
+      console.error(`Error fetching ${feedUrl}:`, error)
+    }
+  }
+  
+  return results
+}
+
 // Combined free procurement search
 export async function searchProcurementApis(query: string, limit = 20): Promise<ScrapedResult[]> {
   const results: ScrapedResult[] = []
   
-  // Search SAM.gov (free API)
+  // Search SAM.gov (free API - requires API key)
   try {
-    const samResults = await searchSamGov(query, Math.floor(limit / 3))
+    const samResults = await searchSamGov(query, Math.floor(limit / 4))
     results.push(...samResults)
   } catch (error) {
     console.error('SAM.gov search failed:', error)
@@ -326,15 +419,23 @@ export async function searchProcurementApis(query: string, limit = 20): Promise<
 
   // Search USA.gov RSS (free)
   try {
-    const rssResults = await searchUsaGovRss(query, Math.floor(limit / 3))
+    const rssResults = await searchUsaGovRss(query, Math.floor(limit / 4))
     results.push(...rssResults)
   } catch (error) {
     console.error('USA.gov RSS search failed:', error)
   }
 
+  // Search procurement RSS feeds (free)
+  try {
+    const procurementRssResults = await searchProcurementRssFeeds(query, Math.floor(limit / 4))
+    results.push(...procurementRssResults)
+  } catch (error) {
+    console.error('Procurement RSS search failed:', error)
+  }
+
   // Search government portals (free web scraping)
   try {
-    const portalResults = await searchGovernmentPortals(query, Math.floor(limit / 3))
+    const portalResults = await searchGovernmentPortals(query, Math.floor(limit / 8))
     results.push(...portalResults)
   } catch (error) {
     console.error('Government portals search failed:', error)
@@ -342,7 +443,7 @@ export async function searchProcurementApis(query: string, limit = 20): Promise<
 
   // Search state procurement sites (free)
   try {
-    const stateResults = await searchStateProcurement(query, Math.floor(limit / 6))
+    const stateResults = await searchStateProcurement(query, Math.floor(limit / 8))
     results.push(...stateResults)
   } catch (error) {
     console.error('State procurement search failed:', error)
