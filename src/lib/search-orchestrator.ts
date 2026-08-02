@@ -237,6 +237,7 @@ async function runLiveTask(task: RetrievalTask, options: SearchEngineOptions): P
       .filter((result): result is ScrapedResult => Boolean(result))
     
     console.log(`Live task completed: ${task.source} returned ${results.length} results`)
+    console.log(`Sample results from ${task.source}:`, results.slice(0, 3).map(r => ({ title: r.title, url: r.url })))
     
     if (!results.length) throw new Error(`${task.source} returned no parseable results`)
     return { task, data: { ...data, results }, runtimeMs: Date.now() - startedAt }
