@@ -98,17 +98,23 @@ export function isUsableExternalResult(
       return false
     }
     
-    // Filter out generic RFP explanation sites
+    // Filter out generic RFP explanation sites (but allow actual RFP documents)
     const genericRfpIndicators = ['what a request for proposal is', 'rfp process', 'complete guide', 'understanding the differences', 'requirements and a sample']
-    if (genericRfpIndicators.some(indicator => text.includes(indicator))) {
+    if (genericRfpIndicators.some(indicator => text.includes(indicator)) && !text.includes('pdf') && !text.includes('download')) {
       return false
     }
     
-    // Filter out job board content
+    // Filter out job board content (but allow government job postings that might be relevant)
     const jobBoardIndicators = ['jobs', 'employment', 'careers', 'hiring', 'job search', 'job openings', 'job opportunities']
     if (jobBoardIndicators.some(indicator => text.includes(indicator)) && 
         (text.includes('indeed') || text.includes('linkedin') || text.includes('monster') || text.includes('career'))) {
       return false
+    }
+    
+    // Allow government and procurement-related domains even if they might have some filtered content
+    const procurementFriendlyDomains = ['.gov', '.org', 'procurement', 'contract', 'bid', 'tender', 'rfp', 'solicitation']
+    if (procurementFriendlyDomains.some(domain => host.includes(domain) || text.includes(domain))) {
+      return true
     }
     
     return true

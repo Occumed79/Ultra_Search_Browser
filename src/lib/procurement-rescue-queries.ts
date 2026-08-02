@@ -95,6 +95,9 @@ export function buildProcurementRescueQueries(
     `${quotedSubject} "vendor opportunities"`,
     `site:.gov ${quotedSubject} RFP`,
     `site:.gov ${quotedSubject} "request for proposal"`,
+    `${quotedSubject} procurement`,
+    `${quotedSubject} "government contract"`,
+    `${quotedSubject} solicitation`,
   ]
 
   return Array.from(new Set([
