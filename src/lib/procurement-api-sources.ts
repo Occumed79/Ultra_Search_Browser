@@ -234,9 +234,9 @@ export async function searchUsaGovRss(query: string, limit = 10): Promise<Scrape
 const GOVERNMENT_PORTALS = [
   'https://www.maricopa.gov/2190/Solicitations',
   'https://solicitations.phoenix.gov',
-  'https://procurement.cityofnewyork.us',
-  'https://www.lacity.org/la-bids',
-  'https://www.houstontx.gov/finance/purchasing/bids.html',
+  'https://a0333-passportpublic.nyc.gov', // Updated to NYC PASSPort Public
+  'https://lacity.gov/la-bids', // Updated to current LA City URL
+  'https://www.beaconbid.com/solicitations/city-of-houston', // Updated to Houston Beacon Bid
 ]
 
 export async function searchGovernmentPortals(query: string, limit = 10): Promise<ScrapedResult[]> {
@@ -353,10 +353,9 @@ export async function searchStateProcurement(query: string, limit = 10): Promise
 }
 
 // Additional free procurement RSS feeds
+// Note: FBO.gov has been decommissioned and replaced by SAM.gov API
 const PROCUREMENT_RSS_FEEDS = [
   'https://www.grants.gov/rss/opportunities.xml',
-  'https://www.fbo.gov/rss',
-  'https://www.fbo.gov/rss2',
 ]
 
 // Military/Defense procurement sources
