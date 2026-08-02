@@ -22,8 +22,8 @@ function isOpportunityActive(deadlineDate?: string, postedDate?: string): boolea
   return true
 }
 
-// SAM.gov public API (free, no API key required for basic access)
-const SAM_API_BASE = 'https://api.sam.gov/api/opportunities'
+// SAM.gov public API endpoint (corrected based on official documentation)
+const SAM_API_BASE = 'https://api.sam.gov/prod/opportunities/v2/search'
 
 export interface SamGovOpportunity {
   opportunityId: string
@@ -53,8 +53,8 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
     const params = new URLSearchParams({
       q: query,
       limit: limit.toString(),
-      mode: 'json',
-  	  api_key: apiKey,
+      offset: '0',
+      api_key: apiKey,
     })
 
     console.log('SAM.gov API request:', `${SAM_API_BASE}?${params.toString()}`)
@@ -76,22 +76,27 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
     const data = await response.json()
     console.log('SAM.gov API response data keys:', Object.keys(data), 'total records:', data.totalRecords, 'opportunities count:', data.opportunities?.length)
     
-    if (!data.opportunities || !Array.isArray(data.opportunities)) {
+    // Handle v2 API response structure
+    let opportunities = data.opportunities || []
+    
+    // Try alternative data structures if opportunities array is not found
+    if (!Array.isArray(opportunities)) {
       console.log('SAM.gov API: No opportunities array in response, trying alternative data structure')
-      // Try alternative data structure that SAM.gov might use
       if (data._embedded && data._embedded.opportunities) {
-        data.opportunities = data._embedded.opportunities
+        opportunities = data._embedded.opportunities
       } else if (data.data && Array.isArray(data.data)) {
-        data.opportunities = data.data
+        opportunities = data.data
+      } else if (data.list && Array.isArray(data.list)) {
+        opportunities = data.list
       } else {
-        console.log('SAM.gov API: No valid data structure found')
+        console.log('SAM.gov API: No valid data structure found, response keys:', Object.keys(data))
         return []
       }
     }
 
-    console.log('SAM.gov API: Processing', data.opportunities.length, 'opportunities')
+    console.log('SAM.gov API: Processing', opportunities.length, 'opportunities')
 
-    const filtered = data.opportunities
+    const filtered = opportunities
       .filter((opp: SamGovOpportunity) => {
         const isActive = isOpportunityActive(opp.responseDeadline, opp.postedDate)
         if (!isActive) {
@@ -101,7 +106,7 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
       })
       .slice(0, limit)
     
-    console.log('SAM.gov API: Filtered opportunities:', filtered.length, 'from', data.opportunities.length)
+    console.log('SAM.gov API: Filtered opportunities:', filtered.length, 'from', opportunities.length)
 
     return filtered.map((opp: SamGovOpportunity) => ({
       title: opp.title,
