@@ -326,6 +326,15 @@ const PROCUREMENT_RSS_FEEDS = [
   'https://www.fbo.gov/rss2',
 ]
 
+// Military/Defense procurement sources
+const DEFENSE_PROCUREMENT_SITES = [
+  'https://www.defense.gov/Procurement/',
+  'https://dibbs.dla.mil/',
+  'https://www.dla.mil/Portals/102/ProcurementServices/Procurement/',
+  'https://www.acquisition.gov/',
+  'https://ebiz2.acquisition.gov/',
+]
+
 export async function searchProcurementRssFeeds(query: string, limit = 10): Promise<ScrapedResult[]> {
   const results: ScrapedResult[] = []
   const queryLower = query.toLowerCase()
@@ -405,13 +414,69 @@ export async function searchProcurementRssFeeds(query: string, limit = 10): Prom
   return results
 }
 
+// Search military/defense procurement sites
+export async function searchDefenseProcurement(query: string, limit = 10): Promise<ScrapedResult[]> {
+  const results: ScrapedResult[] = []
+  const queryLower = query.toLowerCase()
+  
+  for (const site of DEFENSE_PROCUREMENT_SITES.slice(0, 3)) {
+    try {
+      const response = await fetch(site, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      })
+      
+      if (!response.ok) continue
+      
+      const html = await response.text()
+      
+      if (html.toLowerCase().includes(queryLower) || 
+          html.toLowerCase().includes('medical') || 
+          html.toLowerCase().includes('health') ||
+          html.toLowerCase().includes('deployment')) {
+        const domain = new URL(site).hostname.replace('www.', '')
+        results.push({
+          title: `${domain} - Defense Procurement Opportunities`,
+          url: site,
+          description: `Department of Defense procurement portal for ${domain}. Search for "${query}" to find relevant military and defense opportunities.`,
+          domain,
+          source: 'Defense Procurement',
+          rank: 0,
+          score: 0.9,
+          pageValidation: {
+            checkedAt: new Date().toISOString(),
+            requestedUrl: site,
+            finalUrl: site,
+            availability: 'reachable',
+            reason: 'Defense procurement portal',
+            evidence: [`Portal contains medical/health/deployment opportunities`],
+            extractedTextLength: html.length,
+            cached: false,
+            lifecycle: {
+              status: 'open',
+              reason: 'Active defense procurement site',
+              confidence: 0.7,
+              dates: [],
+            },
+          },
+        })
+      }
+    } catch (error) {
+      console.error(`Error fetching ${site}:`, error)
+    }
+  }
+  
+  return results.slice(0, limit)
+}
+
 // Combined free procurement search
 export async function searchProcurementApis(query: string, limit = 20): Promise<ScrapedResult[]> {
   const results: ScrapedResult[] = []
   
   // Search SAM.gov (free API - requires API key)
   try {
-    const samResults = await searchSamGov(query, Math.floor(limit / 4))
+    const samResults = await searchSamGov(query, Math.floor(limit / 5))
     results.push(...samResults)
   } catch (error) {
     console.error('SAM.gov search failed:', error)
@@ -419,7 +484,7 @@ export async function searchProcurementApis(query: string, limit = 20): Promise<
 
   // Search USA.gov RSS (free)
   try {
-    const rssResults = await searchUsaGovRss(query, Math.floor(limit / 4))
+    const rssResults = await searchUsaGovRss(query, Math.floor(limit / 5))
     results.push(...rssResults)
   } catch (error) {
     console.error('USA.gov RSS search failed:', error)
@@ -427,15 +492,23 @@ export async function searchProcurementApis(query: string, limit = 20): Promise<
 
   // Search procurement RSS feeds (free)
   try {
-    const procurementRssResults = await searchProcurementRssFeeds(query, Math.floor(limit / 4))
+    const procurementRssResults = await searchProcurementRssFeeds(query, Math.floor(limit / 5))
     results.push(...procurementRssResults)
   } catch (error) {
     console.error('Procurement RSS search failed:', error)
   }
 
+  // Search defense procurement sites (free)
+  try {
+    const defenseResults = await searchDefenseProcurement(query, Math.floor(limit / 5))
+    results.push(...defenseResults)
+  } catch (error) {
+    console.error('Defense procurement search failed:', error)
+  }
+
   // Search government portals (free web scraping)
   try {
-    const portalResults = await searchGovernmentPortals(query, Math.floor(limit / 8))
+    const portalResults = await searchGovernmentPortals(query, Math.floor(limit / 10))
     results.push(...portalResults)
   } catch (error) {
     console.error('Government portals search failed:', error)
@@ -443,7 +516,7 @@ export async function searchProcurementApis(query: string, limit = 20): Promise<
 
   // Search state procurement sites (free)
   try {
-    const stateResults = await searchStateProcurement(query, Math.floor(limit / 8))
+    const stateResults = await searchStateProcurement(query, Math.floor(limit / 10))
     results.push(...stateResults)
   } catch (error) {
     console.error('State procurement search failed:', error)

@@ -65,17 +65,26 @@ export function buildProcurementRescueQueries(
   ).values()).slice(0, 8)
   const familyClause = discoveryTerms.length > 0
     ? `(${discoveryTerms.slice(0, 6).map(quotedPhrase).join(' OR ')})`
-    : quotedSubject
+    : ''
 
-  const individualAliasQueries = discoveryTerms.map(alias =>
-    `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
-  )
+  const individualAliasQueries = buyerAliases.flatMap(alias => [
+    `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`,
+  ])
 
-  // The browser rescue executes only four Bing variants. Use those slots for
-  // genuinely different discovery strategies: the literal phrase, the related
-  // buyer-language family, government pages using that family, and direct PDF
-  // solicitations. This avoids wasting the budget on punctuation variants of
-  // the same phrase.
+  // Military/defense specific queries
+  const militaryKeywords = ['deployment', 'military', 'defense', 'dod', 'overseas', 'clearance', 'readiness']
+  const isMilitaryQuery = militaryKeywords.some(keyword => query.toLowerCase().includes(keyword))
+  
+  const militaryQueries = isMilitaryQuery ? [
+    `site:dibbs.dla.mil ${quotedSubject}`,
+    `site:acquisition.gov ${quotedSubject}`,
+    `site:defense.gov ${quotedSubject} procurement`,
+    `site:dla.mil ${quotedSubject}`,
+    `${quotedSubject} "defense logistics agency"`,
+    `${quotedSubject} "department of defense"`,
+    `${quotedSubject} "military medical"`,
+  ] : []
+
   return Array.from(new Set([
     // Use more specific procurement terminology
     `${quotedSubject} "contract opportunities" ${currentYear}`,
@@ -100,5 +109,6 @@ export function buildProcurementRescueQueries(
     `${quotedSubject} "healthcare procurement" ${currentYear}`,
     `${quotedSubject} "medical services contract" ${currentYear}`,
     ...individualAliasQueries,
+    ...militaryQueries,
   ]))
 }
