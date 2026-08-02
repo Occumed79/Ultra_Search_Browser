@@ -142,8 +142,16 @@ export function buildQueryVariants(
   const explicitQuery = restoreExplicitOperators(query, operators)
   const budgets = semanticBudgets(semanticIntent)
 
+  // For procurement lens, prioritize semantic intent variants over raw query
+  // to prevent search engines from misinterpreting the query
+  if (lens === 'procurement' && semanticIntent?.searchVariants?.length > 0) {
+    for (const candidate of semanticIntent.searchVariants) {
+      addVariant(variants, seen, candidate, 'ai-intent', 100, budgets.variants)
+    }
+  }
+
   // Every selected engine receives the user's complete sentence unchanged.
-  addVariant(variants, seen, explicitQuery, 'broad', 100, budgets.variants)
+  addVariant(variants, seen, explicitQuery, 'broad', lens === 'procurement' ? 80 : 100, budgets.variants)
   // Protect the meaning-bearing groups rather than quoting an entire natural
   // language sentence. This preserves names, services, and geography without
   // asking an engine to match filler words such as “find me” verbatim.
@@ -156,8 +164,10 @@ export function buildQueryVariants(
     budgets.variants
   )
 
-  for (const candidate of semanticIntent?.searchVariants || []) {
-    addVariant(variants, seen, candidate, 'ai-intent', 92, budgets.variants)
+  if (lens !== 'procurement') {
+    for (const candidate of semanticIntent?.searchVariants || []) {
+      addVariant(variants, seen, candidate, 'ai-intent', 92, budgets.variants)
+    }
   }
 
   const semantic = findFirst(
