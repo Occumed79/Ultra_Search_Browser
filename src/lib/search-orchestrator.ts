@@ -224,16 +224,26 @@ function sourceExecutor(source: LiveSearchSource, options: SearchEngineOptions) 
 async function runLiveTask(task: RetrievalTask, options: SearchEngineOptions): Promise<TaskSuccess> {
   const startedAt = Date.now()
   const timeout = task.source === 'searxng' ? SEARXNG_TIMEOUT_MS : TASK_TIMEOUT_MS
-  const data = await withTimeout(
-    sourceExecutor(task.source, options)(task.query),
-    timeout,
-    `${task.source} search`
-  )
-  const results = data.results
-    .map(result => normalizeResult(result, task.source))
-    .filter((result): result is ScrapedResult => Boolean(result))
-  if (!results.length) throw new Error(`${task.source} returned no parseable results`)
-  return { task, data: { ...data, results }, runtimeMs: Date.now() - startedAt }
+  console.log(`Running live task: ${task.source} with query: "${task.query}" (timeout: ${timeout}ms)`)
+  
+  try {
+    const data = await withTimeout(
+      sourceExecutor(task.source, options)(task.query),
+      timeout,
+      `${task.source} search`
+    )
+    const results = data.results
+      .map(result => normalizeResult(result, task.source))
+      .filter((result): result is ScrapedResult => Boolean(result))
+    
+    console.log(`Live task completed: ${task.source} returned ${results.length} results`)
+    
+    if (!results.length) throw new Error(`${task.source} returned no parseable results`)
+    return { task, data: { ...data, results }, runtimeMs: Date.now() - startedAt }
+  } catch (error) {
+    console.error(`Live task failed: ${task.source} with query: "${task.query}"`, error)
+    throw error
+  }
 }
 
 function smallWebCategory(lens: SearchLens): string | undefined {
