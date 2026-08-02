@@ -1,7 +1,9 @@
-import type { ExpandedQuery } from './intelligence'
-import type { OperatorsResult } from './search-operators'
+import { findFirst } from './array-utils'
+import { buyerLanguageTermsForQuery } from './occumed-capability-matching'
+import { buildProcurementRescueQueries } from './procurement-rescue-queries'
+import { semanticBudgets } from './semantic-budgets'
 import type { SemanticIntentPlan } from './semantic-intent'
-import type { LiveSearchSource, SearchPlan } from './search-settings'
+import type { SearchEngineOptions } from './search-settings'
 import type { SearchLens } from '../types/search'
 
 export type QueryPurpose = 'broad' | 'intent-core' | 'semantic' | 'ai-intent' | 'official' | 'document' | 'freshness' | 'portal'
@@ -142,11 +144,12 @@ export function buildQueryVariants(
   const explicitQuery = restoreExplicitOperators(query, operators)
   const budgets = semanticBudgets(semanticIntent)
 
-  // For procurement lens, prioritize semantic intent variants over raw query
-  // to prevent search engines from misinterpreting the query
-  if (lens === 'procurement' && semanticIntent?.searchVariants && semanticIntent.searchVariants.length > 0) {
-    for (const candidate of semanticIntent.searchVariants) {
-      addVariant(variants, seen, candidate, 'ai-intent', 100, budgets.variants)
+  // For procurement lens, use site-specific procurement queries to prevent
+  // search engines from misinterpreting the query (e.g., "pre employment physical" → "pre-market trading")
+  if (lens === 'procurement') {
+    const procurementQueries = buildProcurementRescueQueries(query, semanticIntent)
+    for (const procurementQuery of procurementQueries.slice(0, budgets.variants)) {
+      addVariant(variants, seen, procurementQuery, 'ai-intent', 100, budgets.variants)
     }
   }
 
