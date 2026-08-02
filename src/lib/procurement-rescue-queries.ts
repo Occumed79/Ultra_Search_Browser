@@ -88,18 +88,20 @@ export function buildProcurementRescueQueries(
   ] : []
 
   // Simplified queries that are more likely to return results
+  // Use site-specific searches to avoid search engine misinterpretation
   const simplifiedQueries = [
-    `${quotedSubject} RFP -stock -market -trading`,
-    `${quotedSubject} "request for proposal" -stock -market`,
-    `${quotedSubject} "contract opportunities" -stock -market`,
-    `${quotedSubject} "vendor opportunities" -stock -market`,
-    `site:.gov ${quotedSubject} RFP -stock -market`,
+    `site:.gov ${quotedSubject} RFP -stock -market -trading`,
     `site:.gov ${quotedSubject} "request for proposal" -stock -market`,
-    `${quotedSubject} procurement -stock -market`,
-    `${quotedSubject} "government contract" -stock -market`,
-    `${quotedSubject} solicitation -stock -market`,
-    `${quotedSubject} medical -stock -market`,
-    `${quotedSubject} healthcare -stock -market`,
+    `site:.gov ${quotedSubject} "contract opportunities" -stock -market`,
+    `site:sam.gov ${quotedSubject} opportunities -stock -market`,
+    `site:sam.gov ${quotedSubject} solicitation -stock -market`,
+    `site:bidnetdirect.com ${quotedSubject} "contract opportunities" -stock -market`,
+    `site:rfpmart.com ${quotedSubject} RFP -stock -market`,
+    `site:findrfp.com ${quotedSubject} solicitation -stock -market`,
+    `site:govwin.com ${quotedSubject} "government contract" -stock -market`,
+    `filetype:pdf ${quotedSubject} "request for proposal" -stock -market`,
+    `${quotedSubject} "occupational health" RFP -stock -market -trading`,
+    `${quotedSubject} "medical screening" contract -stock -market`,
   ]
 
   return Array.from(new Set([
