@@ -6,6 +6,7 @@ import {
 import { searchBraveHtml, searchMojeekHtml, searchYahooHtml } from './public-search-fallbacks'
 import { buildProcurementRescueQueries } from './procurement-rescue-queries'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
+import { searchProcurementApis } from './procurement-api-sources'
 import { applyIntentCandidateGate } from './search-intent-gate'
 import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult } from '../types/search'
@@ -99,6 +100,17 @@ export async function rescueProcurementCandidates(
   options: ProcurementRescueOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
+  
+  // Search specialized procurement APIs first (highest priority)
+  let apiResults: ScrapedResult[] = []
+  let apiFailures: string[] = []
+  try {
+    apiResults = await searchProcurementApis(query, 15)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    apiFailures.push(`procurement APIs: ${message}`)
+  }
+  
   const managed = options.skipManagedSearch
     ? {
         results: [] as ScrapedResult[],
@@ -133,7 +145,7 @@ export async function rescueProcurementCandidates(
   const browserResults = browserSettled.flatMap(item =>
     item.status === 'fulfilled' ? item.value : []
   )
-  const rawResults = mergeUniqueResults([managed.results, browserResults])
+  const rawResults = mergeUniqueResults([apiResults, managed.results, browserResults])
   const gated = applyIntentCandidateGate(
     query,
     'procurement',
@@ -167,11 +179,11 @@ export async function rescueProcurementCandidates(
     results: gated.results,
     diagnostics: {
       attemptedQueries: attemptedQuerySet.size,
-      attemptedTasks: managed.diagnostics.attemptedRequests + browserTasks.length,
-      successfulTasks: managed.diagnostics.successfulRequests + successfulBrowserTasks,
+      attemptedTasks: managed.diagnostics.attemptedRequests + browserTasks.length + 1, // +1 for API search
+      successfulTasks: managed.diagnostics.successfulRequests + successfulBrowserTasks + (apiResults.length > 0 ? 1 : 0),
       rawCandidates: rawResults.length,
       retainedCandidates: gated.results.length,
-      failures: [...managedFailures, ...browserFailures],
+      failures: [...apiFailures, ...managedFailures, ...browserFailures],
       queries,
       rawPreview: rawResults.slice(0, 12).map(result => ({
         source: result.source,

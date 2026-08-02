@@ -77,14 +77,28 @@ export function buildProcurementRescueQueries(
   // solicitations. This avoids wasting the budget on punctuation variants of
   // the same phrase.
   return Array.from(new Set([
-    `"occupational health" "request for proposal" ${currentYear} -site:wikipedia.org`,
-    `"occupational medicine" "request for proposal" ${currentYear} -site:wikipedia.org`,
-    `"employee health" "request for proposal" ${currentYear} -site:wikipedia.org`,
-    `"occupational health" RFP ${currentYear} -site:wikipedia.org`,
-    `"occupational medicine" RFP ${currentYear} -site:wikipedia.org`,
-    `site:sam.gov "occupational health"`,
-    `site:bidnetdirect.com "occupational health"`,
-    `site:maricopa.gov "occupational health" solicitation`,
+    // Use more specific procurement terminology
+    `${quotedSubject} "contract opportunities" ${currentYear}`,
+    `${quotedSubject} "vendor opportunities" ${currentYear}`,
+    `${quotedSubject} "sources sought" ${currentYear}`,
+    `${quotedSubject} "bid opportunities" ${currentYear}`,
+    // Government procurement portals
+    `site:sam.gov ${quotedSubject} opportunities`,
+    `site:sam.gov ${quotedSubject} solicitation`,
+    `site:bidnetdirect.com ${quotedSubject} "contract opportunities"`,
+    `site:rfpmart.com ${quotedSubject} RFP`,
+    `site:findrfp.com ${quotedSubject} solicitation`,
+    `site:govwin.com ${quotedSubject} "government contract"`,
+    // State and local government
+    `site:.gov ${quotedSubject} "contract opportunities"`,
+    `site:.gov ${quotedSubject} "vendor opportunities"`,
+    `site:.gov ${quotedSubject} "bid opportunities"`,
+    // PDF documents (often contain actual RFPs)
+    `filetype:pdf ${quotedSubject} "request for proposal" ${currentYear}`,
+    `filetype:pdf ${quotedSubject} solicitation ${currentYear}`,
+    // Industry-specific terms
+    `${quotedSubject} "healthcare procurement" ${currentYear}`,
+    `${quotedSubject} "medical services contract" ${currentYear}`,
     ...individualAliasQueries,
   ]))
 }
