@@ -356,10 +356,18 @@ export async function orchestrateSearch(
   )
 
   // User-selected / legacy live tasks (excluding SearXNG — handled as always-on below)
-  const planLiveTasks = orchestration.tasks.filter(task =>
-    (task.source !== 'searxng' && (legacyHtmlSearchEnabled || automaticBrowserTasks.includes(task)))
-    || (task.source === 'searxng' && plan.liveSources.includes('searxng'))
-  )
+  const planLiveTasks = orchestration.tasks.filter(task => {
+    // Always include tasks for sources that are in the user's selected sources
+    if (plan.liveSources.includes(task.source)) return true
+    
+    // For legacy HTML search, only include if enabled or in automatic fallback tasks
+    if (task.source !== 'searxng' && (legacyHtmlSearchEnabled || automaticBrowserTasks.includes(task))) return true
+    
+    // Include searxng if it's in user's selected sources
+    if (task.source === 'searxng' && plan.liveSources.includes('searxng')) return true
+    
+    return false
+  })
 
   // ALWAYS-ON: SearXNG runs on every request when configured
   const alwaysOnSearxng = buildAlwaysOnSearxngTasks(

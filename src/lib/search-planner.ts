@@ -240,29 +240,33 @@ export function buildRetrievalTasks(
     tasks.push({ source, query: variant.query, purpose: variant.purpose })
   }
 
-  const broadVariants = variants
-    .filter(variant => variant.purpose === 'broad' || variant.purpose === 'intent-core')
-    .slice(0, 2)
-  for (const variant of broadVariants) {
-    for (const source of plan.liveSources) addTask(source, variant)
-  }
-
   const targetedSources = orderedTargetedSources(plan.liveSources)
-  const targetedVariants = variants.filter(
-    variant => !broadVariants.includes(variant) && variant.purpose !== 'semantic'
-  )
-  for (const variant of targetedVariants) {
-    const sources = variant.purpose === 'ai-intent'
-      ? plan.liveSources
-      : targetedSources.length > 1
-        ? targetedSources.slice(0, 2)
-        : targetedSources
-    for (const source of sources) addTask(source, variant)
-  }
-
-  for (const variant of variants.filter(item => item.purpose === 'semantic' && !broadVariants.includes(item))) {
-    const source = targetedSources[tasks.length % Math.max(1, targetedSources.length)]
-    if (source) addTask(source, variant)
+  
+  // Process variants in priority order (highest priority first)
+  for (const variant of variants) {
+    if (tasks.length >= maxLiveTasks) break
+    
+    // Determine which sources to use based on variant purpose
+    let sources: LiveSearchSource[]
+    
+    if (variant.purpose === 'broad' || variant.purpose === 'intent-core') {
+      // Broad variants go to all sources, but limit to prevent overwhelming
+      sources = plan.liveSources.slice(0, 2)
+    } else if (variant.purpose === 'ai-intent') {
+      // AI intent variants get highest priority and go to all sources
+      sources = plan.liveSources
+    } else if (variant.purpose === 'semantic') {
+      // Semantic variants go to targeted sources
+      sources = targetedSources.length > 1 ? targetedSources.slice(0, 2) : targetedSources
+    } else {
+      // Other variants go to targeted sources
+      sources = targetedSources.length > 1 ? targetedSources.slice(0, 2) : targetedSources
+    }
+    
+    for (const source of sources) {
+      addTask(source, variant)
+      if (tasks.length >= maxLiveTasks) break
+    }
   }
 
   return tasks
