@@ -89,15 +89,17 @@ export function buildProcurementRescueQueries(
 
   // Simplified queries that are more likely to return results
   const simplifiedQueries = [
-    `${quotedSubject} RFP`,
-    `${quotedSubject} "request for proposal"`,
-    `${quotedSubject} "contract opportunities"`,
-    `${quotedSubject} "vendor opportunities"`,
-    `site:.gov ${quotedSubject} RFP`,
-    `site:.gov ${quotedSubject} "request for proposal"`,
-    `${quotedSubject} procurement`,
-    `${quotedSubject} "government contract"`,
-    `${quotedSubject} solicitation`,
+    `${quotedSubject} RFP -stock -market -trading`,
+    `${quotedSubject} "request for proposal" -stock -market`,
+    `${quotedSubject} "contract opportunities" -stock -market`,
+    `${quotedSubject} "vendor opportunities" -stock -market`,
+    `site:.gov ${quotedSubject} RFP -stock -market`,
+    `site:.gov ${quotedSubject} "request for proposal" -stock -market`,
+    `${quotedSubject} procurement -stock -market`,
+    `${quotedSubject} "government contract" -stock -market`,
+    `${quotedSubject} solicitation -stock -market`,
+    `${quotedSubject} medical -stock -market`,
+    `${quotedSubject} healthcare -stock -market`,
   ]
 
   return Array.from(new Set([
