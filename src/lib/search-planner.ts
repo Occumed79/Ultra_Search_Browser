@@ -144,7 +144,7 @@ export function buildQueryVariants(
 
   // For procurement lens, prioritize semantic intent variants over raw query
   // to prevent search engines from misinterpreting the query
-  if (lens === 'procurement' && semanticIntent?.searchVariants?.length > 0) {
+  if (lens === 'procurement' && semanticIntent?.searchVariants && semanticIntent.searchVariants.length > 0) {
     for (const candidate of semanticIntent.searchVariants) {
       addVariant(variants, seen, candidate, 'ai-intent', 100, budgets.variants)
     }
