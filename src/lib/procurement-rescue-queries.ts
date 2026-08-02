@@ -29,6 +29,8 @@ export function procurementSubject(query: string): string {
       .replace(/\bfiletype:\S+/gi, ' ')
       .replace(/\bintitle:\S+/gi, ' ')
       .replace(/\binurl:\S+/gi, ' ')
+      .replace(/^pre-employment/, 'pre employment') // Fix "pre-employment" to "pre employment"
+      .replace(/^pre-/, 'pre ') // Handle other "pre-" prefixes
   )
   // Return the cleaned subject, or if too short, use a fallback
   if (cleaned.length < 5) {
@@ -85,7 +87,19 @@ export function buildProcurementRescueQueries(
     `${quotedSubject} "military medical"`,
   ] : []
 
+  // Simplified queries that are more likely to return results
+  const simplifiedQueries = [
+    `${quotedSubject} RFP`,
+    `${quotedSubject} "request for proposal"`,
+    `${quotedSubject} "contract opportunities"`,
+    `${quotedSubject} "vendor opportunities"`,
+    `site:.gov ${quotedSubject} RFP`,
+    `site:.gov ${quotedSubject} "request for proposal"`,
+  ]
+
   return Array.from(new Set([
+    // Simplified queries first (more likely to return results)
+    ...simplifiedQueries,
     // Use more specific procurement terminology
     `${quotedSubject} "contract opportunities" ${currentYear}`,
     `${quotedSubject} "vendor opportunities" ${currentYear}`,
