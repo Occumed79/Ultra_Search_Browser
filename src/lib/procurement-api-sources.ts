@@ -74,15 +74,31 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
     }
 
     const data = await response.json()
-    console.log('SAM.gov API response data keys:', Object.keys(data), 'opportunities count:', data.opportunities?.length)
+    console.log('SAM.gov API response data keys:', Object.keys(data), 'total records:', data.totalRecords, 'opportunities count:', data.opportunities?.length)
     
     if (!data.opportunities || !Array.isArray(data.opportunities)) {
-      console.log('SAM.gov API: No opportunities array in response')
-      return []
+      console.log('SAM.gov API: No opportunities array in response, trying alternative data structure')
+      // Try alternative data structure that SAM.gov might use
+      if (data._embedded && data._embedded.opportunities) {
+        data.opportunities = data._embedded.opportunities
+      } else if (data.data && Array.isArray(data.data)) {
+        data.opportunities = data.data
+      } else {
+        console.log('SAM.gov API: No valid data structure found')
+        return []
+      }
     }
 
+    console.log('SAM.gov API: Processing', data.opportunities.length, 'opportunities')
+
     const filtered = data.opportunities
-      .filter((opp: SamGovOpportunity) => isOpportunityActive(opp.responseDeadline, opp.postedDate))
+      .filter((opp: SamGovOpportunity) => {
+        const isActive = isOpportunityActive(opp.responseDeadline, opp.postedDate)
+        if (!isActive) {
+          console.log('Filtered out expired opportunity:', opp.title, 'deadline:', opp.responseDeadline)
+        }
+        return isActive
+      })
       .slice(0, limit)
     
     console.log('SAM.gov API: Filtered opportunities:', filtered.length, 'from', data.opportunities.length)
