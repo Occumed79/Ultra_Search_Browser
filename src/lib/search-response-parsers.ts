@@ -21,6 +21,28 @@ const AUTHENTICATION_HOSTS = new Set([
   'appleid.apple.com',
 ])
 
+const DICTIONARY_AND_DEFINITION_HOSTS = new Set([
+  'merriam-webster.com',
+  'dictionary.com',
+  'cambridge.org',
+  'cambridgeenglish.org',
+  'thefreedictionary.com',
+  'vocabulary.com',
+  'definitions.net',
+  'wordreference.com',
+  'collinsdictionary.com',
+  'thesaurus.com',
+  'yourdictionary.com',
+  'britannica.com',
+  'wiktionary.org',
+  'bls.gov',
+  'clevelandclinic.org',
+  'investopedia.com',
+  'wikipedia.org',
+  'responsive.io',
+  'project-management.com',
+])
+
 function extractDomain(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '')
@@ -43,9 +65,29 @@ export function isUsableExternalResult(
 
     if (SEARCH_ENGINE_HOSTS.has(host)) return false
     if (AUTHENTICATION_HOSTS.has(host)) return false
+    if (DICTIONARY_AND_DEFINITION_HOSTS.has(host)) return false
     if (/\b(?:create|register|sign\s*up)\s+(?:a\s+|your\s+)?(?:new\s+)?account\b/.test(text)) return false
     if (/\b(?:sign|log)\s*in\b/.test(text) && /\/(?:login|signin|sign-in|account|oauth|authorize|auth)(?:\/|$)/.test(path)) return false
     if (/\/(?:oauth|authorize|sso)(?:\/|$)/.test(path)) return false
+    
+    // Filter out dictionary/definition content by title and description
+    const dictionaryIndicators = ['definition', 'meaning', 'what is', 'define', 'pronunciation', 'synonyms', 'antonyms', 'etymology', 'usage', 'examples', 'word origin', 'english meaning', 'dictionary']
+    if (dictionaryIndicators.some(indicator => text.includes(indicator))) {
+      return false
+    }
+    
+    // Filter out medical/health information sites that aren't procurement
+    const medicalInfoIndicators = ['what it is', 'types & benefits', 'health treatments', 'medical advice', 'health information']
+    if (medicalInfoIndicators.some(indicator => text.includes(indicator))) {
+      return false
+    }
+    
+    // Filter out generic RFP explanation sites
+    const genericRfpIndicators = ['what a request for proposal is', 'rfp process', 'complete guide', 'understanding the differences', 'requirements and a sample']
+    if (genericRfpIndicators.some(indicator => text.includes(indicator))) {
+      return false
+    }
+    
     return true
   } catch {
     return false

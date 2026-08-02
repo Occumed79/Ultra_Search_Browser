@@ -2,9 +2,9 @@ import { searchBingHTML, searchDuckDuckGo, type SearchEngineOptions } from './se
 import { isUsableExternalResult, parseBingRss, parseDuckDuckGoLite } from './search-response-parsers'
 import type { ScrapedResult } from '../types/search'
 
-const FALLBACK_TIMEOUT_MS = 3_500
+const FALLBACK_TIMEOUT_MS = 5_000
 const SOURCE_RESULT_LIMIT = 30
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 
 function extractDomain(url: string): string {
   try {

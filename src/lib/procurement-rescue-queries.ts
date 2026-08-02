@@ -21,11 +21,20 @@ function quotedPhrase(value: string): string {
 }
 
 export function procurementSubject(query: string): string {
-  return normalizeSpace(
+  const cleaned = normalizeSpace(
     query
       .replace(PROCUREMENT_WORDS, ' ')
       .replace(/\b(?:open|current|active|opportunity|opportunities)\b/gi, ' ')
-  ) || normalizeSpace(query)
+      .replace(/\bsite:\S+/gi, ' ')
+      .replace(/\bfiletype:\S+/gi, ' ')
+      .replace(/\bintitle:\S+/gi, ' ')
+      .replace(/\binurl:\S+/gi, ' ')
+  )
+  // Return the cleaned subject, or if too short, use a fallback
+  if (cleaned.length < 5) {
+    return 'occupational health services'
+  }
+  return cleaned
 }
 
 function semanticSubjects(intent?: SemanticIntentPlan): string[] {
@@ -68,11 +77,14 @@ export function buildProcurementRescueQueries(
   // solicitations. This avoids wasting the budget on punctuation variants of
   // the same phrase.
   return Array.from(new Set([
-    `${quotedSubject} (RFP OR RFQ OR solicitation OR bid OR tender) ${currentYear}`,
-    `${familyClause} (RFP OR RFQ OR solicitation OR bid OR tender OR "sources sought") ${currentYear}`,
-    `site:.gov ${familyClause} (RFP OR RFQ OR solicitation OR "sources sought")`,
-    `filetype:pdf ${familyClause} ("request for proposals" OR RFP OR RFQ OR IFB OR solicitation)`,
-    `intitle:RFP ${quotedSubject}`,
+    `"occupational health" "request for proposal" ${currentYear} -site:wikipedia.org`,
+    `"occupational medicine" "request for proposal" ${currentYear} -site:wikipedia.org`,
+    `"employee health" "request for proposal" ${currentYear} -site:wikipedia.org`,
+    `"occupational health" RFP ${currentYear} -site:wikipedia.org`,
+    `"occupational medicine" RFP ${currentYear} -site:wikipedia.org`,
+    `site:sam.gov "occupational health"`,
+    `site:bidnetdirect.com "occupational health"`,
+    `site:maricopa.gov "occupational health" solicitation`,
     ...individualAliasQueries,
   ]))
 }
