@@ -41,9 +41,11 @@ export interface SamGovOpportunity {
 
 export async function searchSamGov(query: string, limit = 10): Promise<ScrapedResult[]> {
   try {
-    // SAM.gov requires an API key. Without it, we'll use site-specific search queries instead
-    // This function now serves as a placeholder for when API key is available
-    if (!process.env.SAM_GOV_API_KEY) {
+    const apiKey = process.env.SAM_GOV_API_KEY || process.env.NEXT_PUBLIC_SAM_GOV_API_KEY
+    
+    console.log('SAM.gov API check:', { hasKey: !!apiKey, keyLength: apiKey?.length })
+    
+    if (!apiKey) {
       console.log('SAM.gov API key not configured, skipping direct API access')
       return []
     }
@@ -52,8 +54,10 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
       q: query,
       limit: limit.toString(),
       mode: 'json',
-      api_key: process.env.SAM_GOV_API_KEY,
+  	  api_key: apiKey,
     })
+
+    console.log('SAM.gov API request:', `${SAM_API_BASE}?${params.toString()}`)
 
     const response = await fetch(`${SAM_API_BASE}?${params}`, {
       headers: {
@@ -61,58 +65,66 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
       },
     })
 
+    console.log('SAM.gov API response status:', response.status)
+
     if (!response.ok) {
-      console.error(`SAM.gov API error: ${response.status}`)
+      const errorText = await response.text()
+      console.error(`SAM.gov API error: ${response.status}`, errorText)
       return []
     }
 
     const data = await response.json()
+    console.log('SAM.gov API response data keys:', Object.keys(data), 'opportunities count:', data.opportunities?.length)
     
     if (!data.opportunities || !Array.isArray(data.opportunities)) {
+      console.log('SAM.gov API: No opportunities array in response')
       return []
     }
 
-    return data.opportunities
+    const filtered = data.opportunities
       .filter((opp: SamGovOpportunity) => isOpportunityActive(opp.responseDeadline, opp.postedDate))
       .slice(0, limit)
-      .map((opp: SamGovOpportunity) => ({
-        title: opp.title,
-        url: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
-        description: opp.description || `${opp.organization} - ${opp.type}`,
-        domain: 'sam.gov',
-        source: 'SAM.gov',
-        rank: 0,
-        score: 1.0, // High score for official government source
-        pageValidation: {
-          checkedAt: new Date().toISOString(),
-          requestedUrl: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
-          finalUrl: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
-          availability: 'reachable',
-          reason: 'Active procurement opportunity from SAM.gov',
-          evidence: [`Posted: ${opp.postedDate}`, opp.responseDeadline ? `Deadline: ${opp.responseDeadline}` : ''],
-          extractedTextLength: opp.description?.length || 0,
-          cached: false,
-          lifecycle: {
-            status: opp.responseDeadline && new Date(opp.responseDeadline) > new Date() ? 'open' : 'unknown',
-            reason: 'Based on response deadline',
-            confidence: 0.8,
-            dates: [
-              {
-                kind: 'posted',
-                value: opp.postedDate,
-                iso: opp.postedDate,
-                context: 'SAM.gov posting date',
-              },
-              ...(opp.responseDeadline ? [{
-                kind: 'due',
-                value: opp.responseDeadline,
-                iso: opp.responseDeadline,
-                context: 'SAM.gov response deadline',
-              }] : []),
-            ],
-          },
+    
+    console.log('SAM.gov API: Filtered opportunities:', filtered.length, 'from', data.opportunities.length)
+
+    return filtered.map((opp: SamGovOpportunity) => ({
+      title: opp.title,
+      url: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
+      description: opp.description || `${opp.organization} - ${opp.type}`,
+      domain: 'sam.gov',
+      source: 'SAM.gov',
+      rank: 0,
+      score: 1.0, // High score for official government source
+      pageValidation: {
+        checkedAt: new Date().toISOString(),
+        requestedUrl: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
+        finalUrl: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
+        availability: 'reachable',
+        reason: 'Active procurement opportunity from SAM.gov',
+        evidence: [`Posted: ${opp.postedDate}`, opp.responseDeadline ? `Deadline: ${opp.responseDeadline}` : ''],
+        extractedTextLength: opp.description?.length || 0,
+        cached: false,
+        lifecycle: {
+          status: opp.responseDeadline && new Date(opp.responseDeadline) > new Date() ? 'open' : 'unknown',
+          reason: 'Based on response deadline',
+          confidence: 0.8,
+          dates: [
+            {
+              kind: 'posted',
+              value: opp.postedDate,
+              iso: opp.postedDate,
+              context: 'SAM.gov posting date',
+            },
+            ...(opp.responseDeadline ? [{
+              kind: 'due',
+              value: opp.responseDeadline,
+              iso: opp.responseDeadline,
+              context: 'SAM.gov response deadline',
+            }] : []),
+          ],
         },
-      }))
+      },
+    }))
   } catch (error) {
     console.error('Error fetching from SAM.gov:', error)
     return []
