@@ -105,9 +105,15 @@ export async function rescueProcurementCandidates(
   let apiResults: ScrapedResult[] = []
   let apiFailures: string[] = []
   try {
+    console.log('Starting procurement API search for query:', query)
     apiResults = await searchProcurementApis(query, 15)
+    console.log('Procurement API search completed:', { resultCount: apiResults.length, sources: apiResults.map(r => r.source) })
+    if (apiResults.length === 0) {
+      apiFailures.push('procurement APIs: returned 0 results')
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    console.error('Procurement API search error:', error)
     apiFailures.push(`procurement APIs: ${message}`)
   }
   
