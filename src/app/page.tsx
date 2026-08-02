@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { BuyerTermsDropdown } from '../components/buyer-terms-dropdown'
 import { OpportunityWorkspace } from '../components/opportunity-workspace'
 import { ResultActions } from '../components/result-actions'
 import { useSearch } from '../hooks/use-search'
@@ -403,9 +404,12 @@ export default function Home() {
           <img src="/brand/logo.png" alt="Occu-Med" className="h-auto w-[230px] object-contain sm:w-[285px]" />
         </Link>
 
-        <div className="mb-3 text-center">
-          <h1 className="text-lg font-medium text-white/85">Occu-Med RFP Finder</h1>
-          <p className="mt-1 text-xs text-white/35">Search the public web for active opportunities that Occu-Med can perform or coordinate.</p>
+        <div className="mb-3 flex items-start justify-between gap-4">
+          <div className="text-center">
+            <h1 className="text-lg font-medium text-white/85">Occu-Med RFP Finder</h1>
+            <p className="mt-1 text-xs text-white/35">Search the public web for active opportunities that Occu-Med can perform or coordinate.</p>
+          </div>
+          <BuyerTermsDropdown query={query} onTermSelect={(term) => setQuery(term)} />
         </div>
 
         <div className="search-pill flex items-center gap-3 px-5 py-3">
