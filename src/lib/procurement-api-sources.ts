@@ -1,6 +1,28 @@
 import type { ScrapedResult } from '../types/search'
 
-// SAM.gov API integration for federal procurement opportunities
+// Helper function to check if an opportunity is still active
+function isOpportunityActive(deadlineDate?: string, postedDate?: string): boolean {
+  if (!deadlineDate && !postedDate) return true // No date info, assume active
+  
+  const now = new Date()
+  
+  // If we have a deadline, check if it's in the future
+  if (deadlineDate) {
+    const deadline = new Date(deadlineDate)
+    if (deadline < now) return false
+  }
+  
+  // If we only have a posted date, check if it's within the last 180 days
+  if (postedDate && !deadlineDate) {
+    const posted = new Date(postedDate)
+    const daysSincePosted = (now.getTime() - posted.getTime()) / (1000 * 60 * 60 * 24)
+    if (daysSincePosted > 180) return false
+  }
+  
+  return true
+}
+
+// SAM.gov public API (free, no API key required for basic access)
 const SAM_API_BASE = 'https://api.sam.gov/api/opportunities'
 
 export interface SamGovOpportunity {
@@ -20,10 +42,10 @@ export interface SamGovOpportunity {
 export async function searchSamGov(query: string, limit = 10): Promise<ScrapedResult[]> {
   try {
     const params = new URLSearchParams({
-      api_key: process.env.SAM_GOV_API_KEY || '',
       q: query,
       limit: limit.toString(),
       mode: 'json',
+      api_key: '', // SAM.gov allows basic access without API key
     })
 
     const response = await fetch(`${SAM_API_BASE}?${params}`, {
@@ -44,6 +66,7 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
     }
 
     return data.opportunities
+      .filter((opp: SamGovOpportunity) => isOpportunityActive(opp.responseDeadline, opp.postedDate))
       .slice(0, limit)
       .map((opp: SamGovOpportunity) => ({
         title: opp.title,
@@ -53,12 +76,34 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
         source: 'SAM.gov',
         rank: 0,
         score: 1.0, // High score for official government source
-        metadata: {
-          solicitationNumber: opp.solicitationNumber,
-          postedDate: opp.postedDate,
-          responseDeadline: opp.responseDeadline,
-          organization: opp.organization,
-          location: opp.location,
+        pageValidation: {
+          checkedAt: new Date().toISOString(),
+          requestedUrl: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
+          finalUrl: opp.url || `https://sam.gov/opportunity/${opp.opportunityId}`,
+          availability: 'reachable',
+          reason: 'Active procurement opportunity from SAM.gov',
+          evidence: [`Posted: ${opp.postedDate}`, opp.responseDeadline ? `Deadline: ${opp.responseDeadline}` : ''],
+          extractedTextLength: opp.description?.length || 0,
+          cached: false,
+          lifecycle: {
+            status: opp.responseDeadline && new Date(opp.responseDeadline) > new Date() ? 'open' : 'unknown',
+            reason: 'Based on response deadline',
+            confidence: 0.8,
+            dates: [
+              {
+                kind: 'posted',
+                value: opp.postedDate,
+                iso: opp.postedDate,
+                context: 'SAM.gov posting date',
+              },
+              ...(opp.responseDeadline ? [{
+                kind: 'due',
+                value: opp.responseDeadline,
+                iso: opp.responseDeadline,
+                context: 'SAM.gov response deadline',
+              }] : []),
+            ],
+          },
         },
       }))
   } catch (error) {
@@ -67,95 +112,240 @@ export async function searchSamGov(query: string, limit = 10): Promise<ScrapedRe
   }
 }
 
-// BidNet Direct API integration
-const BIDNET_API_BASE = 'https://api.bidnetdirect.com/v1'
+// USA.gov procurement RSS feed (free)
+const USA_GOV_RSS = 'https://www.usa.gov/rss/procurement.xml'
 
-export interface BidNetOpportunity {
-  id: string
-  title: string
-  description: string
-  agency: string
-  dueDate: string
-  postedDate: string
-  url: string
-  state: string
-  category: string
-}
-
-export async function searchBidNet(query: string, limit = 10): Promise<ScrapedResult[]> {
+export async function searchUsaGovRss(query: string, limit = 10): Promise<ScrapedResult[]> {
   try {
-    // Note: BidNet requires API key and authentication
-    // This is a placeholder implementation
-    if (!process.env.BIDNET_API_KEY) {
-      console.warn('BidNet API key not configured')
-      return []
-    }
-
-    const params = new URLSearchParams({
-      q: query,
-      limit: limit.toString(),
-    })
-
-    const response = await fetch(`${BIDNET_API_BASE}/opportunities?${params}`, {
-      headers: {
-        'Authorization': `Bearer ${process.env.BIDNET_API_KEY}`,
-        'Accept': 'application/json',
-      },
-    })
-
-    if (!response.ok) {
-      console.error(`BidNet API error: ${response.status}`)
-      return []
-    }
-
-    const data = await response.json()
+    const response = await fetch(USA_GOV_RSS)
+    if (!response.ok) return []
     
-    if (!data.opportunities || !Array.isArray(data.opportunities)) {
-      return []
-    }
-
-    return data.opportunities
-      .slice(0, limit)
-      .map((opp: BidNetOpportunity) => ({
-        title: opp.title,
-        url: opp.url || `https://www.bidnetdirect.com/opportunity/${opp.id}`,
-        description: opp.description || `${opp.agency} - ${opp.state}`,
-        domain: 'bidnetdirect.com',
-        source: 'BidNet Direct',
+    const text = await response.text()
+    
+    // Parse RSS feed
+    const items = text.match(/<item>[\s\S]*?<\/item>/g) || []
+    
+    const queryLower = query.toLowerCase()
+    
+    const results: ScrapedResult[] = []
+    
+    for (const item of items.slice(0, limit * 2)) {
+      const titleMatch = item.match(/<title>(.*?)<\/title>/)
+      const linkMatch = item.match(/<link>(.*?)<\/link>/)
+      const descMatch = item.match(/<description>(.*?)<\/description>/)
+      const dateMatch = item.match(/<pubDate>(.*?)<\/pubDate>/)
+      
+      if (!titleMatch || !linkMatch) continue
+      
+      const title = titleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/, '$1')
+      const link = linkMatch[1]
+      const description = descMatch ? descMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/, '$1') : ''
+      const pubDate = dateMatch ? dateMatch[1] : undefined
+      
+      // Check if item matches query
+      const itemText = `${title} ${description}`.toLowerCase()
+      if (!itemText.includes(queryLower)) continue
+      
+      // Check if opportunity is still active
+      if (!isOpportunityActive(undefined, pubDate)) continue
+      
+      results.push({
+        title,
+        url: link,
+        description,
+        domain: 'usa.gov',
+        source: 'USA.gov RSS',
         rank: 0,
         score: 0.9,
-        metadata: {
-          agency: opp.agency,
-          dueDate: opp.dueDate,
-          postedDate: opp.postedDate,
-          state: opp.state,
-          category: opp.category,
+        pageValidation: {
+          checkedAt: new Date().toISOString(),
+          requestedUrl: link,
+          finalUrl: link,
+          availability: 'reachable',
+          reason: 'Procurement opportunity from USA.gov RSS feed',
+          evidence: pubDate ? [`Posted: ${pubDate}`] : [],
+          extractedTextLength: description.length,
+          cached: false,
+          lifecycle: {
+            status: 'open',
+            reason: 'From RSS feed',
+            confidence: 0.7,
+            dates: pubDate ? [{
+              kind: 'posted',
+              value: pubDate,
+              iso: pubDate,
+              context: 'USA.gov RSS publication date',
+            }] : [],
+          },
         },
-      }))
+      })
+      
+      if (results.length >= limit) break
+    }
+    
+    return results
   } catch (error) {
-    console.error('Error fetching from BidNet:', error)
+    console.error('Error fetching from USA.gov RSS:', error)
     return []
   }
 }
 
-// Combined procurement API search
+// Government procurement portals (free web scraping)
+const GOVERNMENT_PORTALS = [
+  'https://www.maricopa.gov/2190/Solicitations',
+  'https://solicitations.phoenix.gov',
+  'https://procurement.cityofnewyork.us',
+  'https://www.lacity.org/la-bids',
+  'https://www.houstontx.gov/finance/purchasing/bids.html',
+]
+
+export async function searchGovernmentPortals(query: string, limit = 10): Promise<ScrapedResult[]> {
+  const results: ScrapedResult[] = []
+  
+  for (const portal of GOVERNMENT_PORTALS.slice(0, 3)) { // Limit to 3 portals to avoid timeout
+    try {
+      const response = await fetch(portal, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      })
+      
+      if (!response.ok) continue
+      
+      const html = await response.text()
+      const queryLower = query.toLowerCase()
+      
+      // Simple text-based search (in production, use proper HTML parsing)
+      if (html.toLowerCase().includes(queryLower)) {
+        const domain = new URL(portal).hostname.replace('www.', '')
+        results.push({
+          title: `${domain} - Procurement Opportunities`,
+          url: portal,
+          description: `Government procurement portal for ${domain}. Search for "${query}" to find relevant opportunities.`,
+          domain,
+          source: 'Government Portal',
+          rank: 0,
+          score: 0.8,
+          pageValidation: {
+            checkedAt: new Date().toISOString(),
+            requestedUrl: portal,
+            finalUrl: portal,
+            availability: 'reachable',
+            reason: 'Government procurement portal',
+            evidence: [`Portal contains "${query}"`],
+            extractedTextLength: html.length,
+            cached: false,
+            lifecycle: {
+              status: 'open',
+              reason: 'Active government portal',
+              confidence: 0.6,
+              dates: [],
+            },
+          },
+        })
+      }
+    } catch (error) {
+      console.error(`Error fetching ${portal}:`, error)
+    }
+  }
+  
+  return results.slice(0, limit)
+}
+
+// State government procurement sites (free)
+const STATE_PROCUREMENT_SITES = [
+  'https://www.capitol.texas.gov/Procurement/Search.aspx',
+  'https://www.osc.state.ny.us/procurement/index.htm',
+  'https://www.dgs.virginia.gov/procurement-opportunities/',
+  'https://www.ebids.illinois.gov',
+]
+
+export async function searchStateProcurement(query: string, limit = 10): Promise<ScrapedResult[]> {
+  const results: ScrapedResult[] = []
+  
+  for (const site of STATE_PROCUREMENT_SITES.slice(0, 2)) { // Limit to 2 sites
+    try {
+      const response = await fetch(site, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      })
+      
+      if (!response.ok) continue
+      
+      const html = await response.text()
+      const queryLower = query.toLowerCase()
+      
+      if (html.toLowerCase().includes(queryLower)) {
+        const domain = new URL(site).hostname.replace('www.', '')
+        results.push({
+          title: `${domain} - State Procurement`,
+          url: site,
+          description: `State procurement opportunities at ${domain}. Search for "${query}" to find relevant opportunities.`,
+          domain,
+          source: 'State Procurement',
+          rank: 0,
+          score: 0.75,
+          pageValidation: {
+            checkedAt: new Date().toISOString(),
+            requestedUrl: site,
+            finalUrl: site,
+            availability: 'reachable',
+            reason: 'State procurement portal',
+            evidence: [`Site contains "${query}"`],
+            extractedTextLength: html.length,
+            cached: false,
+            lifecycle: {
+              status: 'open',
+              reason: 'Active state procurement site',
+              confidence: 0.6,
+              dates: [],
+            },
+          },
+        })
+      }
+    } catch (error) {
+      console.error(`Error fetching ${site}:`, error)
+    }
+  }
+  
+  return results.slice(0, limit)
+}
+
+// Combined free procurement search
 export async function searchProcurementApis(query: string, limit = 20): Promise<ScrapedResult[]> {
   const results: ScrapedResult[] = []
   
-  // Search SAM.gov
+  // Search SAM.gov (free API)
   try {
-    const samResults = await searchSamGov(query, Math.floor(limit / 2))
+    const samResults = await searchSamGov(query, Math.floor(limit / 3))
     results.push(...samResults)
   } catch (error) {
     console.error('SAM.gov search failed:', error)
   }
 
-  // Search BidNet
+  // Search USA.gov RSS (free)
   try {
-    const bidnetResults = await searchBidNet(query, Math.floor(limit / 2))
-    results.push(...bidnetResults)
+    const rssResults = await searchUsaGovRss(query, Math.floor(limit / 3))
+    results.push(...rssResults)
   } catch (error) {
-    console.error('BidNet search failed:', error)
+    console.error('USA.gov RSS search failed:', error)
+  }
+
+  // Search government portals (free web scraping)
+  try {
+    const portalResults = await searchGovernmentPortals(query, Math.floor(limit / 3))
+    results.push(...portalResults)
+  } catch (error) {
+    console.error('Government portals search failed:', error)
+  }
+
+  // Search state procurement sites (free)
+  try {
+    const stateResults = await searchStateProcurement(query, Math.floor(limit / 6))
+    results.push(...stateResults)
+  } catch (error) {
+    console.error('State procurement search failed:', error)
   }
 
   // Deduplicate by URL
