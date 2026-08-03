@@ -147,10 +147,14 @@ export function buildQueryVariants(
   // For procurement lens, use site-specific procurement queries to prevent
   // search engines from misinterpreting the query (e.g., "pre employment physical" → "pre-market trading")
   if (lens === 'procurement') {
+    console.log('Procurement lens detected, building site-specific queries for:', query)
     const procurementQueries = buildProcurementRescueQueries(query, semanticIntent)
+    console.log('Generated procurement queries:', procurementQueries.slice(0, 10))
+    console.log('Budgets.variants:', budgets.variants)
     for (const procurementQuery of procurementQueries.slice(0, budgets.variants)) {
       addVariant(variants, seen, procurementQuery, 'ai-intent', 100, budgets.variants)
     }
+    console.log('Total procurement variants added:', variants.length)
   }
 
   // Every selected engine receives the user's complete sentence unchanged.
