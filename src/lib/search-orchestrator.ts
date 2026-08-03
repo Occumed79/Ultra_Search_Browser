@@ -335,6 +335,9 @@ export async function orchestrateSearch(
   const operators = parseSearchOperators(bangs.cleanQuery || rawQuery)
   const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
   const semanticIntent = await planSemanticIntent(normalizedQuery, requestedLens)
+  console.log('DEBUG: requestedLens:', requestedLens, 'normalizedQuery:', normalizedQuery)
+  console.log('DEBUG: semanticIntent:', JSON.stringify(semanticIntent, null, 2))
+  
   const lensRouting = routeSearchLens(
     requestedLens,
     bangs.forcedVertical,
@@ -342,6 +345,7 @@ export async function orchestrateSearch(
     semanticIntent
   )
   const lens = lensRouting.effectiveLens
+  console.log('DEBUG: lensRouting:', lensRouting, 'final lens:', lens)
   const expanded = expandQuery(normalizedQuery, lens)
   const orchestration = buildSearchOrchestrationPlan(
     normalizedQuery,

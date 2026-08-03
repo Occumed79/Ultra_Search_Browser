@@ -288,11 +288,18 @@ export function buildSearchOrchestrationPlan(
   currentYear = new Date().getFullYear(),
   semanticIntent?: SemanticIntentPlan
 ): SearchOrchestrationPlan {
+  console.log('DEBUG buildSearchOrchestrationPlan: query:', query, 'lens:', lens)
   const budgets = semanticBudgets(semanticIntent)
+  console.log('DEBUG buildSearchOrchestrationPlan: budgets:', budgets)
   const variants = buildQueryVariants(query, lens, expanded, operators, currentYear, semanticIntent)
+  console.log('DEBUG buildSearchOrchestrationPlan: variants generated:', variants.length)
+  console.log('DEBUG buildSearchOrchestrationPlan: sample variants:', variants.slice(0, 5))
+  const tasks = buildRetrievalTasks(variants, plan, budgets.tasks)
+  console.log('DEBUG buildSearchOrchestrationPlan: tasks generated:', tasks.length)
+  console.log('DEBUG buildSearchOrchestrationPlan: sample tasks:', tasks.slice(0, 5))
   return {
     variants,
-    tasks: buildRetrievalTasks(variants, plan, budgets.tasks),
+    tasks,
     variantBudget: budgets.variants,
     taskBudget: budgets.tasks,
   }
