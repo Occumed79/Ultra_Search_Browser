@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   buyerLanguageTermsForQuery,
+  isBroadOccuMedCapabilityQuery,
   matchOccuMedCapabilityGroups,
 } from '../src/lib/occumed-capability-matching'
 import { applyOccuMedSmartFilter } from '../src/lib/occumed-smart-filter'
@@ -111,4 +112,64 @@ test('Occu-Med smart filter replaces literal fragments with the matched capabili
 
   assert.deepEqual(filtered.results.map(item => item.url), [candidate.url])
   assert.equal(filtered.diagnostics.rejectedCount, 0)
+})
+
+test('umbrella Occu-Med searches stay broad while service-specific searches stay narrow', () => {
+  assert.equal(isBroadOccuMedCapabilityQuery('Occupational Health Services RFP'), true)
+  assert.equal(isBroadOccuMedCapabilityQuery('occupational medicine procurement'), true)
+  assert.equal(isBroadOccuMedCapabilityQuery('employee health contract opportunity'), true)
+
+  assert.equal(isBroadOccuMedCapabilityQuery('Occupational health program management'), false)
+  assert.equal(isBroadOccuMedCapabilityQuery('Pre-deployment health assessment'), false)
+  assert.equal(isBroadOccuMedCapabilityQuery('Medical surveillance RFP'), false)
+})
+
+test('umbrella occupational-health query keeps an OCONUS medical procurement candidate', async () => {
+  const query = 'Occupational Health Services RFP'
+  const intent = buildDeterministicSemanticIntent(query, 'procurement')
+  const candidate = result(
+    'OCONUS Medical Q-Coded Services',
+    'https://sam.gov/opp/oconus-live/view',
+    'Notice type: Combined Synopsis/Solicitation · Defense Health Agency · Solicitation HT941026R2000 · OCONUS medical services · deployment medical readiness · Responses due 05/11/2027'
+  )
+
+  const filtered = await applyOccuMedSmartFilter(
+    query,
+    'procurement',
+    [candidate],
+    10,
+    {
+      semanticIntent: intent,
+      useLocalTransformer: false,
+      useExternalProviders: false,
+    }
+  )
+
+  assert.deepEqual(filtered.results.map(item => item.url), [candidate.url])
+  assert.equal(filtered.diagnostics.rejectedCount, 0)
+})
+
+test('specific medical-surveillance query does not widen to unrelated OCONUS medical scope', async () => {
+  const query = 'Medical surveillance RFP'
+  const intent = buildDeterministicSemanticIntent(query, 'procurement')
+  const candidate = result(
+    'OCONUS Medical Q-Coded Services',
+    'https://sam.gov/opp/oconus-live/view',
+    'Notice type: Combined Synopsis/Solicitation · Defense Health Agency · Solicitation HT941026R2000 · OCONUS medical services · deployment medical readiness · Responses due 05/11/2027'
+  )
+
+  const filtered = await applyOccuMedSmartFilter(
+    query,
+    'procurement',
+    [candidate],
+    10,
+    {
+      semanticIntent: intent,
+      useLocalTransformer: false,
+      useExternalProviders: false,
+    }
+  )
+
+  assert.deepEqual(filtered.results, [])
+  assert.equal(filtered.diagnostics.rejectedCount, 1)
 })
