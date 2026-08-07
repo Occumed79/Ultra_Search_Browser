@@ -31,11 +31,14 @@ export interface BrowserBridgeCandidate {
   purpose?: string
 }
 
+export type BrowserBridgeTransport = 'searxng' | 'zero-key-direct-rescue' | 'searxng+direct-rescue'
+
 export interface BrowserBridgeResult {
   results: BrowserBridgeCandidate[]
   engines: string[]
   attemptedSearches: number
   successfulSearches: number
+  transport?: BrowserBridgeTransport
   diagnostics?: Array<{
     query?: string
     engine?: string
@@ -53,26 +56,30 @@ export async function browserCompanionAvailable(): Promise<boolean> {
   return typeof window !== 'undefined'
 }
 
-/**
- * Execute the deterministic Occu-Med search plan on the server. SearXNG is the
- * preferred zero-key metasearch transport; bounded direct-engine rescue is
- * handled server-side when the private SearXNG service is unavailable or sparse.
- */
+/** Execute the deterministic Occu-Med search plan through the app server. */
 export async function runBrowserSearchPlan(
   plan: BrowserBridgePlan,
-  timeoutMs = 120_000
+  timeoutMs = 70_000
 ): Promise<BrowserBridgeResult> {
   if (typeof window === 'undefined') throw new Error('Ultra Search retrieval is only available from the app.')
 
-  const response = await fetch('/api/search', {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ plan }),
-    signal: AbortSignal.timeout(timeoutMs),
-  })
+  let response: Response
+  try {
+    response = await fetch('/api/search', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ plan }),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  } catch (error) {
+    if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+      throw new Error(`Search retrieval timed out after ${Math.round(timeoutMs / 1000)} seconds.`)
+    }
+    throw error
+  }
 
   const payload = await response.json().catch(() => null) as (BrowserBridgeResult & {
     error?: string
@@ -88,6 +95,7 @@ export async function runBrowserSearchPlan(
     engines: Array.isArray(payload.engines) ? payload.engines : [],
     attemptedSearches: Number(payload.attemptedSearches || 0),
     successfulSearches: Number(payload.successfulSearches || 0),
+    transport: payload.transport,
     diagnostics: Array.isArray(payload.diagnostics) ? payload.diagnostics : [],
   }
 }
