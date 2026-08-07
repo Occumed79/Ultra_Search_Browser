@@ -29,10 +29,9 @@ export function procurementSubject(query: string): string {
       .replace(/\bfiletype:\S+/gi, ' ')
       .replace(/\bintitle:\S+/gi, ' ')
       .replace(/\binurl:\S+/gi, ' ')
-      .replace(/^pre-employment/, 'pre employment') // Fix "pre-employment" to "pre employment"
-      .replace(/^pre-/, 'pre ') // Handle other "pre-" prefixes
+      .replace(/^pre-employment/, 'pre employment')
+      .replace(/^pre-/, 'pre ')
   )
-  // Return the cleaned subject, or if too short, use a fallback
   if (cleaned.length < 5) {
     return 'occupational health services'
   }
@@ -68,68 +67,64 @@ export function buildProcurementRescueQueries(
   const familyClause = discoveryTerms.length > 0
     ? `(${discoveryTerms.slice(0, 6).map(quotedPhrase).join(' OR ')})`
     : ''
+  const bestAlias = discoveryTerms[0] ? quotedPhrase(discoveryTerms[0]) : ''
+  const subjectAndAlias = bestAlias
+    ? `${quotedSubject} ${bestAlias}`
+    : quotedSubject
 
-  const individualAliasQueries = buyerAliases.flatMap(alias => [
-    `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`,
-  ])
+  const individualAliasQueries = buyerAliases.map(alias =>
+    `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
+  )
 
-  // Military/defense specific queries
   const militaryKeywords = ['deployment', 'military', 'defense', 'dod', 'overseas', 'clearance', 'readiness']
   const isMilitaryQuery = militaryKeywords.some(keyword => query.toLowerCase().includes(keyword))
-  
   const militaryQueries = isMilitaryQuery ? [
-    `site:dibbs.dla.mil ${quotedSubject}`,
-    `site:acquisition.gov ${quotedSubject}`,
-    `site:defense.gov ${quotedSubject} procurement`,
-    `site:dla.mil ${quotedSubject}`,
-    `${quotedSubject} "defense logistics agency"`,
-    `${quotedSubject} "department of defense"`,
-    `${quotedSubject} "military medical"`,
+    `site:acquisition.gov ${subjectAndAlias} procurement`,
+    `site:defense.gov ${subjectAndAlias} procurement`,
+    `site:dla.mil ${subjectAndAlias} procurement`,
+    `${subjectAndAlias} "defense logistics agency" solicitation`,
+    `${subjectAndAlias} "department of defense" solicitation`,
+    `${subjectAndAlias} "military medical" contract`,
   ] : []
 
-  // Simplified queries that are more likely to return results
-  // Use site-specific searches to avoid search engine misinterpretation
-  const simplifiedQueries = [
-    `site:.gov ${quotedSubject} RFP -stock -market -trading`,
-    `site:.gov ${quotedSubject} "request for proposal" -stock -market`,
-    `site:.gov ${quotedSubject} "contract opportunities" -stock -market`,
-    `site:sam.gov ${quotedSubject} opportunities -stock -market`,
-    `site:sam.gov ${quotedSubject} solicitation -stock -market`,
-    `site:bidnetdirect.com ${quotedSubject} "contract opportunities" -stock -market`,
-    `site:rfpmart.com ${quotedSubject} RFP -stock -market`,
-    `site:findrfp.com ${quotedSubject} solicitation -stock -market`,
-    `site:govwin.com ${quotedSubject} "government contract" -stock -market`,
-    `filetype:pdf ${quotedSubject} "request for proposal" -stock -market`,
-    `${quotedSubject} "occupational health" RFP -stock -market -trading`,
-    `${quotedSubject} "medical screening" contract -stock -market`,
+  // The first four queries deliberately represent four different retrieval
+  // strategies. Browser rescue consumes these slots directly, so do not let
+  // one operator-heavy strategy crowd out literal or buyer-language recall.
+  const diversifiedFront = [
+    `${quotedSubject} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`,
+    familyClause
+      ? `${familyClause} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
+      : `${quotedSubject} "contract opportunities" ${currentYear}`,
+    `site:.gov ${subjectAndAlias} (RFP OR solicitation OR "sources sought") ${currentYear}`,
+    `filetype:pdf ${subjectAndAlias} ("request for proposal" OR solicitation) ${currentYear}`,
   ]
 
-  return Array.from(new Set([
-    // Simplified queries first (more likely to return results)
-    ...simplifiedQueries,
-    // Use more specific procurement terminology
-    `${quotedSubject} "contract opportunities" ${currentYear}`,
-    `${quotedSubject} "vendor opportunities" ${currentYear}`,
-    `${quotedSubject} "sources sought" ${currentYear}`,
-    `${quotedSubject} "bid opportunities" ${currentYear}`,
-    // Government procurement portals
-    `site:sam.gov ${quotedSubject} opportunities`,
-    `site:sam.gov ${quotedSubject} solicitation`,
+  const officialAndPortalQueries = [
+    `site:sam.gov ${subjectAndAlias} opportunities`,
+    `site:sam.gov ${subjectAndAlias} solicitation`,
+    `site:.gov ${quotedSubject} "contract opportunities"`,
+    `site:.gov ${quotedSubject} "vendor opportunities"`,
+    `site:.gov ${quotedSubject} "bid opportunities"`,
     `site:bidnetdirect.com ${quotedSubject} "contract opportunities"`,
     `site:rfpmart.com ${quotedSubject} RFP`,
     `site:findrfp.com ${quotedSubject} solicitation`,
     `site:govwin.com ${quotedSubject} "government contract"`,
-    // State and local government
-    `site:.gov ${quotedSubject} "contract opportunities"`,
-    `site:.gov ${quotedSubject} "vendor opportunities"`,
-    `site:.gov ${quotedSubject} "bid opportunities"`,
-    // PDF documents (often contain actual RFPs)
-    `filetype:pdf ${quotedSubject} "request for proposal" ${currentYear}`,
-    `filetype:pdf ${quotedSubject} solicitation ${currentYear}`,
-    // Industry-specific terms
+  ]
+
+  const naturalLanguageQueries = [
+    `${quotedSubject} "contract opportunities" ${currentYear}`,
+    `${quotedSubject} "vendor opportunities" ${currentYear}`,
+    `${quotedSubject} "sources sought" ${currentYear}`,
+    `${quotedSubject} "bid opportunities" ${currentYear}`,
     `${quotedSubject} "healthcare procurement" ${currentYear}`,
     `${quotedSubject} "medical services contract" ${currentYear}`,
+  ]
+
+  return Array.from(new Set([
+    ...diversifiedFront,
     ...individualAliasQueries,
+    ...officialAndPortalQueries,
+    ...naturalLanguageQueries,
     ...militaryQueries,
   ]))
 }
