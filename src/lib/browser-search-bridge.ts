@@ -45,22 +45,12 @@ export interface BrowserBridgeResult {
 }
 
 /**
- * Kept under the historical export name so callers do not need a risky UI rewrite.
- * There is no browser companion anymore: availability now means the app's own
- * server-side retrieval endpoint is reachable.
+ * Historical export name retained to avoid a large caller churn. There is no
+ * browser companion anymore; a normal browser session is sufficient because
+ * retrieval now happens through the app's own server endpoint.
  */
-export async function browserCompanionAvailable(timeoutMs = 3_000): Promise<boolean> {
-  if (typeof window === 'undefined') return false
-  try {
-    const response = await fetch('/api/health', {
-      method: 'GET',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    return response.ok
-  } catch {
-    return false
-  }
+export async function browserCompanionAvailable(): Promise<boolean> {
+  return typeof window !== 'undefined'
 }
 
 /**
