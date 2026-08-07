@@ -145,13 +145,13 @@ function classificationEvidence(record: SamOpportunityRecord): string[] {
 
 function recordDescription(record: SamOpportunityRecord): string {
   // SAM's search response can place a noticedesc API URL in `description`, so
-  // only retain it when it is actual text. The title, organization, PSC/NAICS,
-  // solicitation number, and dates are still enough for candidate-stage gating;
-  // package inspection handles deeper evidence later.
+  // only retain it when it is actual text. Structured notice metadata supplies
+  // procurement evidence until package inspection opens the full notice.
   const rawDescription = record.description?.trim() || ''
   const descriptionText = /^https?:\/\//i.test(rawDescription) ? '' : rawDescription
   const parts = [
     descriptionText,
+    record.type ? `Notice type: ${record.type}` : '',
     ...classificationEvidence(record),
     organization(record),
     record.solicitationNumber ? `Solicitation ${record.solicitationNumber}` : '',
@@ -195,6 +195,7 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
         availability: 'reachable',
         reason: 'Published active opportunity returned by the official SAM.gov Opportunities API.',
         evidence: [
+          record.type ? `Notice type: ${record.type}` : '',
           ...classification,
           record.postedDate ? `Posted: ${record.postedDate}` : '',
           deadline ? `Deadline: ${deadline}` : '',
