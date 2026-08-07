@@ -9,10 +9,10 @@ export async function GET() {
 
   return Response.json({
     searxngSearch: {
-      configured: true,
+      configured: searxngConfigured,
       label: searxngConfigured
-        ? 'Private SearXNG metasearch is configured for zero-key server retrieval'
-        : 'SearXNG transport is enabled; bounded DuckDuckGo/Bing rescue remains available until SEARXNG_URL is configured',
+        ? 'Private SearXNG metasearch is connected for zero-key server retrieval'
+        : 'Private SearXNG is not connected yet; built-in zero-key rescue remains active',
     },
     deterministicIntent: {
       configured: true,
@@ -20,7 +20,7 @@ export async function GET() {
     },
     serverSideSearchRetrieval: {
       configured: true,
-      label: 'Ultra Search retrieves search results server-side — no download or browser extension required',
+      label: 'Ultra Search retrieves results server-side — no download or browser extension required',
     },
     zeroKeyDirectRescue: {
       configured: true,
