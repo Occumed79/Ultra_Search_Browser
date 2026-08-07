@@ -11,18 +11,18 @@ import {
   ShieldCheck,
   Zap,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { DomainPreferencesPanel } from '../../components/domain-preferences-panel'
 import { Switch } from '../../components/ui/switch'
-import { browserCompanionAvailable } from '../../lib/browser-search-bridge'
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../lib/search-settings'
 import { useLocalStorage } from '../../hooks/use-local-storage'
 import type { UserSettings } from '../../types/search'
 
 type CapabilityKey =
-  | 'browserFedSearch'
+  | 'searxngSearch'
   | 'deterministicIntent'
   | 'serverSideSearchRetrieval'
+  | 'zeroKeyDirectRescue'
   | 'database'
   | 'evidenceValidation'
   | 'localEmbeddings'
@@ -40,25 +40,14 @@ const BEHAVIOR_OPTIONS: Array<{ key: BooleanSetting; label: string; description:
   { key: 'showDescriptions', label: 'Show descriptions', description: 'Display result snippets beneath titles' },
 ]
 
-const BROWSER_ENGINES = ['Google', 'Bing', 'DuckDuckGo', 'Brave']
+const SEARXNG_ENGINES = ['Brave', 'DuckDuckGo', 'Startpage', 'Bing', 'Qwant', 'Mojeek', 'Yahoo']
 
 export default function SettingsPage() {
   const [storedSettings, setSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
   const settings = normalizeUserSettings(storedSettings)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
-  const [companionConnected, setCompanionConnected] = useState<boolean | null>(null)
-  const [checkingCompanion, setCheckingCompanion] = useState(false)
   const [saved, setSaved] = useState(false)
   const savedTimer = useRef<number | null>(null)
-
-  const checkCompanion = useCallback(async () => {
-    setCheckingCompanion(true)
-    try {
-      setCompanionConnected(await browserCompanionAvailable(1_000))
-    } finally {
-      setCheckingCompanion(false)
-    }
-  }, [])
 
   useEffect(() => {
     let mounted = true
@@ -73,10 +62,6 @@ export default function SettingsPage() {
       .catch(() => {
         if (mounted) setCapabilities(null)
       })
-
-    void browserCompanionAvailable(1_000).then(connected => {
-      if (mounted) setCompanionConnected(connected)
-    })
 
     return () => {
       mounted = false
@@ -100,15 +85,18 @@ export default function SettingsPage() {
     markSaved()
   }
 
-  const runtimeItems: Array<{ key: CapabilityKey; label: string; icon: typeof Globe; expectedOff?: boolean }> = [
-    { key: 'browserFedSearch', label: 'Browser-fed search core', icon: Globe },
+  const runtimeItems: Array<{ key: CapabilityKey; label: string; icon: typeof Globe }> = [
+    { key: 'serverSideSearchRetrieval', label: 'Website-only retrieval', icon: Globe },
+    { key: 'searxngSearch', label: 'Private SearXNG', icon: Globe },
+    { key: 'zeroKeyDirectRescue', label: 'Zero-key rescue', icon: ShieldCheck },
     { key: 'deterministicIntent', label: 'Occu-Med query planner', icon: Zap },
     { key: 'evidenceValidation', label: 'Deep evidence validation', icon: ShieldCheck },
     { key: 'database', label: 'Pursuit memory', icon: Database },
     { key: 'localEmbeddings', label: 'Local embeddings', icon: Cpu },
     { key: 'ocr', label: 'OCR', icon: ShieldCheck },
-    { key: 'serverSideSearchRetrieval', label: 'Render search-engine retrieval', icon: Globe, expectedOff: true },
   ]
+
+  const searxngConnected = capabilities?.searxngSearch?.configured === true
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -128,7 +116,7 @@ export default function SettingsPage() {
             </div>
             <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white/95">Settings</h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-white/45">
-              Control browser-fed retrieval, result density, and the behaviors that affect Occu-Med opportunity search.
+              Control zero-key metasearch, result density, and the behaviors that affect Occu-Med opportunity search.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -150,59 +138,56 @@ export default function SettingsPage() {
                 <div className="mb-3 flex items-center gap-2">
                   <Globe className="h-5 w-5 text-white/60" />
                   <div>
-                    <h2 className="text-[15px] font-semibold text-white/85">Browser retrieval</h2>
-                    <p className="text-xs text-white/35">The browser searches. Ultra Search plans, filters, validates, and learns.</p>
+                    <h2 className="text-[15px] font-semibold text-white/85">Website-only retrieval</h2>
+                    <p className="text-xs text-white/35">No download. No extension. No search API key.</p>
                   </div>
                 </div>
                 <p className="text-[12px] leading-relaxed text-white/50">
-                  Ultra Search builds targeted Occu-Med procurement queries and hands them to the Browser Companion. The companion opens ordinary search-result pages in your browser and returns only visible result cards for relevance filtering and deep evidence review.
+                  Ultra Search builds targeted Occu-Med procurement queries on the server, sends them through SearXNG when connected, merges the upstream result pool, then applies the same relevance, exclusion, deduplication, validation, and learning gates already used by the app.
                 </p>
               </div>
 
-              <div className="min-w-[180px] rounded-xl border border-white/10 bg-white/[0.03] p-3">
-                <p className="text-[9px] uppercase tracking-[0.12em] text-white/30">Browser Companion</p>
+              <div className="min-w-[190px] rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                <p className="text-[9px] uppercase tracking-[0.12em] text-white/30">Private SearXNG</p>
                 <div className="mt-2 flex items-center gap-2">
-                  <span className={`h-2.5 w-2.5 rounded-full ${companionConnected === true ? 'bg-emerald-300' : companionConnected === false ? 'bg-amber-300' : 'bg-white/20'}`} />
+                  <span className={`h-2.5 w-2.5 rounded-full ${searxngConnected ? 'bg-emerald-300' : 'bg-amber-300'}`} />
                   <span className="text-[12px] font-medium text-white/75">
-                    {checkingCompanion || companionConnected === null ? 'Checking' : companionConnected ? 'Connected' : 'Not detected'}
+                    {capabilities === null ? 'Checking' : searxngConnected ? 'Connected' : 'Rescue mode'}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void checkCompanion()}
-                  disabled={checkingCompanion}
-                  className="mt-3 text-[10px] font-medium text-teal-100/60 transition-colors hover:text-teal-100 disabled:opacity-40"
-                >
-                  Check again
-                </button>
+                <p className="mt-2 text-[10px] leading-relaxed text-white/30">
+                  {capabilities?.searxngSearch?.label ?? 'Checking server retrieval status'}
+                </p>
               </div>
             </div>
 
-            <div className="mt-5 grid gap-2 sm:grid-cols-2">
+            <div className="mt-5 grid gap-2 sm:grid-cols-3">
               <div className="rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] px-4 py-3">
-                <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-200/55">Core search API keys</p>
+                <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-200/55">Search API keys</p>
                 <p className="mt-1 text-[13px] font-medium text-emerald-100/80">Not required</p>
               </div>
-              <div className="rounded-xl border border-white/8 bg-white/[0.025] px-4 py-3">
-                <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">Render search engine</p>
-                <p className="mt-1 text-[13px] font-medium text-white/65">Disabled by design</p>
+              <div className="rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-200/55">Browser extension</p>
+                <p className="mt-1 text-[13px] font-medium text-emerald-100/80">Not required</p>
+              </div>
+              <div className="rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] px-4 py-3">
+                <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-200/55">Local download</p>
+                <p className="mt-1 text-[13px] font-medium text-emerald-100/80">Not required</p>
               </div>
             </div>
 
             <div className="mt-5 border-t border-white/8 pt-5">
-              <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">Browser search fallbacks</p>
+              <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">SearXNG web ensemble</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {BROWSER_ENGINES.map(engine => (
+                {SEARXNG_ENGINES.map(engine => (
                   <span key={engine} className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] text-white/45">
                     {engine}
                   </span>
                 ))}
               </div>
-              {companionConnected === false && (
-                <p className="mt-3 text-[11px] leading-relaxed text-amber-100/55">
-                  Load the repository&apos;s <code className="rounded bg-black/25 px-1 py-0.5 text-[10px]">browser-extension</code> folder as an unpacked Chrome/Chromium extension, then use Check again.
-                </p>
-              )}
+              <p className="mt-3 text-[11px] leading-relaxed text-white/35">
+                If the private SearXNG pool is unavailable or too sparse, Ultra Search can make a small zero-key DuckDuckGo/Bing rescue pass so the app does not become unusable.
+              </p>
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-4 border-t border-white/8 pt-5">
@@ -269,19 +254,18 @@ export default function SettingsPage() {
               {runtimeItems.map(item => {
                 const capability = capabilities?.[item.key]
                 const configured = capability?.configured === true
-                const healthy = item.expectedOff ? capability?.configured === false : configured
                 const Icon = item.icon
                 return (
                   <div key={item.key} className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
-                    <div className={`flex h-9 w-9 items-center justify-center rounded-xl border ${healthy ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/75' : 'border-white/8 bg-white/[0.035] text-white/30'}`}>
+                    <div className={`flex h-9 w-9 items-center justify-center rounded-xl border ${configured ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/75' : 'border-white/8 bg-white/[0.035] text-white/30'}`}>
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-[12px] font-medium text-white/75">{item.label}</p>
                       <p className="text-[10px] leading-relaxed text-white/30">{capability?.label ?? 'Checking runtime status'}</p>
                     </div>
-                    <span className={`rounded-full border px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em] ${healthy ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/70' : 'border-white/10 bg-white/[0.03] text-white/30'}`}>
-                      {capabilities === null ? 'Unknown' : item.expectedOff ? (configured ? 'On' : 'Off') : (configured ? 'On' : 'Optional')}
+                    <span className={`rounded-full border px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em] ${configured ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/70' : 'border-white/10 bg-white/[0.03] text-white/30'}`}>
+                      {capabilities === null ? 'Unknown' : configured ? 'On' : 'Optional'}
                     </span>
                   </div>
                 )
