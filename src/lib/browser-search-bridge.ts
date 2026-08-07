@@ -14,7 +14,7 @@ export interface BrowserBridgePlan {
   lens: 'procurement'
   intent: SemanticIntentPlan
   searches: BrowserBridgeSearchVariant[]
-  transport: 'browser-extension'
+  transport: 'searxng'
   apiKeysRequired: false
   maxResultsPerSearch: number
   timestamp: string
@@ -44,83 +44,60 @@ export interface BrowserBridgeResult {
   }>
 }
 
-const APP_SOURCE = 'ultra-search-app'
-const EXTENSION_SOURCE = 'ultra-search-extension'
-
-function requestId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID()
-  return `usb-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function isExtensionMessage(event: MessageEvent): boolean {
-  return event.source === window
-    && Boolean(event.data)
-    && event.data.source === EXTENSION_SOURCE
-}
-
-export async function browserCompanionAvailable(timeoutMs = 750): Promise<boolean> {
+/**
+ * Kept under the historical export name so callers do not need a risky UI rewrite.
+ * There is no browser companion anymore: availability now means the app's own
+ * server-side retrieval endpoint is reachable.
+ */
+export async function browserCompanionAvailable(timeoutMs = 3_000): Promise<boolean> {
   if (typeof window === 'undefined') return false
-  const id = requestId()
-
-  return new Promise(resolve => {
-    let settled = false
-    const finish = (value: boolean) => {
-      if (settled) return
-      settled = true
-      window.removeEventListener('message', onMessage)
-      clearTimeout(timer)
-      resolve(value)
-    }
-    const onMessage = (event: MessageEvent) => {
-      if (!isExtensionMessage(event)) return
-      if (event.data.type === 'ULTRA_SEARCH_PONG' && event.data.requestId === id) finish(true)
-    }
-    const timer = window.setTimeout(() => finish(false), timeoutMs)
-    window.addEventListener('message', onMessage)
-    window.postMessage({ source: APP_SOURCE, type: 'ULTRA_SEARCH_PING', requestId: id }, window.location.origin)
-  })
+  try {
+    const response = await fetch('/api/health', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
+/**
+ * Execute the deterministic Occu-Med search plan on the server. SearXNG is the
+ * preferred zero-key metasearch transport; bounded direct-engine rescue is
+ * handled server-side when the private SearXNG service is unavailable or sparse.
+ */
 export async function runBrowserSearchPlan(
   plan: BrowserBridgePlan,
   timeoutMs = 120_000
 ): Promise<BrowserBridgeResult> {
-  if (typeof window === 'undefined') throw new Error('Browser search is only available in the browser.')
-  const id = requestId()
+  if (typeof window === 'undefined') throw new Error('Ultra Search retrieval is only available from the app.')
 
-  return new Promise((resolve, reject) => {
-    let settled = false
-    const finish = (callback: () => void) => {
-      if (settled) return
-      settled = true
-      window.removeEventListener('message', onMessage)
-      clearTimeout(timer)
-      callback()
-    }
-    const onMessage = (event: MessageEvent) => {
-      if (!isExtensionMessage(event) || event.data.requestId !== id) return
-      if (event.data.type === 'ULTRA_SEARCH_RESULTS') {
-        finish(() => resolve({
-          results: Array.isArray(event.data.results) ? event.data.results : [],
-          engines: Array.isArray(event.data.engines) ? event.data.engines : [],
-          attemptedSearches: Number(event.data.attemptedSearches || 0),
-          successfulSearches: Number(event.data.successfulSearches || 0),
-          diagnostics: Array.isArray(event.data.diagnostics) ? event.data.diagnostics : [],
-        }))
-      } else if (event.data.type === 'ULTRA_SEARCH_ERROR') {
-        finish(() => reject(new Error(event.data.error || 'Browser companion search failed.')))
-      }
-    }
-    const timer = window.setTimeout(() => {
-      finish(() => reject(new Error('Browser companion did not finish the search plan.')))
-    }, timeoutMs)
-
-    window.addEventListener('message', onMessage)
-    window.postMessage({
-      source: APP_SOURCE,
-      type: 'ULTRA_SEARCH_RUN',
-      requestId: id,
-      plan,
-    }, window.location.origin)
+  const response = await fetch('/api/search', {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ plan }),
+    signal: AbortSignal.timeout(timeoutMs),
   })
+
+  const payload = await response.json().catch(() => null) as (BrowserBridgeResult & {
+    error?: string
+    detail?: string
+  }) | null
+
+  if (!response.ok || !payload) {
+    throw new Error(payload?.detail || payload?.error || `Search retrieval failed (HTTP ${response.status}).`)
+  }
+
+  return {
+    results: Array.isArray(payload.results) ? payload.results : [],
+    engines: Array.isArray(payload.engines) ? payload.engines : [],
+    attemptedSearches: Number(payload.attemptedSearches || 0),
+    successfulSearches: Number(payload.successfulSearches || 0),
+    diagnostics: Array.isArray(payload.diagnostics) ? payload.diagnostics : [],
+  }
 }
