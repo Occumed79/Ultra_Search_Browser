@@ -3,6 +3,7 @@ import { externalSmartFilterCapabilities } from '../../../lib/external-smart-fil
 import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historical-pursuits'
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
+import { isSearxngConfigured } from '../../../lib/searxng'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,18 +19,24 @@ function deployedCommit(): string {
 function healthPayload() {
   const providers = externalSmartFilterCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
+  const searxngConfigured = isSearxngConfigured()
 
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    productMode: 'rfp-finder-browser-fed',
-    searchPipeline: 'rfp-finder-v5-browser-fed-zero-key',
+    productMode: 'rfp-finder-searxng',
+    searchPipeline: 'rfp-finder-v6-searxng-zero-key',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
-      browserFedSearch: true,
-      browserCompanionRequired: true,
-      serverSideSearchRetrieval: false,
+      browserFedSearch: false,
+      browserCompanionRequired: false,
+      downloadsRequired: false,
+      extensionsRequired: false,
+      serverSideSearchRetrieval: true,
+      searxngSearch: true,
+      searxngConfigured,
+      zeroKeyDirectRescue: true,
       coreSearchApiKeysRequired: false,
       deterministicIntentPlanning: true,
       structuredIntentPlanning: true,
@@ -72,17 +79,13 @@ function healthPayload() {
 
 export async function GET() {
   return Response.json(healthPayload(), {
-    headers: {
-      'Cache-Control': 'no-store, max-age=0',
-    },
+    headers: { 'Cache-Control': 'no-store, max-age=0' },
   })
 }
 
 export async function HEAD() {
   return new Response(null, {
     status: 200,
-    headers: {
-      'Cache-Control': 'no-store, max-age=0',
-    },
+    headers: { 'Cache-Control': 'no-store, max-age=0' },
   })
 }
