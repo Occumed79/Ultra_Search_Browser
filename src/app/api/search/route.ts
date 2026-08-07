@@ -6,7 +6,11 @@ import {
 } from '../../../lib/browser-search-pipeline'
 import { searchBingHTML, searchDuckDuckGo } from '../../../lib/search'
 import { searchSearXNG } from '../../../lib/searxng'
+import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
 import type { ScrapedResult } from '../../../types/search'
+
+const SEARCH_BUDGET_MS = 50_000
+const SEARX_VARIANT_TIMEOUT_MS = 10_000
 
 interface RetrievalCandidate {
   title: string
@@ -29,8 +33,9 @@ interface RetrievalDiagnostic {
 function coercePlan(value: unknown): BrowserSearchPlan | null {
   if (!value || typeof value !== 'object') return null
   const candidate = value as Partial<BrowserSearchPlan>
-  if (!candidate.query || !Array.isArray(candidate.searches) || candidate.searches.length === 0) return null
-  return buildBrowserSearchPlan(candidate.query, Math.min(12, candidate.searches.length))
+  if (typeof candidate.query !== 'string' || !candidate.query.trim()) return null
+  if (!Array.isArray(candidate.searches) || candidate.searches.length === 0) return null
+  return buildBrowserSearchPlan(candidate.query.trim(), Math.min(12, candidate.searches.length))
 }
 
 function toCandidates(results: ScrapedResult[], variant: BrowserSearchVariant, sourcePrefix?: string): RetrievalCandidate[] {
@@ -51,7 +56,7 @@ async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number
     safeSearch: true,
     preferredLanguage: 'en',
     maxResults,
-    timeoutMs: 15_000,
+    timeoutMs: SEARX_VARIANT_TIMEOUT_MS,
   })
 
   return {
@@ -98,19 +103,27 @@ async function runDirectRescue(variant: BrowserSearchVariant) {
   return { candidates, diagnostics, engines }
 }
 
+function transportFor(searxCandidates: number, rescueCandidates: number): SearchRetrievalTransport {
+  if (searxCandidates > 0 && rescueCandidates > 0) return 'searxng+direct-rescue'
+  if (rescueCandidates > 0) return 'zero-key-direct-rescue'
+  return 'searxng'
+}
+
 /**
  * Zero-install, zero-search-key retrieval endpoint.
  *
- * The normal web app calls this endpoint directly. Private SearXNG is the
- * preferred metasearch layer. If it is not configured/reachable or returns a
- * sparse pool, a bounded DuckDuckGo/Bing HTML rescue keeps the single-user app
- * usable without extensions, downloads, or paid search APIs.
+ * Private SearXNG is the preferred metasearch layer. If it is not configured,
+ * unreachable, or sparse, a bounded DuckDuckGo/Bing HTML rescue keeps this
+ * single-user internal app usable without extensions, downloads, or paid search APIs.
  */
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now()
+
   try {
-    const body = (await request.json()) as { query?: string; plan?: unknown }
+    const body = (await request.json()) as { query?: unknown; plan?: unknown }
     const suppliedPlan = coercePlan(body.plan)
-    const query = suppliedPlan?.query || body.query?.trim() || ''
+    const directQuery = typeof body.query === 'string' ? body.query.trim() : ''
+    const query = suppliedPlan?.query || directQuery
     if (!query) return NextResponse.json({ error: 'Query is required' }, { status: 400 })
 
     const plan = suppliedPlan || buildBrowserSearchPlan(query, 8)
@@ -120,32 +133,43 @@ export async function POST(request: NextRequest) {
     const engines = new Set<string>()
     let successfulSearches = 0
     let searxConfigured = true
+    let searxCandidateCount = 0
+    let rescueCandidateCount = 0
 
-    // SearXNG is deliberately bounded to three concurrent query variants so a
-    // single user search does not stampede upstream engines.
+    // Three-at-a-time waves limit pressure on the private metasearch service.
     for (let start = 0; start < variants.length; start += 3) {
+      if (Date.now() - startedAt >= SEARCH_BUDGET_MS - 10_000) {
+        diagnostics.push({ query, engine: 'SearXNG', resultCount: 0, error: 'Search request budget reached before all SearXNG waves completed.' })
+        break
+      }
+
       const wave = variants.slice(start, start + 3)
       const results = await Promise.all(wave.map(variant => runSearxVariant(variant, plan.maxResultsPerSearch)))
       for (const result of results) {
         diagnostics.push(result.diagnostic)
         result.engines.forEach(engine => engines.add(engine))
         allCandidates.push(...result.candidates)
+        searxCandidateCount += result.candidates.length
         if (result.ok) successfulSearches += 1
         if (!result.configured) searxConfigured = false
       }
     }
 
-    // Rescue only when the metasearch pool is sparse. This path is intentionally
-    // small and never uses API keys.
-    if (allCandidates.length < 12) {
-      for (const variant of variants.slice(0, 4)) {
-        const rescue = await runDirectRescue(variant)
+    // Rescue only when the metasearch pool is sparse. Run variants concurrently
+    // so the worst case is bounded by one scraper timeout wave instead of four.
+    if (allCandidates.length < 12 && Date.now() - startedAt < SEARCH_BUDGET_MS - 5_000) {
+      const rescues = await Promise.all(variants.slice(0, 4).map(variant => runDirectRescue(variant)))
+      for (const rescue of rescues) {
         diagnostics.push(...rescue.diagnostics)
         rescue.engines.forEach(engine => engines.add(engine))
         if (rescue.candidates.length > 0) successfulSearches += 1
+        rescueCandidateCount += rescue.candidates.length
         allCandidates.push(...rescue.candidates)
       }
     }
+
+    const transport = transportFor(searxCandidateCount, rescueCandidateCount)
+    const runtimeMs = Date.now() - startedAt
 
     if (allCandidates.length === 0) {
       return NextResponse.json({
@@ -154,10 +178,12 @@ export async function POST(request: NextRequest) {
         detail: searxConfigured
           ? 'SearXNG and the bounded direct-engine rescue returned no usable search results.'
           : 'Private SearXNG is not configured, and the zero-key direct-engine rescue was unable to return results.',
-        transport: 'searxng',
+        transport,
+        searxngConfigured: searxConfigured,
         apiKeysRequired: false,
         attemptedSearches: variants.length,
         successfulSearches,
+        runtimeMs,
         diagnostics,
       }, { status: 502 })
     }
@@ -168,9 +194,14 @@ export async function POST(request: NextRequest) {
       attemptedSearches: variants.length,
       successfulSearches,
       diagnostics,
-      transport: searxConfigured ? 'searxng' : 'zero-key-direct-rescue',
+      transport,
       searxngConfigured: searxConfigured,
       apiKeysRequired: false,
+      runtimeMs,
+      candidateCounts: {
+        searxng: searxCandidateCount,
+        directRescue: rescueCandidateCount,
+      },
     }, {
       headers: { 'Cache-Control': 'no-store, max-age=0' },
     })
