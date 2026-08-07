@@ -30,6 +30,28 @@ test('managed search inventory reports key pools without exposing keys', () => {
   assert.doesNotMatch(JSON.stringify(capabilities), /first-key|second-key|third-key|fourth-key/)
 })
 
+test('managed search recognizes provider-specific Render key aliases and trial slots', () => {
+  const environment: ManagedSearchEnvironment = {
+    SERPER_KEY: 'serper-alias',
+    YOUCOM_API_KEY: 'you-alias',
+    PARALLEL_SEARCH_API_KEY: 'parallel-alias',
+    LINKUP_API_TOKEN: 'linkup-alias',
+    EXA_SEARCH_KEY: 'exa-alias',
+    LANG_SEARCH_API_KEY: 'lang-alias',
+    FIRECRAWL_TOKEN: 'firecrawl-alias',
+    OLOSTEP_SEARCH_KEY: 'olostep-alias',
+    OLOSTEP_SEARCH_KEY_2: 'olostep-second',
+  }
+  const capabilities = managedSearchCapabilities(environment)
+
+  assert.deepEqual(
+    capabilities.configuredProviders,
+    ['serper', 'you', 'parallel', 'linkup', 'exa', 'langsearch', 'firecrawl', 'olostep']
+  )
+  assert.equal(capabilities.providers.find(provider => provider.provider === 'olostep')?.keyCount, 2)
+  assert.doesNotMatch(JSON.stringify(capabilities), /-alias|olostep-second/)
+})
+
 test('rate-limited trial keys rotate before the provider is failed', async () => {
   const environment: ManagedSearchEnvironment = {
     LANGSEARCH_API_KEY: 'trial-one',

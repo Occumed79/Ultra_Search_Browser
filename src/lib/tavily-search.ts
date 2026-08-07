@@ -2,6 +2,13 @@ import type { ScrapedResult } from '../types/search'
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search'
 const TAVILY_TIMEOUT_MS = 8_000
+const TAVILY_ENV_KEYS = [
+  'TAVILY_API_KEY',
+  'TAVILY_KEY',
+  'TAVILY_API',
+  'TAVILY_SEARCH_API_KEY',
+  'TAVILY_TOKEN',
+] as const
 
 interface TavilySearchResult {
   title?: unknown
@@ -82,8 +89,21 @@ function normalizeResults(payload: TavilySearchEnvelope, query: string, limit: n
   return results
 }
 
+function tavilyApiKey(environment: NodeJS.ProcessEnv): string {
+  for (const name of TAVILY_ENV_KEYS) {
+    const value = environment[name]?.trim()
+    if (value) return value
+  }
+  const inferred = Object.entries(environment).find(([name, value]) =>
+    name.toUpperCase().startsWith('TAVILY_')
+    && /(?:^|_)(?:KEY|TOKEN)(?:_|$)/.test(name.toUpperCase())
+    && Boolean(value?.trim())
+  )
+  return inferred?.[1]?.trim() || ''
+}
+
 export function tavilySearchConfigured(environment: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(environment.TAVILY_API_KEY?.trim())
+  return Boolean(tavilyApiKey(environment))
 }
 
 export async function searchTavilyWeb(
@@ -93,7 +113,7 @@ export async function searchTavilyWeb(
   fetchImpl: typeof fetch = fetch
 ): Promise<{ results: ScrapedResult[]; diagnostics: TavilySearchDiagnostics }> {
   const startedAt = Date.now()
-  const apiKey = environment.TAVILY_API_KEY?.trim()
+  const apiKey = tavilyApiKey(environment)
   if (!apiKey) {
     return {
       results: [],
