@@ -19,6 +19,7 @@ const VALID_LENSES = new Set<SearchLens>([
   'web', 'pdf', 'government', 'procurement', 'pricing', 'provider',
   'technical', 'news', 'legal', 'medical', 'academic', 'financial',
 ])
+const PRODUCTION_SMOKE_QUERY = 'Occupational Health Services RFP production validation'
 
 interface ValidationRequest {
   query?: string
@@ -89,12 +90,12 @@ function applyLearnedOrder<T extends { url: string }>(results: T[], learned: Scr
     .sort((left, right) => (rankByUrl.get(left.url)?.rank || 9_999) - (rankByUrl.get(right.url)?.rank || 9_999))
 }
 
-function isProductionSmokeFixture(request: NextRequest, result: ScrapedResult): boolean {
+function isProductionSmokeFixture(result: ScrapedResult): boolean {
   try {
     const url = new URL(result.url)
     return result.source === 'production-smoke'
-      && url.hostname === request.nextUrl.hostname
       && url.pathname === '/search-validation-evidence.txt'
+      && /^Synthetic Occupational Health Services RFP\b/i.test(result.title)
   } catch {
     return false
   }
@@ -118,8 +119,9 @@ export async function POST(request: NextRequest) {
     ? Math.max(1, Math.min(60, Number(body.maxTargets)))
     : undefined
   const testMode = body.testMode === true
+    && query === PRODUCTION_SMOKE_QUERY
     && results.length === 1
-    && results.every(result => isProductionSmokeFixture(request, result))
+    && results.every(isProductionSmokeFixture)
 
   if (!query) return Response.json({ error: 'Query is required' }, { status: 400 })
   if (results.length === 0) return Response.json({ error: 'At least one result is required' }, { status: 400 })
