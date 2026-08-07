@@ -16,6 +16,11 @@ test('Tavily rescue is disabled without the configured trial key', async () => {
   assert.deepEqual(response.results, [])
 })
 
+test('Tavily recognizes provider-specific Render key aliases', () => {
+  assert.equal(tavilySearchConfigured({ TAVILY_KEY: 'tvly-alias' } as NodeJS.ProcessEnv), true)
+  assert.equal(tavilySearchConfigured({ TAVILY_SEARCH_TOKEN: 'tvly-token' } as NodeJS.ProcessEnv), true)
+})
+
 test('Tavily uses the current bearer-auth search contract and normalizes web results', async () => {
   let requestedUrl = ''
   let authorization = ''
@@ -24,7 +29,7 @@ test('Tavily uses the current bearer-auth search contract and normalizes web res
   const response = await searchTavilyWeb(
     'Occupational Health Services RFP',
     10,
-    { TAVILY_API_KEY: 'tvly-test-key' } as NodeJS.ProcessEnv,
+    { TAVILY_KEY: 'tvly-test-key' } as NodeJS.ProcessEnv,
     async (input, init) => {
       requestedUrl = String(input)
       authorization = new Headers(init?.headers).get('Authorization') || ''
