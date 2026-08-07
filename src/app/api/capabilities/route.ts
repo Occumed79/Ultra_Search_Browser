@@ -26,7 +26,7 @@ export async function GET() {
     },
     zeroKeyDirectRescue: {
       configured: true,
-      label: 'Bounded DuckDuckGo/Bing rescue keeps retrieval key-free when SearXNG is sparse or unavailable',
+      label: 'Bounded Google/DuckDuckGo/Bing rescue keeps retrieval key-free when SearXNG is sparse or unavailable',
     },
     database: {
       configured: Boolean(process.env.DATABASE_URL),
