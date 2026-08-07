@@ -13,6 +13,7 @@ const FORBIDDEN_HOSTS = new Set([
 const GENERIC_PROCUREMENT_TITLES = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|therapy)\b/i
 const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
 const PROCUREMENT_PORTALS = /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
+const EXPECTED_PIPELINE = 'rfp-finder-v4-package-intelligence-learning'
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
@@ -59,7 +60,8 @@ async function waitForDeployment() {
       if (
         response.ok
         && health.status === 'ok'
-        && health.searchPipeline === 'orchestrated-v10-browser-search-fallback'
+        && health.productMode === 'rfp-finder-www'
+        && health.searchPipeline === EXPECTED_PIPELINE
         && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
       ) return health
     } catch (error) {
@@ -93,13 +95,33 @@ function assertProcurementQuality(results) {
   }
 }
 
-async function runSearch(query, lens, health, expectations = {}) {
+function assertDiversifiedProcurementRescue(diagnostics) {
+  const rescue = diagnostics.procurementRescue || {}
+  const queries = Array.isArray(rescue.queries) ? rescue.queries.slice(0, 4) : []
+  if (Number(rescue.attemptedTasks || 0) < 4) {
+    throw new Error(`Procurement rescue did not fan out across enough tasks: ${JSON.stringify(rescue).slice(0, 1_500)}`)
+  }
+  if (queries.length < 4) {
+    throw new Error(`Procurement rescue did not expose four primary strategies: ${JSON.stringify(rescue).slice(0, 1_500)}`)
+  }
+  if (/\b(?:site:|filetype:)/i.test(queries[0])) {
+    throw new Error(`Literal procurement strategy was replaced by an operator-only query: ${queries[0]}`)
+  }
+  if (!/site:\.gov/i.test(queries[2])) {
+    throw new Error(`Official-government strategy missing from rescue slot 3: ${queries[2]}`)
+  }
+  if (!/filetype:pdf/i.test(queries[3])) {
+    throw new Error(`Direct-document strategy missing from rescue slot 4: ${queries[3]}`)
+  }
+}
+
+async function runSearch(query, health, expectations = {}) {
   const response = await fetch(`${APP_URL}/api/search`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({
       query,
-      lens,
+      lens: 'procurement',
       settings: {
         defaultSources: ['bing', 'duckduckgo', 'mojeek', 'memory'],
         resultsPerPage: 20,
@@ -112,36 +134,28 @@ async function runSearch(query, lens, health, expectations = {}) {
     signal: AbortSignal.timeout(75_000),
   })
   const data = await readJson(response)
-  if (!response.ok) throw new Error(`${lens} search HTTP ${response.status}: ${JSON.stringify(data).slice(0, 1_500)}`)
+  if (!response.ok) throw new Error(`procurement search HTTP ${response.status}: ${JSON.stringify(data).slice(0, 1_500)}`)
   if (!Array.isArray(data.results) || data.results.length === 0) {
-    throw new Error(`${lens} search returned no candidates: ${JSON.stringify(data.diagnostics || data).slice(0, 1_500)}`)
+    throw new Error(`procurement search returned no candidates: ${JSON.stringify(data.diagnostics || data).slice(0, 1_500)}`)
   }
-  assertCandidateUrls(data.results, lens)
+  assertCandidateUrls(data.results, 'procurement')
 
   const diagnostics = data.diagnostics || {}
-  if (Number(diagnostics.attemptedLiveTasks || 0) < 3) throw new Error(`${lens} did not fan out across live tasks.`)
   if (
     !data.intent
     || !Array.isArray(data.intent.conceptGroups)
     || data.intent.conceptGroups.length === 0
   ) {
-    throw new Error(`${lens} did not return a structured intent plan: ${JSON.stringify(data.intent)}`)
+    throw new Error(`Procurement search did not return a structured intent plan: ${JSON.stringify(data.intent)}`)
   }
-
-  if (expectations.expectedLens && data.lens !== expectations.expectedLens) {
-    throw new Error(`Expected ${expectations.expectedLens} lens but production returned ${data.lens}.`)
+  if (data.lens !== 'procurement') {
+    throw new Error(`Expected procurement lens but production returned ${data.lens}.`)
   }
-  if (expectations.autoRouted) {
-    if (diagnostics.lensRouting?.autoRouted !== true) {
-      throw new Error(`Production did not report automatic lens routing: ${JSON.stringify(diagnostics.lensRouting)}`)
-    }
+  if (diagnostics.intentGate?.applied !== true) {
+    throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
   }
-  if (expectations.requireIntentGate) {
-    if (diagnostics.intentGate?.applied !== true) {
-      throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
-    }
-  }
-  if (expectations.procurementQuality) assertProcurementQuality(data.results)
+  if (expectations.requireDiversifiedRescue) assertDiversifiedProcurementRescue(diagnostics)
+  assertProcurementQuality(data.results)
   if (Number(data.confidence || 0) !== 0) {
     throw new Error(`Candidate-stage confidence must be 0, received ${data.confidence}.`)
   }
@@ -149,8 +163,9 @@ async function runSearch(query, lens, health, expectations = {}) {
     throw new Error(`Candidate-stage search returned a premature summary: ${data.summary}`)
   }
 
-  console.log(`[${lens}->${data.lens}] candidates=${data.results.length}; live=${diagnostics.successfulLiveTasks}/${diagnostics.attemptedLiveTasks}; memory=${diagnostics.memoryKeywordMatches}/${diagnostics.memoryVectorMatches}`)
-  for (const result of data.results.slice(0, 3)) console.log(`[${data.lens}] ${result.source} · ${result.title} — ${result.url}`)
+  const rescue = diagnostics.procurementRescue || {}
+  console.log(`[procurement] candidates=${data.results.length}; rescue=${rescue.successfulTasks || 0}/${rescue.attemptedTasks || 0}; memory=${diagnostics.memoryKeywordMatches || 0}/${diagnostics.memoryVectorMatches || 0}`)
+  for (const result of data.results.slice(0, 3)) console.log(`[procurement] ${result.source} · ${result.title} — ${result.url}`)
   return data
 }
 
@@ -233,15 +248,8 @@ async function main() {
   console.log(`Production deployment ready: ${health.commit}`)
   console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
 
-  await runSearch('occupational health services', 'web', health, {
-    expectedLens: 'provider',
-    autoRouted: true,
-  })
-  await runSearch('Occupational Health Services RFP', 'web', health, {
-    expectedLens: 'procurement',
-    autoRouted: true,
-    requireIntentGate: true,
-    procurementQuality: true,
+  await runSearch('Occupational Health Services RFP', health, {
+    requireDiversifiedRescue: true,
   })
   await runEvidenceValidation()
 
