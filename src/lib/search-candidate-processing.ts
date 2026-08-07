@@ -10,7 +10,7 @@ import { applyIntentCandidateGate } from './search-intent-gate'
 import { buildSearchPlan } from './search-settings'
 import { insertSearchResult, insertSearchRun } from './search-storage'
 
-export type SearchRetrievalTransport = 'searxng' | 'browser-extension' | 'fixture'
+export type SearchRetrievalTransport = 'searxng' | 'zero-key-direct-rescue' | 'searxng+direct-rescue' | 'fixture'
 
 export interface ProcessSearchCandidatesInput {
   query: string
@@ -61,6 +61,7 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
   let searchRunId: string | null = null
   const persistedResultIds = new Map<string, string>()
   const shouldPersist = input.persist !== false
+  let persistenceFailures = 0
 
   if (shouldPersist) {
     try {
@@ -111,10 +112,18 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
         )
 
         for (const item of persisted) {
-          if (item.status === 'fulfilled' && item.value.id) persistedResultIds.set(item.value.url, item.value.id)
+          if (item.status === 'fulfilled' && item.value.id) {
+            persistedResultIds.set(item.value.url, item.value.id)
+          } else if (item.status === 'rejected') {
+            persistenceFailures += 1
+          }
+        }
+        if (persistenceFailures > 0) {
+          console.warn(`Search result persistence failed for ${persistenceFailures} rows.`)
         }
       }
     } catch (error) {
+      persistenceFailures = Math.max(persistenceFailures, rankedResults.slice(0, 40).length || 1)
       console.warn('Search candidate persistence failed:', error)
     }
   }
@@ -148,7 +157,9 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
       intentGate: intentGate.diagnostics,
       smartFilter: smartFilter.diagnostics,
       productMode: input.productMode,
-      persisted: shouldPersist,
+      persistenceAttempted: shouldPersist,
+      persistenceFailures,
+      persisted: shouldPersist && persistenceFailures === 0,
     },
   }
 }
