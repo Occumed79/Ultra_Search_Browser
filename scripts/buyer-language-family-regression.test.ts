@@ -50,14 +50,29 @@ test('occupational-health program management expands beyond the literal phrase',
   assert.match(firstFour, /occupational health|employee health|medical surveillance program management|medical review/i)
 })
 
-test('public indexes receive both literal and expanded buyer-language searches', () => {
+test('first four rescue queries preserve four complementary retrieval strategies', () => {
+  const queries = buildProcurementRescueQueries(
+    'Pre-deployment health assessment',
+    buildDeterministicSemanticIntent('Pre-deployment health assessment', 'procurement')
+  )
+  const firstFour = queries.slice(0, 4)
+
+  assert.equal(firstFour.length, 4)
+  assert.doesNotMatch(firstFour[0], /\b(?:site:|filetype:)/i)
+  assert.match(firstFour[1], /deployment medical|medical readiness|contractor medical clearance/i)
+  assert.match(firstFour[2], /site:\.gov/i)
+  assert.match(firstFour[3], /filetype:pdf/i)
+})
+
+test('public indexes receive literal, expanded, official, and document searches', () => {
   const queries = buildProcurementRescueQueries('Pre-deployment health assessment')
   const tasks = buildProcurementBrowserRescueTasks(queries)
 
   assert.equal(tasks.filter(task => task.source === 'bing').length, 4)
   assert.ok(tasks.some(task => task.source === 'duckduckgo' && task.query === queries[0]))
   assert.ok(tasks.some(task => task.source === 'mojeek' && task.query === queries[1]))
-  assert.ok(tasks.some(task => task.source === 'brave' && task.query === queries[1]))
+  assert.ok(tasks.some(task => task.source === 'yahoo' && task.query === queries[2]))
+  assert.ok(tasks.some(task => task.source === 'brave' && task.query === queries[3]))
 })
 
 test('capability-family gate retains medical-readiness procurement wording', () => {
