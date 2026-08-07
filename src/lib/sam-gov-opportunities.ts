@@ -6,9 +6,6 @@ const SAM_TIMEOUT_MS = 9_000
 const MAX_LOOKBACK_DAYS = 364
 const MAX_SAM_STRATEGIES = 8
 
-// One compact anchor per Occu-Med capability family. These are deliberately
-// buyer-facing phrases that commonly appear in solicitation titles. They run
-// only inside the weak-coverage rescue path, not on every normal search.
 const OCCUMED_SAM_TITLE_ANCHORS = [
   'occupational health',
   'OCONUS medical',
@@ -85,9 +82,6 @@ function samSearchSpecs(query: string): SamSearchSpec[] {
     ...(buyerAliases[0]
       ? [{ label: `buyer-title:${buyerAliases[0]}`, params: { title: buyerAliases[0] } }]
       : []),
-    // Q533 is the federal PSC for Occupational & Public Health Services and is
-    // substantially more reliable than expecting every buyer to use one exact
-    // occupational-health phrase in the notice title.
     { label: 'psc:Q533', params: { ccode: 'Q533' } },
     ...OCCUMED_SAM_TITLE_ANCHORS.map(title => ({
       label: `capability-title:${title}`,
@@ -139,14 +133,12 @@ function classificationEvidence(record: SamOpportunityRecord): string[] {
   return [
     psc ? `PSC ${psc}` : '',
     psc === 'Q533' ? 'Occupational and public health services' : '',
+    psc === 'Q533' ? 'Occupational health services' : '',
     record.naicsCode ? `NAICS ${record.naicsCode}` : '',
   ].filter(Boolean)
 }
 
 function recordDescription(record: SamOpportunityRecord): string {
-  // SAM's search response can place a noticedesc API URL in `description`, so
-  // only retain it when it is actual text. Structured notice metadata supplies
-  // procurement evidence until package inspection opens the full notice.
   const rawDescription = record.description?.trim() || ''
   const descriptionText = /^https?:\/\//i.test(rawDescription) ? '' : rawDescription
   const parts = [
