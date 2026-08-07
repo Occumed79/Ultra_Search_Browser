@@ -1,4 +1,8 @@
 import {
+  searchBraveApi,
+  type BraveApiSearchDiagnostics,
+} from './brave-search-api'
+import {
   geminiGroundedSearchCapabilities,
   searchGeminiGroundedWeb,
   type GeminiGroundedSearchDiagnostics,
@@ -27,6 +31,7 @@ export interface ProcurementRescueDiagnostics {
   queries: string[]
   rawPreview: Array<{ source: string; title: string; url: string }>
   samGov: SamGovSearchDiagnostics
+  braveApi: BraveApiSearchDiagnostics
   tavily: TavilySearchDiagnostics
   geminiGroundedSearch: GeminiGroundedSearchDiagnostics
 }
@@ -120,12 +125,15 @@ export async function rescueProcurementCandidates(
   options: ProcurementRescueOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
+  const primaryRescueQuery = queries[0] || query
 
-  // This whole function is already the weak-coverage rescue path. Tavily gets
-  // one basic-search request here—not on every normal search—so the configured
-  // trial allowance is useful without becoming the primary dependency.
+  // This function runs only after normal discovery is too weak. Each configured
+  // API gets at most one bounded request here. Brave uses its actual Search API
+  // when BRAVE_API_KEY/BRAVE_SEARCH_API_KEY is available; the separate Brave
+  // HTML adapter remains only a no-key public-engine fallback.
   const samPromise = searchSamGovOfficial(query, 15)
-  const tavilyPromise = searchTavilyWeb(query, 15)
+  const braveApiPromise = searchBraveApi(primaryRescueQuery, 15)
+  const tavilyPromise = searchTavilyWeb(primaryRescueQuery, 15)
 
   const managed = options.skipManagedSearch
     ? {
@@ -152,8 +160,9 @@ export async function rescueProcurementCandidates(
       })
 
   const browserTasks = buildProcurementBrowserRescueTasks(queries)
-  const [sam, tavily, browserSettled] = await Promise.all([
+  const [sam, braveApi, tavily, browserSettled] = await Promise.all([
     samPromise,
+    braveApiPromise,
     tavilyPromise,
     Promise.allSettled(browserTasks.map(task => runBrowserTask(task, options))),
   ])
@@ -162,6 +171,7 @@ export async function rescueProcurementCandidates(
   )
   const firstPassRaw = mergeUniqueResults([
     sam.results,
+    braveApi.results,
     tavily.results,
     managed.results,
     browserResults,
@@ -174,8 +184,8 @@ export async function rescueProcurementCandidates(
   )
 
   // Gemini grounding remains the final weak-coverage fallback. It is only
-  // attempted when all non-grounded rescue sources still retain zero usable
-  // procurement candidates after the same relevance gate.
+  // attempted when every non-grounded source retains zero usable procurement
+  // candidates after the same relevance gate.
   const grounded = firstPassGate.results.length === 0
     ? await searchGeminiGroundedWeb(query, 'procurement')
     : {
@@ -208,6 +218,11 @@ export async function rescueProcurementCandidates(
   const samFailures = sam.diagnostics.error
     ? [`SAM.gov: ${sam.diagnostics.error}`]
     : []
+  const braveApiFailures = braveApi.diagnostics.attempted
+    && !braveApi.diagnostics.successful
+    && braveApi.diagnostics.error
+    ? [`brave-api: ${braveApi.diagnostics.error}`]
+    : []
   const tavilyFailures = tavily.diagnostics.attempted
     && !tavily.diagnostics.successful
     && tavily.diagnostics.error
@@ -224,7 +239,8 @@ export async function rescueProcurementCandidates(
   const attemptedQuerySet = new Set([
     ...managed.diagnostics.attempts.map(attempt => attempt.query),
     ...browserTasks.map(task => task.query),
-    ...(tavily.diagnostics.attempted ? [query] : []),
+    ...(braveApi.diagnostics.attempted ? [primaryRescueQuery] : []),
+    ...(tavily.diagnostics.attempted ? [primaryRescueQuery] : []),
     ...grounded.diagnostics.searchQueries,
   ])
 
@@ -235,17 +251,20 @@ export async function rescueProcurementCandidates(
       attemptedTasks: managed.diagnostics.attemptedRequests
         + browserTasks.length
         + (sam.diagnostics.attempted ? 1 : 0)
+        + (braveApi.diagnostics.attempted ? 1 : 0)
         + (tavily.diagnostics.attempted ? 1 : 0)
         + (grounded.diagnostics.attempted ? 1 : 0),
       successfulTasks: managed.diagnostics.successfulRequests
         + successfulBrowserTasks
         + (sam.diagnostics.successful ? 1 : 0)
+        + (braveApi.diagnostics.successful ? 1 : 0)
         + (tavily.diagnostics.successful ? 1 : 0)
         + (grounded.diagnostics.successful ? 1 : 0),
       rawCandidates: rawResults.length,
       retainedCandidates: gated.results.length,
       failures: [
         ...samFailures,
+        ...braveApiFailures,
         ...tavilyFailures,
         ...managedFailures,
         ...browserFailures,
@@ -258,6 +277,7 @@ export async function rescueProcurementCandidates(
         url: result.url,
       })),
       samGov: sam.diagnostics,
+      braveApi: braveApi.diagnostics,
       tavily: tavily.diagnostics,
       geminiGroundedSearch: grounded.diagnostics,
     },
