@@ -6,10 +6,10 @@ test('SAM.gov search uses the current Opportunities v2 contract and opportunitie
   const originalFetch = globalThis.fetch
   const originalKey = process.env.SAM_GOV_API_KEY
   process.env.SAM_GOV_API_KEY = 'test-sam-key'
-  let requestedUrl = ''
+  const requestedUrls: string[] = []
 
   globalThis.fetch = async (input: string | URL | Request) => {
-    requestedUrl = String(input)
+    requestedUrls.push(String(input))
     return new Response(JSON.stringify({
       totalRecords: 1,
       opportunitiesData: [{
@@ -29,14 +29,18 @@ test('SAM.gov search uses the current Opportunities v2 contract and opportunitie
 
   try {
     const response = await searchSamGovOfficial('Occupational Health Services RFP', 10)
-    const url = new URL(requestedUrl)
+    const urls = requestedUrls.map(value => new URL(value))
 
-    assert.equal(url.origin + url.pathname, 'https://api.sam.gov/opportunities/v2/search')
-    assert.equal(url.searchParams.get('api_key'), 'test-sam-key')
-    assert.ok(url.searchParams.get('postedFrom'))
-    assert.ok(url.searchParams.get('postedTo'))
-    assert.equal(url.searchParams.get('title'), 'Occupational Health Services')
-    assert.equal(url.searchParams.has('q'), false)
+    assert.ok(urls.length >= 1)
+    for (const url of urls) {
+      assert.equal(url.origin + url.pathname, 'https://api.sam.gov/opportunities/v2/search')
+      assert.equal(url.searchParams.get('api_key'), 'test-sam-key')
+      assert.ok(url.searchParams.get('postedFrom'))
+      assert.ok(url.searchParams.get('postedTo'))
+      assert.equal(url.searchParams.has('q'), false)
+      assert.ok(url.searchParams.get('title'))
+    }
+    assert.ok(urls.some(url => url.searchParams.get('title') === 'Occupational Health Services'))
     assert.equal(response.diagnostics.configured, true)
     assert.equal(response.diagnostics.successful, true)
     assert.equal(response.results.length, 1)
