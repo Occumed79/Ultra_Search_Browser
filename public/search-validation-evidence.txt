@@ -1,5 +1,20 @@
-Ultra Search Browser production validation evidence.
+ULTRA SEARCH BROWSER — SYNTHETIC PRODUCTION VALIDATION SOLICITATION
 
-Ultra Search Browser is a public-web metasearch and evidence-validation application. It searches multiple sources, preserves the complete user query, rejects search-engine navigation and authentication links, opens destination pages, extracts readable HTML, PDF, and DOCX content, detects expired or closed opportunities, groups duplicate entities, and separates valid, uncertain, expired, dead, rejected, and duplicate results.
+Solicitation Number: USB-TEST-OH-2026-001
+Opportunity Type: Request for Proposals (RFP)
+Status: OPEN
+Response Deadline: September 30, 2026 at 5:00 PM Pacific Time
 
-This static document exists so the production health workflow can verify page retrieval, text extraction, semantic review, lifecycle classification, streaming progress, and verified-only result output without depending on a third-party website allowing automated requests from the deployment platform.
+NOTICE: This is a synthetic procurement document reserved for Ultra Search Browser's automated production validation workflow. It is not an external procurement lead and is excluded from user-facing discovery by its self-hosted test source.
+
+Scope of Services
+The synthetic buyer is requesting proposals for employer-directed occupational health services for a distributed workforce. The required service model includes pre-employment and periodic occupational medical examinations, fitness-for-duty evaluations, medical surveillance examinations, respirator medical clearance, pure-tone audiometry and hearing-conservation testing, spirometry and pulmonary function testing, electrocardiograms when ordered, laboratory specimen collection, drug and alcohol testing, vaccinations, and related employer medical documentation.
+
+Delivery Model
+The selected occupational health vendor would coordinate authorized referrals, provide or arrange qualified clinic services, complete employer-required examination forms, return reports to the requesting program, and invoice the employer for authorized services. The scope is limited to employer-directed occupational health evaluations, testing, referral coordination, documentation, and program support.
+
+Procurement Evidence
+This Request for Proposals remains OPEN through September 30, 2026. Interested vendors would submit a proposal describing service coverage, operational capability, quality controls, referral coordination, reporting, and pricing. The synthetic buyer would evaluate responsive proposals after the response deadline.
+
+Production Validation Purpose
+This document exists so Ultra Search Browser can verify destination-page retrieval, text extraction, procurement recognition, Occu-Med capability matching, lifecycle and deadline detection, SHOW/REVIEW/REJECT classification, streaming validation progress, and verified-only result output without depending on any third-party search API or external website during deployment testing.

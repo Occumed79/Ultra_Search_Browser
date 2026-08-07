@@ -6,9 +6,9 @@ const EXPECTED_PIPELINE = 'rfp-finder-v5-browser-fed-zero-key'
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
-    title: 'Ultra Search Browser Production Validation Evidence',
+    title: 'Synthetic Occupational Health Services RFP — Production Validation',
     url: `${APP_URL}/search-validation-evidence.txt`,
-    description: 'Static Ultra Search Browser production evidence for page retrieval, extraction, semantic review, lifecycle classification, streaming progress, and verified-only output.',
+    description: 'Open synthetic Request for Proposals for employer-directed occupational health examinations, medical surveillance, audiometry, spirometry, drug testing, and related program support. Responses due September 30, 2026.',
     domain: new URL(APP_URL).hostname,
     source: 'production-smoke',
     rank: 1,
@@ -176,10 +176,11 @@ async function runEvidenceValidation() {
     method: 'POST',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: 'Ultra Search Browser production validation evidence',
-      lens: 'web',
+      query: 'Occupational Health Services RFP production validation',
+      lens: 'procurement',
       results: SELF_HOSTED_EVIDENCE_CANDIDATES,
       maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
+      testMode: true,
     }),
     signal: AbortSignal.timeout(120_000),
   })
@@ -210,9 +211,22 @@ async function runEvidenceValidation() {
   if (!complete) throw new Error('Evidence stream ended without completion.')
   if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
   if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify(complete.progress)}`)
-  if (!Array.isArray(complete.results) || complete.results.length < 1) throw new Error('No verified evidence result.')
-  if (progressEvents < 1 || resultEvents < 1) throw new Error('Evidence stream emitted no live progress/results.')
-  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}`)
+  if (!Array.isArray(complete.results) || complete.results.length < 1) {
+    throw new Error(`Synthetic Occu-Med RFP did not reach SHOW: ${JSON.stringify({
+      progress: complete.progress,
+      diagnostics: complete.diagnostics,
+      buckets: complete.buckets,
+    }).slice(0, 5_000)}`)
+  }
+  if (!complete.results.some(result => result.occuMedDecision?.decision === 'SHOW')) {
+    throw new Error(`Verified evidence lacks a SHOW decision: ${JSON.stringify(complete.results).slice(0, 3_000)}`)
+  }
+  if (progressEvents < 1) throw new Error('Evidence stream emitted no validation progress.')
+  if (resultEvents !== 0) throw new Error('Candidate cards were streamed before the mandatory Occu-Med decision gate.')
+  if (complete.diagnostics?.productionValidationMode !== true) throw new Error('Synthetic validation did not enter non-persisting production test mode.')
+  if (complete.diagnostics?.persistentMemory?.skipped !== true) throw new Error('Synthetic validation was not blocked from persistent search memory.')
+  if (complete.diagnostics?.verifiedPersistence?.skipped !== true) throw new Error('Synthetic validation was not blocked from verified-result persistence.')
+  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}; persisted=false`)
 }
 
 async function main() {
