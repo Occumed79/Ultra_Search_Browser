@@ -1,5 +1,6 @@
 const ENGINE_ORDER = ['google', 'bing', 'duckduckgo', 'brave']
 const SEARCH_TIMEOUT_MS = 20_000
+const SEARCH_CONCURRENCY = 2
 
 function sleep(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
@@ -80,38 +81,42 @@ async function searchOneEngine(variant, engine, maxResults) {
   }
 }
 
-function mergeCandidates(candidates) {
-  const merged = new Map()
-  for (const candidate of candidates) {
-    if (!candidate?.url || !candidate?.title) continue
-    let key
+async function searchVariant(variant, index, maxResults) {
+  const diagnostics = []
+  const engines = []
+  const primary = ENGINE_ORDER[index % ENGINE_ORDER.length]
+  const fallback = ENGINE_ORDER[(index + 1) % ENGINE_ORDER.length]
+
+  for (const engine of [primary, fallback]) {
+    engines.push(engine)
     try {
-      const url = new URL(candidate.url)
-      url.hash = ''
-      key = url.toString().replace(/\/$/, '').toLowerCase()
-    } catch {
-      continue
+      const response = await searchOneEngine(variant, engine, maxResults)
+      const results = Array.isArray(response.results) ? response.results : []
+      diagnostics.push({
+        query: variant.query,
+        engine,
+        resultCount: results.length,
+        pageTitle: response.pageTitle,
+      })
+      if (results.length > 0) {
+        return { results, engines, diagnostics, successful: true }
+      }
+    } catch (error) {
+      diagnostics.push({
+        query: variant.query,
+        engine,
+        resultCount: 0,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
-    const existing = merged.get(key)
-    if (!existing) {
-      merged.set(key, candidate)
-      continue
-    }
-    const sources = new Set([existing.source, candidate.source].filter(Boolean))
-    const queries = new Set([existing.query, candidate.query].filter(Boolean))
-    merged.set(key, {
-      ...(Number(existing.score || 0) >= Number(candidate.score || 0) ? existing : candidate),
-      description: String(existing.description || '').length >= String(candidate.description || '').length
-        ? existing.description
-        : candidate.description,
-      source: Array.from(sources).join(' + '),
-      query: Array.from(queries).join(' | '),
-    })
   }
-  return Array.from(merged.values()).map((candidate, index) => ({
-    ...candidate,
-    rank: index + 1,
-  }))
+
+  diagnostics.push({
+    query: variant.query,
+    resultCount: 0,
+    error: 'No browser engine returned parseable result cards for this query.',
+  })
+  return { results: [], engines, diagnostics, successful: false }
 }
 
 async function executePlan(plan) {
@@ -125,51 +130,26 @@ async function executePlan(plan) {
   const enginesUsed = new Set()
   let successfulSearches = 0
 
-  for (let index = 0; index < variants.length; index += 1) {
-    const variant = variants[index]
-    const primary = ENGINE_ORDER[index % ENGINE_ORDER.length]
-    const fallback = ENGINE_ORDER[(index + 1) % ENGINE_ORDER.length]
-    let succeeded = false
+  for (let start = 0; start < variants.length; start += SEARCH_CONCURRENCY) {
+    const wave = variants.slice(start, start + SEARCH_CONCURRENCY)
+    const waveResults = await Promise.all(wave.map((variant, offset) =>
+      searchVariant(variant, start + offset, plan.maxResultsPerSearch || 20)
+    ))
 
-    for (const engine of [primary, fallback]) {
-      enginesUsed.add(engine)
-      try {
-        const response = await searchOneEngine(variant, engine, plan.maxResultsPerSearch || 20)
-        const results = Array.isArray(response.results) ? response.results : []
-        diagnostics.push({
-          query: variant.query,
-          engine,
-          resultCount: results.length,
-          pageTitle: response.pageTitle,
-        })
-        if (results.length > 0) {
-          allCandidates.push(...results)
-          successfulSearches += 1
-          succeeded = true
-          break
-        }
-      } catch (error) {
-        diagnostics.push({
-          query: variant.query,
-          engine,
-          resultCount: 0,
-          error: error instanceof Error ? error.message : String(error),
-        })
-      }
+    for (const result of waveResults) {
+      diagnostics.push(...result.diagnostics)
+      result.engines.forEach(engine => enginesUsed.add(engine))
+      if (result.successful) successfulSearches += 1
+      // Preserve duplicate URLs across engines/queries. The server ingestion
+      // pipeline owns canonical URL dedupe so it can score cross-source overlap.
+      allCandidates.push(...result.results)
     }
 
-    if (!succeeded) {
-      diagnostics.push({
-        query: variant.query,
-        resultCount: 0,
-        error: 'No browser engine returned parseable result cards for this query.',
-      })
-    }
-    await sleep(200)
+    if (start + SEARCH_CONCURRENCY < variants.length) await sleep(200)
   }
 
   return {
-    results: mergeCandidates(allCandidates),
+    results: allCandidates,
     engines: Array.from(enginesUsed),
     attemptedSearches: variants.length,
     successfulSearches,
