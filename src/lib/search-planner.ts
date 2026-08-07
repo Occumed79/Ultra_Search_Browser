@@ -142,35 +142,30 @@ export function buildQueryVariants(
   const seen = new Set<string>()
   const explicitQuery = restoreExplicitOperators(query, operators)
   const budgets = semanticBudgets(semanticIntent)
+  const procurementQueries = lens === 'procurement'
+    ? buildProcurementRescueQueries(query, semanticIntent)
+    : []
 
-  // For procurement lens, use site-specific procurement queries to prevent
-  // search engines from misinterpreting the query (e.g., "pre employment physical" → "pre-market trading")
-  if (lens === 'procurement') {
-    console.log('Procurement lens detected, building site-specific queries for:', query)
-    const procurementQueries = buildProcurementRescueQueries(query, semanticIntent)
-    console.log('Generated procurement queries:', procurementQueries.slice(0, 10))
-    console.log('Budgets.variants:', budgets.variants)
-    for (const procurementQuery of procurementQueries.slice(0, budgets.variants)) {
-      addVariant(variants, seen, procurementQuery, 'ai-intent', 100, budgets.variants)
-    }
-    console.log('Total procurement variants added:', variants.length)
-  }
-
-  // Every selected engine receives the user's complete sentence unchanged.
-  addVariant(variants, seen, explicitQuery, 'broad', lens === 'procurement' ? 80 : 100, budgets.variants)
-  // Protect the meaning-bearing groups rather than quoting an entire natural
-  // language sentence. This preserves names, services, and geography without
-  // asking an engine to match filler words such as “find me” verbatim.
+  // Protect the literal request and its meaning-bearing core before any rescue
+  // expansion. Previous procurement logic filled the entire variant budget with
+  // operator-heavy site queries, making these two foundational strategies
+  // unreachable.
+  addVariant(variants, seen, explicitQuery, 'broad', 100, budgets.variants)
   addVariant(
     variants,
     seen,
     protectedIntentQuery(query, operators, semanticIntent),
     'intent-core',
-    96,
+    98,
     budgets.variants
   )
 
-  if (lens !== 'procurement') {
+  if (lens === 'procurement') {
+    // buildProcurementRescueQueries guarantees slot 1 is the buyer-language
+    // capability-family expansion. Reserve a planner slot for it rather than
+    // broadcasting every rescue query through every engine.
+    addVariant(variants, seen, procurementQueries[1], 'ai-intent', 96, budgets.variants)
+  } else {
     for (const candidate of semanticIntent?.searchVariants || []) {
       addVariant(variants, seen, candidate, 'ai-intent', 92, budgets.variants)
     }
@@ -186,35 +181,56 @@ export function buildQueryVariants(
           ? /clinic|provider|occupational medicine|services offered/i
           : /information|overview|research|report|guide|official/i
   ) || expanded.expansions[0]
-  addVariant(variants, seen, semantic, 'semantic', 90, budgets.variants)
 
   const official = findFirst(expanded.withOperators, /site:\.(?:gov|us)\b/i)
     || findFirst(expanded.expansions, /site:\.(?:gov|us)\b/i)
+    || findFirst(procurementQueries, /site:\.gov\b/i)
   const document = findFirst(expanded.withOperators, /filetype:pdf/i)
     || findFirst(expanded.expansions, /filetype:pdf|\bpdf\b/i)
+    || findFirst(procurementQueries, /filetype:pdf/i)
   const freshness = findFirst(
     expanded.expansions,
     new RegExp(`(?:${currentYear}.*(?:open|active|due|closing)|(?:open|active|due|closing).*${currentYear})`, 'i')
   ) || findFirst(expanded.expansions, /currently open|responses due|submission deadline|closing date/i)
+    || findFirst(procurementQueries, new RegExp(`\\b${currentYear}\\b`, 'i'))
   const portal = findFirst(
     expanded.withOperators,
     /site:(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com)/i
   ) || findFirst(
     expanded.expansions,
     /site:(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com)/i
+  ) || findFirst(
+    procurementQueries,
+    /site:(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com)/i
   )
 
-  if (['government', 'procurement', 'legal', 'medical', 'academic'].includes(lens)) {
-    addVariant(variants, seen, official, 'official', 85, budgets.variants)
-  }
-  if (['pdf', 'government', 'procurement', 'pricing', 'academic', 'financial'].includes(lens)) {
-    addVariant(variants, seen, document, 'document', 80, budgets.variants)
-  }
-  if (lens === 'procurement' || lens === 'news') {
-    addVariant(variants, seen, freshness, 'freshness', 75, budgets.variants)
-  }
   if (lens === 'procurement') {
-    addVariant(variants, seen, portal, 'portal', 70, budgets.variants)
+    // These four complementary strategies are more valuable than another
+    // synonym-only variant, so reserve them before the seven-slot simple-query
+    // budget can be exhausted.
+    addVariant(variants, seen, official, 'official', 94, budgets.variants)
+    addVariant(variants, seen, document, 'document', 92, budgets.variants)
+    addVariant(variants, seen, freshness, 'freshness', 90, budgets.variants)
+    addVariant(variants, seen, portal, 'portal', 88, budgets.variants)
+  } else {
+    addVariant(variants, seen, semantic, 'semantic', 90, budgets.variants)
+    if (['government', 'legal', 'medical', 'academic'].includes(lens)) {
+      addVariant(variants, seen, official, 'official', 85, budgets.variants)
+    }
+    if (['pdf', 'government', 'pricing', 'academic', 'financial'].includes(lens)) {
+      addVariant(variants, seen, document, 'document', 80, budgets.variants)
+    }
+    if (lens === 'news') {
+      addVariant(variants, seen, freshness, 'freshness', 75, budgets.variants)
+    }
+  }
+
+  // Complex procurement intents receive additional natural/buyer-language
+  // variants only after the critical retrieval strategies are protected.
+  if (lens === 'procurement') {
+    for (const candidate of procurementQueries.filter(value => !/\b(?:site:|filetype:)/i.test(value))) {
+      addVariant(variants, seen, candidate, 'ai-intent', 70, budgets.variants)
+    }
   }
 
   for (const candidate of [...expanded.withOperators, ...expanded.expansions]) {
@@ -246,33 +262,41 @@ export function buildRetrievalTasks(
     tasks.push({ source, query: variant.query, purpose: variant.purpose })
   }
 
-  const targetedSources = orderedTargetedSources(plan.liveSources)
-  
-  // Process variants in priority order (highest priority first)
-  for (const variant of variants) {
-    if (tasks.length >= maxLiveTasks) break
-    
-    // Determine which sources to use based on variant purpose
-    let sources: LiveSearchSource[]
-    
-    if (variant.purpose === 'broad' || variant.purpose === 'intent-core') {
-      // Broad variants go to all sources, but limit to prevent overwhelming
-      sources = plan.liveSources.slice(0, 2)
-    } else if (variant.purpose === 'ai-intent') {
-      // AI intent variants get highest priority and go to all sources
-      sources = plan.liveSources
-    } else if (variant.purpose === 'semantic') {
-      // Semantic variants go to targeted sources
-      sources = targetedSources.length > 1 ? targetedSources.slice(0, 2) : targetedSources
-    } else {
-      // Other variants go to targeted sources
-      sources = targetedSources.length > 1 ? targetedSources.slice(0, 2) : targetedSources
+  // The literal and protected-intent queries are the anchor searches. Fan them
+  // out across every selected source before spending budget on expansions.
+  const coreVariants = variants.filter(variant =>
+    variant.purpose === 'broad' || variant.purpose === 'intent-core'
+  )
+  for (const variant of coreVariants) {
+    for (const source of plan.liveSources) {
+      addTask(source, variant)
+      if (tasks.length >= maxLiveTasks) return tasks
     }
-    
-    for (const source of sources) {
+  }
+
+  // Spread remaining strategies across different engines instead of repeatedly
+  // assigning the first two sources. Buyer-language variants get two independent
+  // indexes; official/document/freshness/portal variants get one each. This
+  // preserves strategy coverage within the bounded task budget.
+  const targetedSources = orderedTargetedSources(plan.liveSources)
+  const diversifiedSources = targetedSources.length > 0 ? targetedSources : plan.liveSources
+  const remainingVariants = variants.filter(variant =>
+    variant.purpose !== 'broad' && variant.purpose !== 'intent-core'
+  )
+  let sourceCursor = 0
+
+  for (const variant of remainingVariants) {
+    if (tasks.length >= maxLiveTasks) break
+    const copies = variant.purpose === 'ai-intent'
+      ? Math.min(2, diversifiedSources.length)
+      : 1
+
+    for (let offset = 0; offset < copies; offset += 1) {
+      const source = diversifiedSources[(sourceCursor + offset) % diversifiedSources.length]
       addTask(source, variant)
       if (tasks.length >= maxLiveTasks) break
     }
+    sourceCursor = (sourceCursor + Math.max(1, copies)) % diversifiedSources.length
   }
 
   return tasks
@@ -287,15 +311,9 @@ export function buildSearchOrchestrationPlan(
   currentYear = new Date().getFullYear(),
   semanticIntent?: SemanticIntentPlan
 ): SearchOrchestrationPlan {
-  console.log('DEBUG buildSearchOrchestrationPlan: query:', query, 'lens:', lens)
   const budgets = semanticBudgets(semanticIntent)
-  console.log('DEBUG buildSearchOrchestrationPlan: budgets:', budgets)
   const variants = buildQueryVariants(query, lens, expanded, operators, currentYear, semanticIntent)
-  console.log('DEBUG buildSearchOrchestrationPlan: variants generated:', variants.length)
-  console.log('DEBUG buildSearchOrchestrationPlan: sample variants:', variants.slice(0, 5))
   const tasks = buildRetrievalTasks(variants, plan, budgets.tasks)
-  console.log('DEBUG buildSearchOrchestrationPlan: tasks generated:', tasks.length)
-  console.log('DEBUG buildSearchOrchestrationPlan: sample tasks:', tasks.slice(0, 5))
   return {
     variants,
     tasks,
