@@ -3,6 +3,8 @@ const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
 const MAX_WAIT_MS = Number(process.env.MAX_WAIT_MS || 12 * 60 * 1000)
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15_000)
 const EXPECTED_PIPELINE = 'rfp-finder-v6-searxng-zero-key'
+const VALID_RETRIEVAL_TRANSPORTS = new Set(['searxng', 'zero-key-direct-rescue', 'searxng+direct-rescue'])
+const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILABLE'])
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
@@ -123,6 +125,7 @@ async function runMetasearchIngest(plan) {
       intent: plan.intent,
       searches: plan.searches,
       results: METASEARCH_FIXTURE,
+      transport: 'searxng',
       settings: { resultsPerPage: 20, safeSearch: true, preferredLanguage: 'en', region: 'us' },
     }),
     signal: AbortSignal.timeout(45_000),
@@ -131,6 +134,7 @@ async function runMetasearchIngest(plan) {
   if (!response.ok) throw new Error(`metasearch ingest HTTP ${response.status}: ${JSON.stringify(data).slice(0, 2_500)}`)
   if (data.lens !== 'procurement') throw new Error(`Metasearch ingest returned lens ${data.lens}.`)
   if (data.diagnostics?.retrievalMode !== 'searxng-metasearch') throw new Error(`Ingest did not report SearXNG mode: ${JSON.stringify(data.diagnostics)}`)
+  if (data.diagnostics?.transport !== 'searxng') throw new Error(`Ingest did not preserve SearXNG transport: ${JSON.stringify(data.diagnostics)}`)
   if (data.diagnostics?.apiKeysRequired !== false) throw new Error('Metasearch ingest incorrectly requires API keys.')
   if (data.diagnostics?.intentGate?.applied !== true) throw new Error(`Intent gate was not applied: ${JSON.stringify(data.diagnostics?.intentGate)}`)
   if (!Array.isArray(data.results) || data.results.length < 1) throw new Error(`Relevant metasearch fixture was discarded: ${JSON.stringify(data).slice(0, 3_500)}`)
@@ -149,7 +153,7 @@ async function assertServerRetrievalActive(plan) {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan }),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(75_000),
   })
   const data = await readJson(response)
 
@@ -161,17 +165,21 @@ async function assertServerRetrievalActive(plan) {
   }
   if (response.ok) {
     if (!Array.isArray(data.results)) throw new Error('Successful server retrieval did not return a candidate array.')
-    console.log(`[retrieval] server active; transport=${data.transport}; raw=${data.results.length}; searxngConfigured=${data.searxngConfigured}`)
+    if (!VALID_RETRIEVAL_TRANSPORTS.has(data.transport)) throw new Error(`Unexpected successful retrieval transport: ${data.transport}`)
+    console.log(`[retrieval] server active; transport=${data.transport}; raw=${data.results.length}; searxngConfigured=${data.searxngConfigured}; runtimeMs=${data.runtimeMs}`)
     return
   }
 
-  // Upstream engines can block a Render IP. That is a retrieval health issue, not
-  // an architecture regression. The contract still requires a real server-side
-  // attempt with diagnostics and no browser-extension fallback.
-  if (![502, 503].includes(response.status) || !Array.isArray(data.diagnostics)) {
+  // Upstream engines can block a Render IP. Accept only the explicit upstream
+  // exhaustion contract — unrelated 502/503 responses must fail production smoke.
+  const expectedEmptyFailure = [502, 503].includes(response.status)
+    && EXPECTED_EMPTY_CODES.has(data.code)
+    && VALID_RETRIEVAL_TRANSPORTS.has(data.transport)
+    && Array.isArray(data.diagnostics)
+  if (!expectedEmptyFailure) {
     throw new Error(`Server retrieval failed outside the expected zero-key contract: HTTP ${response.status} ${JSON.stringify(data).slice(0, 2_000)}`)
   }
-  console.log(`[retrieval] server contract active but upstream pool empty; code=${data.code}; diagnostics=${data.diagnostics.length}`)
+  console.log(`[retrieval] server contract active but upstream pool empty; code=${data.code}; transport=${data.transport}; diagnostics=${data.diagnostics.length}`)
 }
 
 function parseSseBlock(block) {
@@ -246,6 +254,8 @@ async function main() {
 
   if (health.capabilities?.coreSearchApiKeysRequired !== false) throw new Error('Health contract says core search requires API keys.')
   if (health.capabilities?.serverSideSearchRetrieval !== true) throw new Error('Health contract does not expose server-side retrieval.')
+  if (health.capabilities?.searxngSearch !== true) throw new Error('Health contract does not expose SearXNG search.')
+  if (health.capabilities?.zeroKeyDirectRescue !== true) throw new Error('Health contract does not expose zero-key direct rescue.')
   if (health.capabilities?.browserCompanionRequired !== false) throw new Error('Health contract still requires a browser companion.')
   if (health.capabilities?.extensionsRequired !== false || health.capabilities?.downloadsRequired !== false) {
     throw new Error('Health contract still requires local installation.')
