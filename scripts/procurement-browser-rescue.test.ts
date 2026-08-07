@@ -2,13 +2,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildProcurementBrowserRescueTasks } from '../src/lib/procurement-browser-rescue-tasks'
 
-test('procurement browser rescue fans targeted variants across resilient sources', () => {
+test('procurement browser rescue fans complementary strategies across resilient sources', () => {
   const queries = [
     'occupational health services RFP solicitation bid',
     'occupational medicine services RFP solicitation',
-    'employee health services RFP solicitation',
     'site:.gov occupational health services RFP',
     'filetype:pdf occupational health services request for proposals',
+    'employee health services RFP solicitation',
   ]
 
   const tasks = buildProcurementBrowserRescueTasks(queries)
@@ -19,8 +19,8 @@ test('procurement browser rescue fans targeted variants across resilient sources
     { source: 'bing', query: queries[3] },
     { source: 'duckduckgo', query: queries[0] },
     { source: 'mojeek', query: queries[1] },
-    { source: 'yahoo', query: queries[0] },
-    { source: 'brave', query: queries[1] },
+    { source: 'yahoo', query: queries[2] },
+    { source: 'brave', query: queries[3] },
   ])
 })
 
