@@ -223,11 +223,13 @@ export async function searchSamGovOfficial(
     }
   }
 
-  const results = normalizeResults(allRecords, limit).map(result => ({
+  const results = normalizeResults(allRecords, limit).map((result): ScrapedResult => ({
     ...result,
     retrieval: {
-      ...result.retrieval,
+      sources: result.retrieval?.sources || ['SAM.gov Official API'],
       queries,
+      purposes: result.retrieval?.purposes || ['official-procurement-api'],
+      overlap: result.retrieval?.overlap || 1,
     },
   }))
 
