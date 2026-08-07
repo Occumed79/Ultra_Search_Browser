@@ -275,21 +275,22 @@ export function buildRetrievalTasks(
   }
 
   // Spread remaining strategies across different engines instead of repeatedly
-  // assigning the first two sources. Buyer-language variants get two independent
-  // indexes; official/document/freshness/portal variants get one each. This
-  // preserves strategy coverage within the bounded task budget.
+  // assigning the first two sources. Simple searches stay tightly bounded;
+  // moderate/complex semantic plans can use their larger 20/28-task budgets to
+  // confirm important variants across additional independent indexes.
   const targetedSources = orderedTargetedSources(plan.liveSources)
   const diversifiedSources = targetedSources.length > 0 ? targetedSources : plan.liveSources
   const remainingVariants = variants.filter(variant =>
     variant.purpose !== 'broad' && variant.purpose !== 'intent-core'
   )
+  const expandedFanout = maxLiveTasks > DEFAULT_LIVE_TASKS
   let sourceCursor = 0
 
   for (const variant of remainingVariants) {
     if (tasks.length >= maxLiveTasks) break
     const copies = variant.purpose === 'ai-intent'
-      ? Math.min(2, diversifiedSources.length)
-      : 1
+      ? Math.min(expandedFanout ? 3 : 2, diversifiedSources.length)
+      : Math.min(expandedFanout ? 2 : 1, diversifiedSources.length)
 
     for (let offset = 0; offset < copies; offset += 1) {
       const source = diversifiedSources[(sourceCursor + offset) % diversifiedSources.length]
