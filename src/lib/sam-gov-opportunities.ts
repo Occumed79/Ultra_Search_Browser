@@ -1,8 +1,21 @@
+import { buyerLanguageTermsForQuery } from './occumed-capability-matching'
 import type { ScrapedResult } from '../types/search'
 
 const SAM_API_BASE = 'https://api.sam.gov/opportunities/v2/search'
 const SAM_TIMEOUT_MS = 9_000
 const MAX_LOOKBACK_DAYS = 364
+const MAX_SAM_STRATEGIES = 8
+
+// One compact anchor per Occu-Med capability family. These are deliberately
+// buyer-facing phrases that commonly appear in solicitation titles. They run
+// only inside the weak-coverage rescue path, not on every normal search.
+const OCCUMED_SAM_TITLE_ANCHORS = [
+  'occupational health',
+  'OCONUS medical',
+  'medical surveillance',
+  'drug testing',
+  'medical review',
+] as const
 
 interface SamOpportunityRecord {
   noticeId?: string
@@ -17,6 +30,9 @@ interface SamOpportunityRecord {
   baseType?: string
   archiveDate?: string
   archiveType?: string
+  active?: string
+  classificationCode?: string
+  naicsCode?: string
   additionalInfoLink?: string
   uiLink?: string
   responseDeadLine?: string
@@ -31,12 +47,18 @@ interface SamSearchPayload {
   data?: SamOpportunityRecord[]
 }
 
+interface SamSearchSpec {
+  label: string
+  params: Record<string, string>
+}
+
 export interface SamGovSearchDiagnostics {
   configured: boolean
   attempted: boolean
   successful: boolean
   resultCount: number
   queryCount: number
+  strategies?: string[]
   error?: string
 }
 
@@ -46,16 +68,43 @@ function formatSamDate(date: Date): string {
   return `${month}/${day}/${date.getUTCFullYear()}`
 }
 
-function titleQueries(query: string): string[] {
-  const cleaned = query
+function cleanTitleQuery(query: string): string {
+  return query
     .replace(/\b(?:request for proposals?|rfp|request for quotations?|rfq|solicitation|tender|bid|procurement|opportunities?)\b/gi, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  const candidates = [
-    cleaned,
-    cleaned.replace(/\bservices?\b/gi, '').replace(/\s+/g, ' ').trim(),
+}
+
+function samSearchSpecs(query: string): SamSearchSpec[] {
+  const direct = cleanTitleQuery(query)
+  const buyerAliases = buyerLanguageTermsForQuery(direct || query, 5)
+  const candidates: SamSearchSpec[] = [
+    ...(direct.length >= 4
+      ? [{ label: `title:${direct}`, params: { title: direct } }]
+      : []),
+    ...(buyerAliases[0]
+      ? [{ label: `buyer-title:${buyerAliases[0]}`, params: { title: buyerAliases[0] } }]
+      : []),
+    // Q533 is the federal PSC for Occupational & Public Health Services and is
+    // substantially more reliable than expecting every buyer to use one exact
+    // occupational-health phrase in the notice title.
+    { label: 'psc:Q533', params: { ccode: 'Q533' } },
+    ...OCCUMED_SAM_TITLE_ANCHORS.map(title => ({
+      label: `capability-title:${title}`,
+      params: { title },
+    })),
   ]
-  return Array.from(new Set(candidates.filter(value => value.length >= 4))).slice(0, 2)
+
+  const seen = new Set<string>()
+  const output: SamSearchSpec[] = []
+  for (const candidate of candidates) {
+    const key = new URLSearchParams(candidate.params).toString().toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    output.push(candidate)
+    if (output.length >= MAX_SAM_STRATEGIES) break
+  }
+  return output
 }
 
 function responseDeadline(record: SamOpportunityRecord): string | undefined {
@@ -63,6 +112,10 @@ function responseDeadline(record: SamOpportunityRecord): string | undefined {
 }
 
 function isStillActionable(record: SamOpportunityRecord): boolean {
+  if (record.active && !/^yes$/i.test(record.active.trim())) return false
+  const noticeType = `${record.type || ''} ${record.baseType || ''}`
+  if (/\b(?:award notice|justification|sale of surplus)\b/i.test(noticeType)) return false
+
   const deadline = responseDeadline(record)
   if (!deadline) return true
   const parsed = new Date(deadline)
@@ -81,9 +134,25 @@ function recordUrl(record: SamOpportunityRecord): string {
     : 'https://sam.gov/content/opportunities'
 }
 
+function classificationEvidence(record: SamOpportunityRecord): string[] {
+  const psc = record.classificationCode?.trim().toUpperCase()
+  return [
+    psc ? `PSC ${psc}` : '',
+    psc === 'Q533' ? 'Occupational and public health services' : '',
+    record.naicsCode ? `NAICS ${record.naicsCode}` : '',
+  ].filter(Boolean)
+}
+
 function recordDescription(record: SamOpportunityRecord): string {
+  // SAM's search response can place a noticedesc API URL in `description`, so
+  // only retain it when it is actual text. The title, organization, PSC/NAICS,
+  // solicitation number, and dates are still enough for candidate-stage gating;
+  // package inspection handles deeper evidence later.
+  const rawDescription = record.description?.trim() || ''
+  const descriptionText = /^https?:\/\//i.test(rawDescription) ? '' : rawDescription
   const parts = [
-    record.description,
+    descriptionText,
+    ...classificationEvidence(record),
     organization(record),
     record.solicitationNumber ? `Solicitation ${record.solicitationNumber}` : '',
     record.postedDate ? `Posted ${record.postedDate}` : '',
@@ -104,6 +173,7 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
     if (seen.has(key)) continue
     seen.add(key)
     const deadline = responseDeadline(record)
+    const classification = classificationEvidence(record)
     results.push({
       title,
       url,
@@ -111,7 +181,7 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
       domain: 'sam.gov',
       source: 'SAM.gov Official API',
       rank: results.length + 1,
-      score: 100,
+      score: record.classificationCode?.trim().toUpperCase() === 'Q533' ? 110 : 100,
       retrieval: {
         sources: ['SAM.gov Official API'],
         queries: [],
@@ -123,8 +193,9 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
         requestedUrl: url,
         finalUrl: url,
         availability: 'reachable',
-        reason: 'Published opportunity returned by the official SAM.gov Opportunities API.',
+        reason: 'Published active opportunity returned by the official SAM.gov Opportunities API.',
         evidence: [
+          ...classification,
           record.postedDate ? `Posted: ${record.postedDate}` : '',
           deadline ? `Deadline: ${deadline}` : '',
           record.solicitationNumber ? `Solicitation: ${record.solicitationNumber}` : '',
@@ -133,8 +204,8 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
         cached: false,
         lifecycle: {
           status: deadline && !Number.isNaN(new Date(deadline).getTime()) ? 'open' : 'unknown',
-          reason: deadline ? 'Official SAM.gov response deadline is not in the past.' : 'SAM.gov did not provide a parseable response deadline in the search record.',
-          confidence: deadline ? 0.95 : 0.65,
+          reason: deadline ? 'Official SAM.gov response deadline is not in the past.' : 'SAM.gov marks the notice active and did not provide a parseable response deadline in the search record.',
+          confidence: deadline ? 0.95 : 0.8,
           dates: [
             ...(record.postedDate ? [{
               kind: 'posted' as const,
@@ -160,7 +231,7 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
 
 export async function searchSamGovOfficial(
   query: string,
-  limit = 12
+  limit = 20
 ): Promise<{ results: ScrapedResult[]; diagnostics: SamGovSearchDiagnostics }> {
   const apiKey = process.env.SAM_GOV_API_KEY?.trim()
   if (!apiKey) {
@@ -178,20 +249,18 @@ export async function searchSamGovOfficial(
 
   const now = new Date()
   const postedFrom = new Date(now.getTime() - MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
-  const queries = titleQueries(query)
-  if (queries.length === 0) queries.push(query.trim())
-
+  const specs = samSearchSpecs(query)
   const allRecords: SamOpportunityRecord[] = []
   const failures: string[] = []
 
-  for (const title of queries) {
+  for (const spec of specs) {
     const params = new URLSearchParams({
       api_key: apiKey,
       limit: String(Math.max(1, Math.min(100, limit))),
       offset: '0',
       postedFrom: formatSamDate(postedFrom),
       postedTo: formatSamDate(now),
-      title,
+      ...spec.params,
     })
 
     try {
@@ -205,10 +274,10 @@ export async function searchSamGovOfficial(
       try {
         payload = text ? JSON.parse(text) as SamSearchPayload : {}
       } catch {
-        throw new Error('SAM.gov returned malformed JSON')
+        throw new Error(`SAM.gov returned malformed JSON for ${spec.label}`)
       }
       if (!response.ok) {
-        throw new Error(`SAM.gov returned HTTP ${response.status}`)
+        throw new Error(`SAM.gov returned HTTP ${response.status} for ${spec.label}`)
       }
       const records = Array.isArray(payload.opportunitiesData)
         ? payload.opportunitiesData
@@ -223,11 +292,12 @@ export async function searchSamGovOfficial(
     }
   }
 
+  const strategyLabels = specs.map(spec => spec.label)
   const results = normalizeResults(allRecords, limit).map((result): ScrapedResult => ({
     ...result,
     retrieval: {
       sources: result.retrieval?.sources || ['SAM.gov Official API'],
-      queries,
+      queries: strategyLabels,
       purposes: result.retrieval?.purposes || ['official-procurement-api'],
       overlap: result.retrieval?.overlap || 1,
     },
@@ -240,9 +310,10 @@ export async function searchSamGovOfficial(
       attempted: true,
       successful: results.length > 0,
       resultCount: results.length,
-      queryCount: queries.length,
+      queryCount: specs.length,
+      strategies: strategyLabels,
       ...(failures.length > 0 && results.length === 0
-        ? { error: Array.from(new Set(failures)).join('; ').slice(0, 400) }
+        ? { error: Array.from(new Set(failures)).join('; ').slice(0, 600) }
         : {}),
     },
   }
