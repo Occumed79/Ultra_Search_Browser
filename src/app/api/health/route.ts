@@ -6,6 +6,7 @@ import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historica
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
+import { tavilySearchConfigured } from '../../../lib/tavily-search'
 
 export const dynamic = 'force-dynamic'
 
@@ -41,6 +42,8 @@ function healthPayload() {
       geminiGroundedSearchModel: geminiSearch.model,
       geminiGroundedSearchPolicy: 'weak-coverage-only',
       samGovOfficialApi: Boolean(process.env.SAM_GOV_API_KEY?.trim()),
+      tavilySearch: tavilySearchConfigured(),
+      tavilySearchPolicy: 'weak-coverage-rescue-only',
       structuredIntentPlanning: true,
       procurementOnly: true,
       sourceAgnosticRfpSearch: true,

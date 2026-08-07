@@ -14,6 +14,7 @@ import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-sear
 import { searchSamGovOfficial, type SamGovSearchDiagnostics } from './sam-gov-opportunities'
 import { applyIntentCandidateGate } from './search-intent-gate'
 import type { SemanticIntentPlan } from './semantic-intent'
+import { searchTavilyWeb, type TavilySearchDiagnostics } from './tavily-search'
 import type { ScrapedResult } from '../types/search'
 
 export interface ProcurementRescueDiagnostics {
@@ -26,6 +27,7 @@ export interface ProcurementRescueDiagnostics {
   queries: string[]
   rawPreview: Array<{ source: string; title: string; url: string }>
   samGov: SamGovSearchDiagnostics
+  tavily: TavilySearchDiagnostics
   geminiGroundedSearch: GeminiGroundedSearchDiagnostics
 }
 
@@ -119,9 +121,11 @@ export async function rescueProcurementCandidates(
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
 
-  // Structured federal data is one independent member of the ensemble; it does
-  // not replace or suppress the public-web search path.
+  // This whole function is already the weak-coverage rescue path. Tavily gets
+  // one basic-search request here—not on every normal search—so the configured
+  // trial allowance is useful without becoming the primary dependency.
   const samPromise = searchSamGovOfficial(query, 15)
+  const tavilyPromise = searchTavilyWeb(query, 15)
 
   const managed = options.skipManagedSearch
     ? {
@@ -147,17 +151,21 @@ export async function rescueProcurementCandidates(
         queryVariants: queries,
       })
 
-  // Public indexes remain the normal rescue layer. The first four queries cover
-  // literal, buyer-language, official-government, and direct-document strategies.
   const browserTasks = buildProcurementBrowserRescueTasks(queries)
-  const [sam, browserSettled] = await Promise.all([
+  const [sam, tavily, browserSettled] = await Promise.all([
     samPromise,
+    tavilyPromise,
     Promise.allSettled(browserTasks.map(task => runBrowserTask(task, options))),
   ])
   const browserResults = browserSettled.flatMap(item =>
     item.status === 'fulfilled' ? item.value : []
   )
-  const firstPassRaw = mergeUniqueResults([sam.results, managed.results, browserResults])
+  const firstPassRaw = mergeUniqueResults([
+    sam.results,
+    tavily.results,
+    managed.results,
+    browserResults,
+  ])
   const firstPassGate = applyIntentCandidateGate(
     query,
     'procurement',
@@ -165,10 +173,9 @@ export async function rescueProcurementCandidates(
     options.semanticIntent
   )
 
-  // Gemini grounding is intentionally selective. Only spend a grounded-search
-  // request when the ordinary rescue ensemble produced zero usable procurement
-  // candidates after the same relevance gate the user-facing pipeline applies.
-  // Raw junk from a scraper therefore cannot suppress the stronger fallback.
+  // Gemini grounding remains the final weak-coverage fallback. It is only
+  // attempted when all non-grounded rescue sources still retain zero usable
+  // procurement candidates after the same relevance gate.
   const grounded = firstPassGate.results.length === 0
     ? await searchGeminiGroundedWeb(query, 'procurement')
     : {
@@ -201,6 +208,11 @@ export async function rescueProcurementCandidates(
   const samFailures = sam.diagnostics.error
     ? [`SAM.gov: ${sam.diagnostics.error}`]
     : []
+  const tavilyFailures = tavily.diagnostics.attempted
+    && !tavily.diagnostics.successful
+    && tavily.diagnostics.error
+    ? [`tavily: ${tavily.diagnostics.error}`]
+    : []
   const groundedFailures = grounded.diagnostics.attempted
     && !grounded.diagnostics.successful
     && grounded.diagnostics.error
@@ -212,6 +224,7 @@ export async function rescueProcurementCandidates(
   const attemptedQuerySet = new Set([
     ...managed.diagnostics.attempts.map(attempt => attempt.query),
     ...browserTasks.map(task => task.query),
+    ...(tavily.diagnostics.attempted ? [query] : []),
     ...grounded.diagnostics.searchQueries,
   ])
 
@@ -222,14 +235,22 @@ export async function rescueProcurementCandidates(
       attemptedTasks: managed.diagnostics.attemptedRequests
         + browserTasks.length
         + (sam.diagnostics.attempted ? 1 : 0)
+        + (tavily.diagnostics.attempted ? 1 : 0)
         + (grounded.diagnostics.attempted ? 1 : 0),
       successfulTasks: managed.diagnostics.successfulRequests
         + successfulBrowserTasks
         + (sam.diagnostics.successful ? 1 : 0)
+        + (tavily.diagnostics.successful ? 1 : 0)
         + (grounded.diagnostics.successful ? 1 : 0),
       rawCandidates: rawResults.length,
       retainedCandidates: gated.results.length,
-      failures: [...samFailures, ...managedFailures, ...browserFailures, ...groundedFailures],
+      failures: [
+        ...samFailures,
+        ...tavilyFailures,
+        ...managedFailures,
+        ...browserFailures,
+        ...groundedFailures,
+      ],
       queries,
       rawPreview: rawResults.slice(0, 12).map(result => ({
         source: result.source,
@@ -237,6 +258,7 @@ export async function rescueProcurementCandidates(
         url: result.url,
       })),
       samGov: sam.diagnostics,
+      tavily: tavily.diagnostics,
       geminiGroundedSearch: grounded.diagnostics,
     },
   }
