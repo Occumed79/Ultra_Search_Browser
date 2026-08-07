@@ -14,8 +14,9 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { DomainPreferencesPanel } from '../../components/domain-preferences-panel'
 import { Switch } from '../../components/ui/switch'
-import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../lib/search-settings'
 import { useLocalStorage } from '../../hooks/use-local-storage'
+import { DEFAULT_USER_SETTINGS, normalizeUserSettings } from '../../lib/search-settings'
+import { SEARXNG_WEB_ENGINES, searxngEngineLabel } from '../../lib/searxng-engines'
 import type { UserSettings } from '../../types/search'
 
 type CapabilityKey =
@@ -30,6 +31,7 @@ type CapabilityKey =
 
 type Capability = { configured: boolean; label: string }
 type Capabilities = Partial<Record<CapabilityKey, Capability>>
+type CapabilityState = 'loading' | 'ready' | 'error'
 type BooleanSetting = 'autoSummarize' | 'safeSearch' | 'openInNewTab' | 'showFavicons' | 'showDescriptions'
 
 const BEHAVIOR_OPTIONS: Array<{ key: BooleanSetting; label: string; description: string }> = [
@@ -40,27 +42,33 @@ const BEHAVIOR_OPTIONS: Array<{ key: BooleanSetting; label: string; description:
   { key: 'showDescriptions', label: 'Show descriptions', description: 'Display result snippets beneath titles' },
 ]
 
-const SEARXNG_ENGINES = ['Brave', 'DuckDuckGo', 'Startpage', 'Bing', 'Qwant', 'Mojeek', 'Yahoo']
-
 export default function SettingsPage() {
   const [storedSettings, setSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
   const settings = normalizeUserSettings(storedSettings)
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null)
+  const [capabilityState, setCapabilityState] = useState<CapabilityState>('loading')
   const [saved, setSaved] = useState(false)
   const savedTimer = useRef<number | null>(null)
 
   useEffect(() => {
     let mounted = true
+    setCapabilityState('loading')
     fetch('/api/capabilities', { cache: 'no-store' })
       .then(async response => {
         if (!response.ok) throw new Error('Capability status unavailable')
         return (await response.json()) as Capabilities
       })
       .then(data => {
-        if (mounted) setCapabilities(data)
+        if (mounted) {
+          setCapabilities(data)
+          setCapabilityState('ready')
+        }
       })
       .catch(() => {
-        if (mounted) setCapabilities(null)
+        if (mounted) {
+          setCapabilities(null)
+          setCapabilityState('error')
+        }
       })
 
     return () => {
@@ -97,6 +105,13 @@ export default function SettingsPage() {
   ]
 
   const searxngConnected = capabilities?.searxngSearch?.configured === true
+  const searxngStatus = capabilityState === 'error'
+    ? 'Status unavailable'
+    : capabilityState === 'loading'
+      ? 'Checking'
+      : searxngConnected
+        ? 'Connected'
+        : 'Rescue mode'
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -150,13 +165,13 @@ export default function SettingsPage() {
               <div className="min-w-[190px] rounded-xl border border-white/10 bg-white/[0.03] p-3">
                 <p className="text-[9px] uppercase tracking-[0.12em] text-white/30">Private SearXNG</p>
                 <div className="mt-2 flex items-center gap-2">
-                  <span className={`h-2.5 w-2.5 rounded-full ${searxngConnected ? 'bg-emerald-300' : 'bg-amber-300'}`} />
-                  <span className="text-[12px] font-medium text-white/75">
-                    {capabilities === null ? 'Checking' : searxngConnected ? 'Connected' : 'Rescue mode'}
-                  </span>
+                  <span className={`h-2.5 w-2.5 rounded-full ${capabilityState === 'error' ? 'bg-red-300' : searxngConnected ? 'bg-emerald-300' : 'bg-amber-300'}`} />
+                  <span className="text-[12px] font-medium text-white/75">{searxngStatus}</span>
                 </div>
                 <p className="mt-2 text-[10px] leading-relaxed text-white/30">
-                  {capabilities?.searxngSearch?.label ?? 'Checking server retrieval status'}
+                  {capabilityState === 'error'
+                    ? 'Could not read the live retrieval capability status.'
+                    : capabilities?.searxngSearch?.label ?? 'Checking server retrieval status'}
                 </p>
               </div>
             </div>
@@ -179,9 +194,9 @@ export default function SettingsPage() {
             <div className="mt-5 border-t border-white/8 pt-5">
               <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">SearXNG web ensemble</p>
               <div className="mt-2 flex flex-wrap gap-2">
-                {SEARXNG_ENGINES.map(engine => (
+                {SEARXNG_WEB_ENGINES.map(engine => (
                   <span key={engine} className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] text-white/45">
-                    {engine}
+                    {searxngEngineLabel(engine)}
                   </span>
                 ))}
               </div>
@@ -255,6 +270,16 @@ export default function SettingsPage() {
                 const capability = capabilities?.[item.key]
                 const configured = capability?.configured === true
                 const Icon = item.icon
+                const statusLabel = capabilityState === 'error'
+                  ? 'Unavailable'
+                  : capabilityState === 'loading'
+                    ? 'Checking'
+                    : configured
+                      ? 'On'
+                      : 'Optional'
+                const description = capabilityState === 'error'
+                  ? 'Live capability status unavailable'
+                  : capability?.label ?? 'Checking runtime status'
                 return (
                   <div key={item.key} className="flex items-center gap-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
                     <div className={`flex h-9 w-9 items-center justify-center rounded-xl border ${configured ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/75' : 'border-white/8 bg-white/[0.035] text-white/30'}`}>
@@ -262,10 +287,10 @@ export default function SettingsPage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-[12px] font-medium text-white/75">{item.label}</p>
-                      <p className="text-[10px] leading-relaxed text-white/30">{capability?.label ?? 'Checking runtime status'}</p>
+                      <p className="text-[10px] leading-relaxed text-white/30">{description}</p>
                     </div>
                     <span className={`rounded-full border px-2 py-0.5 text-[9px] font-medium uppercase tracking-[0.08em] ${configured ? 'border-emerald-300/20 bg-emerald-300/[0.08] text-emerald-200/70' : 'border-white/10 bg-white/[0.03] text-white/30'}`}>
-                      {capabilities === null ? 'Unknown' : configured ? 'On' : 'Optional'}
+                      {statusLabel}
                     </span>
                   </div>
                 )
