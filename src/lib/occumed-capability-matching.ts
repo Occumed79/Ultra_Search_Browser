@@ -13,6 +13,15 @@ const GENERIC_QUERY_TOKENS = new Set([
   'proposals', 'request', 'rfp', 'rfq', 'services', 'solicitation', 'tender',
 ])
 
+const BROAD_OCCUMED_UMBRELLA_PHRASES = [
+  'occupational health',
+  'occupational medicine',
+  'employee health',
+  'workforce health',
+] as const
+
+const SPECIFIC_OCCUMED_SERVICE_MARKERS = /\b(?:deployment|readiness|pre employment|pre placement|post offer|fitness for duty|fit for duty|return to work|medical clearance|surveillance|respirator|audiogram|audiometric|hearing conservation|spirometry|pulmonary function|silica|asbestos|hazwoper|hazmat|lead surveillance|fmcsr|fmcsa|dot physical|drug testing|drug screening|alcohol testing|laboratory|blood draw|urine testing|tuberculosis|quantiferon|chest x ray|electrocardiogram|ekg|ecg|vision testing|immunization|vaccination|dental|medical review|case review|advisor services|accommodation|job demands|quality assurance|records review|waiver|provider network|program management)\b/i
+
 export function normalizeOccuMedLanguage(value: string): string {
   return value
     .toLowerCase()
@@ -73,6 +82,14 @@ function scoreVariant(query: string, variant: string): number {
   }
 
   return 0
+}
+
+export function isBroadOccuMedCapabilityQuery(value: string): boolean {
+  const normalized = normalizeOccuMedLanguage(value)
+  const hasUmbrellaPhrase = BROAD_OCCUMED_UMBRELLA_PHRASES.some(phrase =>
+    normalized.includes(normalizeOccuMedLanguage(phrase))
+  )
+  return hasUmbrellaPhrase && !SPECIFIC_OCCUMED_SERVICE_MARKERS.test(normalized)
 }
 
 export function matchOccuMedCapabilityGroups(
@@ -189,18 +206,24 @@ export function alignOccuMedSemanticIntent(
 ): SemanticIntentPlan | undefined {
   if (!intent) return undefined
 
+  const umbrellaQuery = isBroadOccuMedCapabilityQuery(query)
   const matches = matchOccuMedCapabilityGroups(query, 3)
-  if (matches.length === 0) return intent
+  if (matches.length === 0 && !umbrellaQuery) return intent
 
+  const capabilityTerms = umbrellaQuery
+    ? OCCUMED_CAPABILITY_GROUPS.flatMap(group => [group.label, ...group.terms])
+    : matches.flatMap(match => [match.label, ...match.terms])
   const matchedVocabulary = new Set(
-    matches.flatMap(match => [match.label, ...match.terms])
+    capabilityTerms
       .flatMap(value => normalizeOccuMedLanguage(value).split(' '))
       .filter(Boolean)
   )
   const requestedCapability = {
     id: 'requested-occumed-capability',
-    label: matches.map(match => match.label).join(' or '),
-    terms: Array.from(new Set(matches.flatMap(match => [match.label, ...match.terms]))),
+    label: umbrellaQuery
+      ? 'any Occu-Med capable occupational-health service'
+      : matches.map(match => match.label).join(' or '),
+    terms: Array.from(new Set(capabilityTerms)),
     kind: 'service' as const,
     required: true,
     weight: 1.6,
@@ -221,7 +244,9 @@ export function alignOccuMedSemanticIntent(
 
   return {
     ...intent,
-    interpretation: `${intent.interpretation} Treat buyer-language terms within the requested Occu-Med capability family as equivalent service descriptions.`,
+    interpretation: umbrellaQuery
+      ? `${intent.interpretation} Treat this as an umbrella Occu-Med search: any supported occupational-health, medical-readiness, surveillance, ancillary-testing, or medical-review capability may satisfy the service requirement.`
+      : `${intent.interpretation} Treat buyer-language terms within the requested Occu-Med capability family as equivalent service descriptions.`,
     requiredConcepts: conceptGroups.filter(group => group.required).map(group => group.label),
     conceptGroups,
   }
