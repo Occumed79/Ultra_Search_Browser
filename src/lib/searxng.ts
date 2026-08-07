@@ -1,34 +1,54 @@
 // ─── SEARXNG INTEGRATION ───
-// Self-hosted metasearch — always-on parallel source when SEARXNG_URL is set
+// Private/self-hosted metasearch transport for Ultra Search.
 
 import type { ScrapedResult } from '../types/search'
 
+export const SEARXNG_WEB_ENGINES = [
+  'brave',
+  'duckduckgo',
+  'startpage',
+  'bing',
+  'qwant',
+  'mojeek',
+  'yahoo',
+] as const
+
 export interface SearXNGResult {
-  title: string
-  url: string
-  content: string
-  engine: string
-  score: number
-  category: string
+  title?: string
+  url?: string
+  content?: string
+  engine?: string
+  engines?: string[]
+  score?: number
+  category?: string
 }
 
-/**
- * Resolve and validate SEARXNG_URL. Returns null if unset or unsafe.
- * Does not default to localhost (that would make "always on" hit a dead endpoint).
- */
+export interface SearXNGSearchOptions {
+  safeSearch?: boolean
+  preferredLanguage?: string
+  region?: string
+  engines?: string[]
+  maxResults?: number
+  timeoutMs?: number
+}
+
+export interface SearXNGSearchResponse {
+  text: string
+  results: ScrapedResult[]
+  engines: string[]
+  configured: boolean
+  ok: boolean
+  error?: string
+}
+
+/** Resolve and validate SEARXNG_URL. */
 export function resolveSearxngBase(): string | null {
   const raw = process.env.SEARXNG_URL?.trim()
   if (!raw) return null
   try {
     const u = new URL(raw)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-    if (u.username || u.password) return null
-    const host = u.hostname.toLowerCase()
-    if (!host) return null
-    // Allow localhost only when explicitly configured (self-host dev)
-    if (/^(10\.|127\.|192\.168\.|169\.254\.|0\.)/.test(host) && host !== '127.0.0.1' && host !== 'localhost') {
-      // private LAN OK if user set SEARXNG_URL intentionally
-    }
+    if (u.username || u.password || !u.hostname) return null
     return `${u.protocol}//${u.host}`
   } catch {
     return null
@@ -39,84 +59,146 @@ export function isSearxngConfigured(): boolean {
   return resolveSearxngBase() !== null
 }
 
+function sourceEngines(result: SearXNGResult): string[] {
+  const values = [
+    ...(Array.isArray(result.engines) ? result.engines : []),
+    ...(result.engine ? [result.engine] : []),
+  ]
+    .map(value => String(value).trim())
+    .filter(Boolean)
+  return Array.from(new Set(values))
+}
+
 /**
- * Search using SearXNG instance. No-ops cleanly when SEARXNG_URL is unset.
+ * Query a private SearXNG instance through its JSON Search API.
+ * Search API keys are not required. The instance itself fans out to the
+ * configured upstream engines.
  */
 export async function searchSearXNG(
   query: string,
-  options: { safeSearch?: boolean; preferredLanguage?: string; region?: string } = {}
-): Promise<{ text: string; results: ScrapedResult[] }> {
+  options: SearXNGSearchOptions = {}
+): Promise<SearXNGSearchResponse> {
   const base = resolveSearxngBase()
   if (!base) {
-    return { text: '', results: [] }
+    return {
+      text: '',
+      results: [],
+      engines: [],
+      configured: false,
+      ok: false,
+      error: 'SEARXNG_URL is not configured.',
+    }
   }
+
+  const requestedEngines = Array.from(new Set(
+    (options.engines?.length ? options.engines : [...SEARXNG_WEB_ENGINES])
+      .map(value => value.trim().toLowerCase())
+      .filter(Boolean)
+  ))
 
   try {
     const url = new URL(`${base}/search`)
-    url.searchParams.set('q', query.slice(0, 240))
+    url.searchParams.set('q', query.slice(0, 500))
     url.searchParams.set('format', 'json')
-    url.searchParams.set('engines', 'google,bing,duckduckgo,brave')
+    url.searchParams.set('categories', 'general')
+    url.searchParams.set('engines', requestedEngines.join(','))
     url.searchParams.set('safesearch', options.safeSearch === false ? '0' : '2')
     if (options.preferredLanguage) url.searchParams.set('language', options.preferredLanguage)
 
     const response = await fetch(url.toString(), {
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(options.timeoutMs || 12_000),
       headers: {
         Accept: 'application/json',
-        'User-Agent': 'UltraSearchBrowser/1.0',
+        'User-Agent': 'UltraSearchBrowser/2.0',
       },
       cache: 'no-store',
     })
 
     if (!response.ok) {
-      throw new Error(`SearXNG error: ${response.status}`)
+      return {
+        text: '',
+        results: [],
+        engines: requestedEngines,
+        configured: true,
+        ok: false,
+        error: `SearXNG returned HTTP ${response.status}.`,
+      }
     }
 
-    const data = await response.json()
-
-    if (!data.results || !Array.isArray(data.results)) {
-      return { text: '', results: [] }
+    const data = await response.json() as { results?: SearXNGResult[] }
+    if (!Array.isArray(data.results)) {
+      return {
+        text: '',
+        results: [],
+        engines: requestedEngines,
+        configured: true,
+        ok: false,
+        error: 'SearXNG returned an invalid result payload.',
+      }
     }
 
+    const maxResults = Math.max(1, Math.min(50, options.maxResults || 20))
+    const observedEngines = new Set<string>()
     const results = data.results
-      .slice(0, 20)
-      .map((result: SearXNGResult, index: number) => {
+      .slice(0, maxResults)
+      .map((result, index) => {
+        const title = String(result.title || '').trim()
+        const rawUrl = String(result.url || '').trim()
+        if (!title || !rawUrl) return null
+
         let domain = ''
         try {
-          domain = new URL(result.url).hostname.replace(/^www\./, '')
+          domain = new URL(rawUrl).hostname.replace(/^www\./, '')
         } catch {
           return null
         }
-        if (!result.url || !result.title) return null
+
+        const engines = sourceEngines(result)
+        engines.forEach(engine => observedEngines.add(engine))
+        const engineLabel = engines.length > 0 ? engines.join(' + ') : 'metasearch'
+        const score = Number.isFinite(Number(result.score))
+          ? Math.max(0, Math.min(100, Number(result.score) * 20))
+          : Math.max(10, 100 - index * 2)
+
         return {
-          url: result.url,
-          title: String(result.title).slice(0, 200),
-          description: String(result.content || '').slice(0, 500),
+          url: rawUrl,
+          title: title.slice(0, 500),
+          description: String(result.content || '').trim().slice(0, 2_000),
           domain,
-          source: 'SearXNG',
+          source: `SearXNG · ${engineLabel}`,
           rank: index + 1,
-          score: Number.isFinite(result.score) ? result.score : 0,
+          score,
         } satisfies ScrapedResult
       })
-      .filter((r: ScrapedResult | null): r is ScrapedResult => r != null)
+      .filter((result): result is ScrapedResult => result != null)
 
-    const text = results.map((r: ScrapedResult) => `${r.title} ${r.description}`).join(' ')
-    return { text, results }
+    return {
+      text: results.map(result => `${result.title} ${result.description}`).join(' '),
+      results,
+      engines: observedEngines.size > 0 ? Array.from(observedEngines) : requestedEngines,
+      configured: true,
+      ok: true,
+    }
   } catch (error) {
-    console.warn('SearXNG search failed:', error)
-    return { text: '', results: [] }
+    return {
+      text: '',
+      results: [],
+      engines: requestedEngines,
+      configured: true,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }
   }
 }
 
-/**
- * Check if SearXNG is configured and reachable.
- */
+/** Check if the configured private SearXNG instance is reachable. */
 export async function checkSearXNGAvailable(): Promise<boolean> {
   const base = resolveSearxngBase()
   if (!base) return false
   try {
     const response = await fetch(`${base}/config`, {
       signal: AbortSignal.timeout(5_000),
+      headers: { Accept: 'application/json' },
       cache: 'no-store',
     })
     return response.ok
