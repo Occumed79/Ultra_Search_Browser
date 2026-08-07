@@ -1,22 +1,30 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { isSearxngConfigured } from '../../../lib/searxng'
 
 export async function GET() {
   const providers = externalSmartFilterCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
+  const searxngConfigured = isSearxngConfigured()
 
   return Response.json({
-    browserFedSearch: {
+    searxngSearch: {
       configured: true,
-      label: 'Core retrieval runs through the browser companion with no search API keys',
+      label: searxngConfigured
+        ? 'Private SearXNG metasearch is configured for zero-key server retrieval'
+        : 'SearXNG transport is enabled; bounded DuckDuckGo/Bing rescue remains available until SEARXNG_URL is configured',
     },
     deterministicIntent: {
       configured: true,
       label: 'Occu-Med query planning and buyer-language expansion run without an external AI planner',
     },
     serverSideSearchRetrieval: {
-      configured: false,
-      label: 'Disabled by design — Render does not act as a search engine',
+      configured: true,
+      label: 'Ultra Search retrieves search results server-side — no download or browser extension required',
+    },
+    zeroKeyDirectRescue: {
+      configured: true,
+      label: 'Bounded DuckDuckGo/Bing rescue keeps retrieval key-free when SearXNG is sparse or unavailable',
     },
     database: {
       configured: Boolean(process.env.DATABASE_URL),
@@ -37,21 +45,15 @@ export async function GET() {
     optionalEnhancements: {
       cloudflare: {
         configured: cloudflare.configured,
-        label: cloudflare.configured
-          ? `Optional semantic reranker · ${cloudflare.model}`
-          : 'Optional semantic reranker',
+        label: cloudflare.configured ? `Optional semantic reranker · ${cloudflare.model}` : 'Optional semantic reranker',
       },
       cerebras: {
         configured: providers.cerebras.configured,
-        label: providers.cerebras.configured
-          ? `Optional evidence reviewer · ${providers.cerebras.model}`
-          : 'Optional evidence reviewer',
+        label: providers.cerebras.configured ? `Optional evidence reviewer · ${providers.cerebras.model}` : 'Optional evidence reviewer',
       },
       groq: {
         configured: providers.groq.configured,
-        label: providers.groq.configured
-          ? `Optional fallback evidence review · ${providers.groq.reviewModel}`
-          : 'Optional fallback evidence review',
+        label: providers.groq.configured ? `Optional fallback evidence review · ${providers.groq.reviewModel}` : 'Optional fallback evidence review',
       },
     },
   })
