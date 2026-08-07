@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Ultra Search Browser Companion",
+  "version": "1.0.0",
+  "description": "Runs ordinary browser searches for Ultra Search and returns SERP cards for Occu-Med filtering. No search API keys required.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "https://ultra-search-browser.onrender.com/*",
+    "http://localhost:3000/*",
+    "https://www.google.com/*",
+    "https://www.bing.com/*",
+    "https://duckduckgo.com/*",
+    "https://html.duckduckgo.com/*",
+    "https://search.brave.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ultra-search-browser.onrender.com/*",
+        "http://localhost:3000/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.google.com/search*",
+        "https://www.bing.com/search*",
+        "https://duckduckgo.com/*",
+        "https://html.duckduckgo.com/*",
+        "https://search.brave.com/search*"
+      ],
+      "js": ["serp.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Ultra Search Browser Companion"
+  }
+}

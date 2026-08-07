@@ -1,13 +1,8 @@
-import { braveApiSearchConfigured } from '../../../lib/brave-search-api'
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
-import { geminiGroundedSearchCapabilities } from '../../../lib/gemini-grounded-search'
-import { managedSearchCapabilities } from '../../../lib/managed-search'
 import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historical-pursuits'
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
-import { semanticIntentCapabilities } from '../../../lib/semantic-intent'
-import { tavilySearchConfigured } from '../../../lib/tavily-search'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,31 +17,21 @@ function deployedCommit(): string {
 
 function healthPayload() {
   const providers = externalSmartFilterCapabilities()
-  const gemini = semanticIntentCapabilities()
-  const geminiSearch = geminiGroundedSearchCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
-  const managedSearch = managedSearchCapabilities()
 
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    productMode: 'rfp-finder-www',
-    searchPipeline: 'rfp-finder-v4-package-intelligence-learning',
+    productMode: 'rfp-finder-browser-fed',
+    searchPipeline: 'rfp-finder-v5-browser-fed-zero-key',
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
-      searxng: Boolean(process.env.SEARXNG_URL),
-      localEmbeddings: process.env.ENABLE_LOCAL_EMBEDDINGS === 'true',
-      geminiIntentPlanner: gemini.configured,
-      geminiIntentModel: gemini.model,
-      geminiGroundedSearch: geminiSearch.configured,
-      geminiGroundedSearchModel: geminiSearch.model,
-      geminiGroundedSearchPolicy: 'weak-coverage-only',
-      samGovOfficialApi: Boolean(process.env.SAM_GOV_API_KEY?.trim()),
-      braveSearchApi: braveApiSearchConfigured(),
-      braveSearchApiPolicy: 'weak-coverage-rescue-only',
-      tavilySearch: tavilySearchConfigured(),
-      tavilySearchPolicy: 'weak-coverage-rescue-only',
+      browserFedSearch: true,
+      browserCompanionRequired: true,
+      serverSideSearchRetrieval: false,
+      coreSearchApiKeysRequired: false,
+      deterministicIntentPlanning: true,
       structuredIntentPlanning: true,
       procurementOnly: true,
       sourceAgnosticRfpSearch: true,
@@ -67,11 +52,6 @@ function healthPayload() {
       pursuitFeedbackLearning: Boolean(process.env.DATABASE_URL),
       localPursuitWorkspace: true,
       taskAwareReranking: true,
-      managedSearch: managedSearch.configured,
-      managedSearchProviders: managedSearch.providers,
-      configuredButUnwiredSearchKeys: managedSearch.configuredButUnwired,
-      publicWebRfpSources: ['bing-rss', 'duckduckgo-lite', 'mojeek', 'yahoo', 'brave-html'],
-      legacyHtmlSearch: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
       cloudflareReranker: cloudflare.configured,
       cloudflareRerankModel: cloudflare.model,
       cerebrasSmartFilter: providers.cerebras.configured,
@@ -79,6 +59,7 @@ function healthPayload() {
       groqSmartFilter: providers.groq.configured,
       groqSmartModel: providers.groq.smartModel,
       groqReviewModel: providers.groq.reviewModel,
+      candidateFilteringUsesExternalProviders: false,
       deepPageValidation: true,
       streamingValidation: true,
       lifecycleDetection: true,

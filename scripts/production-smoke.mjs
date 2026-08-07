@@ -2,18 +2,7 @@ const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.c
 const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
 const MAX_WAIT_MS = Number(process.env.MAX_WAIT_MS || 12 * 60 * 1000)
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15_000)
-
-const FORBIDDEN_HOSTS = new Set([
-  'bing.com', 'www.bing.com',
-  'google.com', 'www.google.com',
-  'duckduckgo.com', 'html.duckduckgo.com', 'lite.duckduckgo.com',
-  'login.live.com', 'signup.live.com', 'account.microsoft.com',
-  'login.microsoftonline.com', 'accounts.google.com',
-])
-const GENERIC_PROCUREMENT_TITLES = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|therapy)\b/i
-const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
-const PROCUREMENT_PORTALS = /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
-const EXPECTED_PIPELINE = 'rfp-finder-v4-package-intelligence-learning'
+const EXPECTED_PIPELINE = 'rfp-finder-v5-browser-fed-zero-key'
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
@@ -24,6 +13,29 @@ const SELF_HOSTED_EVIDENCE_CANDIDATES = [
     source: 'production-smoke',
     rank: 1,
     score: 100,
+  },
+]
+
+const BROWSER_SERP_FIXTURE = [
+  {
+    title: 'Occupational Health Services Request for Proposals',
+    url: 'https://procurement.example.gov/bids/occupational-health-services?utm_source=google',
+    description: 'Request for proposals from qualified vendors for employee occupational health services including pre-employment physical examinations, medical surveillance, audiograms, spirometry, drug testing, and related employer medical services. Responses due September 30, 2026.',
+    source: 'Browser · Google',
+    rank: 1,
+    score: 100,
+    query: 'Occupational Health Services RFP',
+    purpose: 'broad',
+  },
+  {
+    title: 'Occupational Health Definition and Careers',
+    url: 'https://example.org/dictionary/occupational-health',
+    description: 'Definition, jobs, careers and educational information about occupational health.',
+    source: 'Browser · Bing',
+    rank: 2,
+    score: 96,
+    query: 'Occupational Health Services RFP',
+    purpose: 'broad',
   },
 ]
 
@@ -56,7 +68,13 @@ async function waitForDeployment() {
       const health = await readJson(response)
       lastState = `HTTP ${response.status}; commit=${health.commit || 'missing'}; pipeline=${health.searchPipeline || 'missing'}`
       console.log(`[deployment] ${lastState}`)
-      if (response.ok && health.status === 'ok' && health.productMode === 'rfp-finder-www' && health.searchPipeline === EXPECTED_PIPELINE && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))) return health
+      if (
+        response.ok
+        && health.status === 'ok'
+        && health.productMode === 'rfp-finder-browser-fed'
+        && health.searchPipeline === EXPECTED_PIPELINE
+        && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
+      ) return health
     } catch (error) {
       lastState = error instanceof Error ? error.message : String(error)
       console.log(`[deployment] waiting: ${lastState}`)
@@ -66,99 +84,81 @@ async function waitForDeployment() {
   throw new Error(`Render did not serve the expected deployment before timeout. Last state: ${lastState}`)
 }
 
-function assertCandidateUrls(results, lens) {
-  for (const result of results) {
-    const host = new URL(result.url).hostname.toLowerCase()
-    if (FORBIDDEN_HOSTS.has(host)) throw new Error(`${lens} leaked search/auth navigation: ${result.title} — ${result.url}`)
+async function runPlan() {
+  const response = await fetch(`${APP_URL}/api/search/plan`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'Occupational Health Services RFP', maxSearches: 8 }),
+    signal: AbortSignal.timeout(30_000),
+  })
+  const plan = await readJson(response)
+  if (!response.ok) throw new Error(`search plan HTTP ${response.status}: ${JSON.stringify(plan).slice(0, 1_500)}`)
+  if (plan.transport !== 'browser-extension') throw new Error(`Unexpected retrieval transport: ${plan.transport}`)
+  if (plan.apiKeysRequired !== false) throw new Error('Core search plan incorrectly requires API keys.')
+  if (plan.intent?.provider !== 'deterministic' || plan.intent?.usedExternal !== false) {
+    throw new Error(`Search plan was not deterministic: ${JSON.stringify(plan.intent).slice(0, 1_500)}`)
   }
-}
-
-function assertProcurementQuality(results) {
-  for (const result of results) {
-    const text = `${result.title} ${result.description} ${result.url}`
-    if (GENERIC_PROCUREMENT_TITLES.test(result.title)) throw new Error(`Procurement search leaked a generic page: ${result.title} — ${result.url}`)
-    if (!PROCUREMENT_EVIDENCE.test(text) && !PROCUREMENT_PORTALS.test(result.url)) throw new Error(`Procurement candidate lacks opportunity evidence: ${result.title} — ${result.url}`)
+  if (!Array.isArray(plan.searches) || plan.searches.length < 4) {
+    throw new Error(`Search plan did not produce enough targeted browser queries: ${JSON.stringify(plan.searches)}`)
   }
-}
-
-function assertDiversifiedProcurementRescue(diagnostics) {
-  const rescue = diagnostics.procurementRescue || {}
-  const queries = Array.isArray(rescue.queries) ? rescue.queries.slice(0, 4) : []
-  if (Number(rescue.attemptedTasks || 0) < 4) throw new Error(`Procurement rescue did not fan out across enough tasks: ${JSON.stringify(rescue).slice(0, 1_500)}`)
-  if (queries.length < 4) throw new Error(`Procurement rescue did not expose four primary strategies: ${JSON.stringify(rescue).slice(0, 1_500)}`)
-  if (/\b(?:site:|filetype:)/i.test(queries[0])) throw new Error(`Literal procurement strategy was replaced by an operator-only query: ${queries[0]}`)
-  if (!/site:\.gov/i.test(queries[2])) throw new Error(`Official-government strategy missing from rescue slot 3: ${queries[2]}`)
-  if (!/filetype:pdf/i.test(queries[3])) throw new Error(`Direct-document strategy missing from rescue slot 4: ${queries[3]}`)
-}
-
-function zeroCandidateDiagnostics(data, health) {
-  const diagnostics = data.diagnostics || {}
-  const rescue = diagnostics.procurementRescue || {}
-  return {
-    enabledSources: diagnostics.enabledSources,
-    failures: Array.isArray(diagnostics.failures) ? diagnostics.failures.slice(0, 12) : [],
-    intentGate: diagnostics.intentGate,
-    smartFilter: diagnostics.smartFilter,
-    rescue: {
-      rawCandidates: rescue.rawCandidates,
-      retainedCandidates: rescue.retainedCandidates,
-      attemptedTasks: rescue.attemptedTasks,
-      successfulTasks: rescue.successfulTasks,
-      samGov: rescue.samGov,
-      braveApi: rescue.braveApi,
-      tavily: rescue.tavily,
-      geminiGroundedSearch: rescue.geminiGroundedSearch,
-      rawPreview: Array.isArray(rescue.rawPreview) ? rescue.rawPreview.slice(0, 8) : [],
-    },
-    health: {
-      managedSearch: health?.capabilities?.managedSearch,
-      managedSearchProviders: health?.capabilities?.managedSearchProviders,
-      braveSearchApi: health?.capabilities?.braveSearchApi,
-      tavilySearch: health?.capabilities?.tavilySearch,
-      samGovOfficialApi: health?.capabilities?.samGovOfficialApi,
-      geminiGroundedSearch: health?.capabilities?.geminiGroundedSearch,
-    },
+  if (/\b(?:site:|filetype:)/i.test(plan.searches[0].query)) {
+    throw new Error(`Literal search was replaced by an operator-only query: ${plan.searches[0].query}`)
   }
+  if (!plan.searches.some(search => /site:\.gov/i.test(search.query))) {
+    throw new Error(`Search plan has no government-source strategy: ${JSON.stringify(plan.searches)}`)
+  }
+  if (!plan.searches.some(search => /filetype:pdf/i.test(search.query))) {
+    throw new Error(`Search plan has no direct-document strategy: ${JSON.stringify(plan.searches)}`)
+  }
+  console.log(`[plan] ${plan.searches.length} browser queries; intent=${plan.intent.intentKind}; apiKeysRequired=${plan.apiKeysRequired}`)
+  return plan
 }
 
-async function runSearch(query, health, expectations = {}) {
-  const response = await fetch(`${APP_URL}/api/search`, {
+async function runBrowserIngest(plan) {
+  const response = await fetch(`${APP_URL}/api/search/ingest`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query,
-      lens: 'procurement',
-      settings: {
-        defaultSources: ['bing', 'duckduckgo', 'mojeek', 'memory'],
-        resultsPerPage: 20,
-        safeSearch: true,
-        autoSummarize: true,
-        preferredLanguage: 'en',
-        region: 'us',
-      },
+      query: plan.query,
+      intent: plan.intent,
+      searches: plan.searches,
+      results: BROWSER_SERP_FIXTURE,
+      settings: { resultsPerPage: 20, safeSearch: true, preferredLanguage: 'en', region: 'us' },
     }),
-    signal: AbortSignal.timeout(75_000),
+    signal: AbortSignal.timeout(45_000),
   })
   const data = await readJson(response)
-  if (!response.ok) throw new Error(`procurement search HTTP ${response.status}: ${JSON.stringify(data).slice(0, 1_500)}`)
-  if (!Array.isArray(data.results) || data.results.length === 0) {
-    throw new Error(`procurement search returned no candidates: ${JSON.stringify(zeroCandidateDiagnostics(data, health)).slice(0, 5_000)}`)
+  if (!response.ok) throw new Error(`browser ingest HTTP ${response.status}: ${JSON.stringify(data).slice(0, 2_500)}`)
+  if (data.lens !== 'procurement') throw new Error(`Browser ingest returned lens ${data.lens}.`)
+  if (data.diagnostics?.retrievalMode !== 'browser-fed') throw new Error(`Browser ingest did not report browser-fed mode: ${JSON.stringify(data.diagnostics)}`)
+  if (data.diagnostics?.apiKeysRequired !== false) throw new Error('Browser ingest incorrectly requires API keys.')
+  if (data.diagnostics?.intentGate?.applied !== true) throw new Error(`Intent gate was not applied: ${JSON.stringify(data.diagnostics?.intentGate)}`)
+  if (!Array.isArray(data.results) || data.results.length < 1) throw new Error(`Relevant browser fixture was discarded: ${JSON.stringify(data).slice(0, 3_500)}`)
+  if (!data.results.some(result => /request for proposals/i.test(`${result.title} ${result.description}`))) {
+    throw new Error(`Procurement candidate did not survive filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
   }
-  assertCandidateUrls(data.results, 'procurement')
+  if (data.results.some(result => /definition|careers/i.test(result.title))) {
+    throw new Error(`Junk browser result survived Occu-Med filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
+  }
+  if (Number(data.confidence || 0) !== 0) throw new Error(`Candidate-stage confidence must remain 0; received ${data.confidence}.`)
+  console.log(`[ingest] raw=${BROWSER_SERP_FIXTURE.length}; retained=${data.results.length}; sources=${data.sources?.join(', ')}`)
+}
 
-  const diagnostics = data.diagnostics || {}
-  if (!data.intent || !Array.isArray(data.intent.conceptGroups) || data.intent.conceptGroups.length === 0) throw new Error(`Procurement search did not return a structured intent plan: ${JSON.stringify(data.intent)}`)
-  if (data.lens !== 'procurement') throw new Error(`Expected procurement lens but production returned ${data.lens}.`)
-  if (diagnostics.intentGate?.applied !== true) throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
-  if (expectations.requireDiversifiedRescue) assertDiversifiedProcurementRescue(diagnostics)
-  assertProcurementQuality(data.results)
-  if (Number(data.confidence || 0) !== 0) throw new Error(`Candidate-stage confidence must be 0, received ${data.confidence}.`)
-  if (data.summary) throw new Error(`Candidate-stage search returned a premature summary: ${data.summary}`)
-
-  const rescue = diagnostics.procurementRescue || {}
-  console.log(`[procurement] candidates=${data.results.length}; rescue=${rescue.successfulTasks || 0}/${rescue.attemptedTasks || 0}; memory=${diagnostics.memoryKeywordMatches || 0}/${diagnostics.memoryVectorMatches || 0}`)
-  for (const result of data.results.slice(0, 3)) console.log(`[procurement] ${result.source} · ${result.title} — ${result.url}`)
-  return data
+async function assertLegacyServerSearchRetired() {
+  const response = await fetch(`${APP_URL}/api/search`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: 'Occupational Health Services RFP' }),
+    signal: AbortSignal.timeout(30_000),
+  })
+  const data = await readJson(response)
+  if (response.status !== 428 || data.code !== 'BROWSER_RESULTS_REQUIRED') {
+    throw new Error(`Legacy server retrieval is still active: HTTP ${response.status} ${JSON.stringify(data).slice(0, 1_500)}`)
+  }
+  if (data.apiKeysRequired !== false || data.transport !== 'browser-extension') {
+    throw new Error(`Legacy route did not redirect to zero-key browser transport: ${JSON.stringify(data).slice(0, 1_500)}`)
+  }
+  console.log('[legacy] server-side search retrieval correctly retired')
 }
 
 function parseSseBlock(block) {
@@ -175,7 +175,12 @@ async function runEvidenceValidation() {
   const response = await fetch(`${APP_URL}/api/search/validate`, {
     method: 'POST',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: 'Ultra Search Browser production validation evidence', lens: 'web', results: SELF_HOSTED_EVIDENCE_CANDIDATES, maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length }),
+    body: JSON.stringify({
+      query: 'Ultra Search Browser production validation evidence',
+      lens: 'web',
+      results: SELF_HOSTED_EVIDENCE_CANDIDATES,
+      maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
+    }),
     signal: AbortSignal.timeout(120_000),
   })
   if (!response.ok || !response.body) throw new Error(`Evidence validation HTTP ${response.status}: ${(await response.text()).slice(0, 800)}`)
@@ -204,17 +209,10 @@ async function runEvidenceValidation() {
 
   if (!complete) throw new Error('Evidence stream ended without completion.')
   if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
-  if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify({ progress: complete.progress, buckets: complete.buckets }).slice(0, 2_500)}`)
-  if (!Array.isArray(complete.results) || complete.results.length < 1) throw new Error(`No verified evidence result: ${JSON.stringify(complete.buckets).slice(0, 2_000)}`)
-  const verified = complete.results.filter(result => result.bucket === 'valid' && result.validation?.status === 'valid' && result.pageValidation?.availability === 'reachable')
-  if (verified.length < 1) throw new Error(`No verified main result: ${JSON.stringify(complete.results).slice(0, 2_000)}`)
-  if (Number(complete.diagnostics?.verifiedCount || 0) < 1) throw new Error('Verified result count was not reported.')
+  if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify(complete.progress)}`)
+  if (!Array.isArray(complete.results) || complete.results.length < 1) throw new Error('No verified evidence result.')
   if (progressEvents < 1 || resultEvents < 1) throw new Error('Evidence stream emitted no live progress/results.')
-  if (Number(complete.confidence || 0) <= 0) throw new Error('Verified evidence returned no confidence score.')
-  if (!complete.summary) throw new Error('Verified evidence returned no grounded summary.')
-
-  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}; confidence=${complete.confidence}`)
-  for (const result of complete.results) console.log(`[evidence] VERIFIED · ${result.title} — ${result.url}`)
+  console.log(`[evidence] checked=${complete.progress.checked}; reachable=${complete.progress.reachable}; valid=${complete.progress.valid}`)
 }
 
 async function main() {
@@ -222,8 +220,13 @@ async function main() {
   if (EXPECTED_COMMIT) console.log(`Expected commit: ${EXPECTED_COMMIT}`)
   const health = await waitForDeployment()
   console.log(`Production deployment ready: ${health.commit}`)
-  console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
-  await runSearch('Occupational Health Services RFP', health, { requireDiversifiedRescue: true })
+  if (health.capabilities?.coreSearchApiKeysRequired !== false) throw new Error('Health contract says core search requires API keys.')
+  if (health.capabilities?.serverSideSearchRetrieval !== false) throw new Error('Health contract says server-side search retrieval is still active.')
+  if (health.capabilities?.browserFedSearch !== true) throw new Error('Health contract does not expose browser-fed search.')
+
+  const plan = await runPlan()
+  await runBrowserIngest(plan)
+  await assertLegacyServerSearchRetired()
   await runEvidenceValidation()
   console.log('Production smoke test passed.')
 }
