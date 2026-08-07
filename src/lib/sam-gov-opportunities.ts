@@ -1,18 +1,14 @@
-import { buyerLanguageTermsForQuery } from './occumed-capability-matching'
+import {
+  buyerLanguageTermsForQuery,
+  isBroadOccuMedCapabilityQuery,
+} from './occumed-capability-matching'
 import type { ScrapedResult } from '../types/search'
 
 const SAM_API_BASE = 'https://api.sam.gov/opportunities/v2/search'
 const SAM_TIMEOUT_MS = 9_000
 const MAX_LOOKBACK_DAYS = 364
-const MAX_SAM_STRATEGIES = 8
-
-const OCCUMED_SAM_TITLE_ANCHORS = [
-  'occupational health',
-  'OCONUS medical',
-  'medical surveillance',
-  'drug testing',
-  'medical review',
-] as const
+const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 6 * 60 * 60 * 1000
+let samRateLimitedUntil = 0
 
 interface SamOpportunityRecord {
   noticeId?: string
@@ -25,8 +21,6 @@ interface SamOpportunityRecord {
   postedDate?: string
   type?: string
   baseType?: string
-  archiveDate?: string
-  archiveType?: string
   active?: string
   classificationCode?: string
   naicsCode?: string
@@ -56,6 +50,7 @@ export interface SamGovSearchDiagnostics {
   resultCount: number
   queryCount: number
   strategies?: string[]
+  cooldownUntil?: string
   error?: string
 }
 
@@ -72,33 +67,18 @@ function cleanTitleQuery(query: string): string {
     .trim()
 }
 
-function samSearchSpecs(query: string): SamSearchSpec[] {
-  const direct = cleanTitleQuery(query)
-  const buyerAliases = buyerLanguageTermsForQuery(direct || query, 5)
-  const candidates: SamSearchSpec[] = [
-    ...(direct.length >= 4
-      ? [{ label: `title:${direct}`, params: { title: direct } }]
-      : []),
-    ...(buyerAliases[0]
-      ? [{ label: `buyer-title:${buyerAliases[0]}`, params: { title: buyerAliases[0] } }]
-      : []),
-    { label: 'psc:Q533', params: { ccode: 'Q533' } },
-    ...OCCUMED_SAM_TITLE_ANCHORS.map(title => ({
-      label: `capability-title:${title}`,
-      params: { title },
-    })),
-  ]
-
-  const seen = new Set<string>()
-  const output: SamSearchSpec[] = []
-  for (const candidate of candidates) {
-    const key = new URLSearchParams(candidate.params).toString().toLowerCase()
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    output.push(candidate)
-    if (output.length >= MAX_SAM_STRATEGIES) break
+function samSearchSpec(query: string): SamSearchSpec {
+  if (isBroadOccuMedCapabilityQuery(query)) {
+    return { label: 'psc:Q533', params: { ccode: 'Q533' } }
   }
-  return output
+
+  const direct = cleanTitleQuery(query)
+  const buyerAlias = buyerLanguageTermsForQuery(direct || query, 1)[0]
+  const title = buyerAlias || direct || query.trim()
+  return {
+    label: buyerAlias ? `buyer-title:${buyerAlias}` : `title:${title}`,
+    params: { title },
+  }
 }
 
 function responseDeadline(record: SamOpportunityRecord): string | undefined {
@@ -109,7 +89,6 @@ function isStillActionable(record: SamOpportunityRecord): boolean {
   if (record.active && !/^yes$/i.test(record.active.trim())) return false
   const noticeType = `${record.type || ''} ${record.baseType || ''}`
   if (/\b(?:award notice|justification|sale of surplus)\b/i.test(noticeType)) return false
-
   const deadline = responseDeadline(record)
   if (!deadline) return true
   const parsed = new Date(deadline)
@@ -123,9 +102,7 @@ function organization(record: SamOpportunityRecord): string {
 function recordUrl(record: SamOpportunityRecord): string {
   if (record.uiLink?.startsWith('http')) return record.uiLink
   if (record.additionalInfoLink?.startsWith('http')) return record.additionalInfoLink
-  return record.noticeId
-    ? `https://sam.gov/opp/${record.noticeId}/view`
-    : 'https://sam.gov/content/opportunities'
+  return record.noticeId ? `https://sam.gov/opp/${record.noticeId}/view` : 'https://sam.gov/content/opportunities'
 }
 
 function classificationEvidence(record: SamOpportunityRecord): string[] {
@@ -141,7 +118,7 @@ function classificationEvidence(record: SamOpportunityRecord): string[] {
 function recordDescription(record: SamOpportunityRecord): string {
   const rawDescription = record.description?.trim() || ''
   const descriptionText = /^https?:\/\//i.test(rawDescription) ? '' : rawDescription
-  const parts = [
+  return [
     descriptionText,
     record.type ? `Notice type: ${record.type}` : '',
     ...classificationEvidence(record),
@@ -149,14 +126,12 @@ function recordDescription(record: SamOpportunityRecord): string {
     record.solicitationNumber ? `Solicitation ${record.solicitationNumber}` : '',
     record.postedDate ? `Posted ${record.postedDate}` : '',
     responseDeadline(record) ? `Responses due ${responseDeadline(record)}` : '',
-  ].filter(Boolean)
-  return parts.join(' · ').slice(0, 1_500)
+  ].filter(Boolean).join(' · ').slice(0, 1_500)
 }
 
 function normalizeResults(records: SamOpportunityRecord[], limit: number): ScrapedResult[] {
   const seen = new Set<string>()
   const results: ScrapedResult[] = []
-
   for (const record of records) {
     const title = record.title?.trim()
     if (!title || !isStillActionable(record)) continue
@@ -174,52 +149,41 @@ function normalizeResults(records: SamOpportunityRecord[], limit: number): Scrap
       source: 'SAM.gov Official API',
       rank: results.length + 1,
       score: record.classificationCode?.trim().toUpperCase() === 'Q533' ? 110 : 100,
-      retrieval: {
-        sources: ['SAM.gov Official API'],
-        queries: [],
-        purposes: ['official-procurement-api'],
-        overlap: 1,
-      },
+      retrieval: { sources: ['SAM.gov Official API'], queries: [], purposes: ['official-procurement-api'], overlap: 1 },
       pageValidation: {
         checkedAt: new Date().toISOString(),
         requestedUrl: url,
         finalUrl: url,
         availability: 'reachable',
         reason: 'Published active opportunity returned by the official SAM.gov Opportunities API.',
-        evidence: [
-          record.type ? `Notice type: ${record.type}` : '',
-          ...classification,
-          record.postedDate ? `Posted: ${record.postedDate}` : '',
-          deadline ? `Deadline: ${deadline}` : '',
-          record.solicitationNumber ? `Solicitation: ${record.solicitationNumber}` : '',
-        ].filter(Boolean),
+        evidence: [record.type ? `Notice type: ${record.type}` : '', ...classification, record.postedDate ? `Posted: ${record.postedDate}` : '', deadline ? `Deadline: ${deadline}` : '', record.solicitationNumber ? `Solicitation: ${record.solicitationNumber}` : ''].filter(Boolean),
         extractedTextLength: recordDescription(record).length,
         cached: false,
         lifecycle: {
           status: deadline && !Number.isNaN(new Date(deadline).getTime()) ? 'open' : 'unknown',
-          reason: deadline ? 'Official SAM.gov response deadline is not in the past.' : 'SAM.gov marks the notice active and did not provide a parseable response deadline in the search record.',
+          reason: deadline ? 'Official SAM.gov response deadline is not in the past.' : 'SAM.gov marks the notice active and did not provide a parseable response deadline.',
           confidence: deadline ? 0.95 : 0.8,
           dates: [
-            ...(record.postedDate ? [{
-              kind: 'posted' as const,
-              value: record.postedDate,
-              iso: record.postedDate,
-              context: 'SAM.gov posted date',
-            }] : []),
-            ...(deadline ? [{
-              kind: 'due' as const,
-              value: deadline,
-              iso: deadline,
-              context: 'SAM.gov response deadline',
-            }] : []),
+            ...(record.postedDate ? [{ kind: 'posted' as const, value: record.postedDate, iso: record.postedDate, context: 'SAM.gov posted date' }] : []),
+            ...(deadline ? [{ kind: 'due' as const, value: deadline, iso: deadline, context: 'SAM.gov response deadline' }] : []),
           ],
         },
       },
     })
     if (results.length >= limit) break
   }
-
   return results
+}
+
+function rateLimitCooldown(response: Response): number {
+  const retryAfter = response.headers.get('retry-after')
+  if (retryAfter) {
+    const seconds = Number(retryAfter)
+    if (Number.isFinite(seconds) && seconds > 0) return Math.min(24 * 60 * 60 * 1000, seconds * 1000)
+    const timestamp = Date.parse(retryAfter)
+    if (Number.isFinite(timestamp) && timestamp > Date.now()) return Math.min(24 * 60 * 60 * 1000, timestamp - Date.now())
+  }
+  return DEFAULT_RATE_LIMIT_COOLDOWN_MS
 }
 
 export async function searchSamGovOfficial(
@@ -228,86 +192,105 @@ export async function searchSamGovOfficial(
 ): Promise<{ results: ScrapedResult[]; diagnostics: SamGovSearchDiagnostics }> {
   const apiKey = process.env.SAM_GOV_API_KEY?.trim()
   if (!apiKey) {
+    return { results: [], diagnostics: { configured: false, attempted: false, successful: false, resultCount: 0, queryCount: 0 } }
+  }
+  if (Date.now() < samRateLimitedUntil) {
     return {
       results: [],
       diagnostics: {
-        configured: false,
+        configured: true,
         attempted: false,
         successful: false,
         resultCount: 0,
         queryCount: 0,
+        cooldownUntil: new Date(samRateLimitedUntil).toISOString(),
+        error: 'SAM.gov is cooling down after a rate-limit response',
       },
     }
   }
 
   const now = new Date()
   const postedFrom = new Date(now.getTime() - MAX_LOOKBACK_DAYS * 24 * 60 * 60 * 1000)
-  const specs = samSearchSpecs(query)
-  const allRecords: SamOpportunityRecord[] = []
-  const failures: string[] = []
+  const spec = samSearchSpec(query)
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    limit: String(Math.max(1, Math.min(100, limit))),
+    offset: '0',
+    postedFrom: formatSamDate(postedFrom),
+    postedTo: formatSamDate(now),
+    ...spec.params,
+  })
 
-  for (const spec of specs) {
-    const params = new URLSearchParams({
-      api_key: apiKey,
-      limit: String(Math.max(1, Math.min(100, limit))),
-      offset: '0',
-      postedFrom: formatSamDate(postedFrom),
-      postedTo: formatSamDate(now),
-      ...spec.params,
+  try {
+    const response = await fetch(`${SAM_API_BASE}?${params.toString()}`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(SAM_TIMEOUT_MS),
     })
-
+    const text = await response.text()
+    let payload: SamSearchPayload = {}
     try {
-      const response = await fetch(`${SAM_API_BASE}?${params.toString()}`, {
-        headers: { Accept: 'application/json' },
-        cache: 'no-store',
-        signal: AbortSignal.timeout(SAM_TIMEOUT_MS),
-      })
-      const text = await response.text()
-      let payload: SamSearchPayload = {}
-      try {
-        payload = text ? JSON.parse(text) as SamSearchPayload : {}
-      } catch {
-        throw new Error(`SAM.gov returned malformed JSON for ${spec.label}`)
-      }
-      if (!response.ok) {
-        throw new Error(`SAM.gov returned HTTP ${response.status} for ${spec.label}`)
-      }
-      const records = Array.isArray(payload.opportunitiesData)
-        ? payload.opportunitiesData
-        : Array.isArray(payload.opportunities)
-          ? payload.opportunities
-          : Array.isArray(payload.data)
-            ? payload.data
-            : []
-      allRecords.push(...records)
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error))
+      payload = text ? JSON.parse(text) as SamSearchPayload : {}
+    } catch {
+      throw new Error('SAM.gov returned malformed JSON')
     }
-  }
+    if (response.status === 429) {
+      samRateLimitedUntil = Date.now() + rateLimitCooldown(response)
+      return {
+        results: [],
+        diagnostics: {
+          configured: true,
+          attempted: true,
+          successful: false,
+          resultCount: 0,
+          queryCount: 1,
+          strategies: [spec.label],
+          cooldownUntil: new Date(samRateLimitedUntil).toISOString(),
+          error: `SAM.gov returned HTTP 429 for ${spec.label}`,
+        },
+      }
+    }
+    if (!response.ok) throw new Error(`SAM.gov returned HTTP ${response.status} for ${spec.label}`)
 
-  const strategyLabels = specs.map(spec => spec.label)
-  const results = normalizeResults(allRecords, limit).map((result): ScrapedResult => ({
-    ...result,
-    retrieval: {
-      sources: result.retrieval?.sources || ['SAM.gov Official API'],
-      queries: strategyLabels,
-      purposes: result.retrieval?.purposes || ['official-procurement-api'],
-      overlap: result.retrieval?.overlap || 1,
-    },
-  }))
-
-  return {
-    results,
-    diagnostics: {
-      configured: true,
-      attempted: true,
-      successful: results.length > 0,
-      resultCount: results.length,
-      queryCount: specs.length,
-      strategies: strategyLabels,
-      ...(failures.length > 0 && results.length === 0
-        ? { error: Array.from(new Set(failures)).join('; ').slice(0, 600) }
-        : {}),
-    },
+    const records = Array.isArray(payload.opportunitiesData)
+      ? payload.opportunitiesData
+      : Array.isArray(payload.opportunities)
+        ? payload.opportunities
+        : Array.isArray(payload.data)
+          ? payload.data
+          : []
+    const results = normalizeResults(records, limit).map((result): ScrapedResult => ({
+      ...result,
+      retrieval: {
+        sources: result.retrieval?.sources || ['SAM.gov Official API'],
+        queries: [spec.label],
+        purposes: result.retrieval?.purposes || ['official-procurement-api'],
+        overlap: result.retrieval?.overlap || 1,
+      },
+    }))
+    return {
+      results,
+      diagnostics: {
+        configured: true,
+        attempted: true,
+        successful: results.length > 0,
+        resultCount: results.length,
+        queryCount: 1,
+        strategies: [spec.label],
+      },
+    }
+  } catch (error) {
+    return {
+      results: [],
+      diagnostics: {
+        configured: true,
+        attempted: true,
+        successful: false,
+        resultCount: 0,
+        queryCount: 1,
+        strategies: [spec.label],
+        error: error instanceof Error ? error.message.slice(0, 600) : String(error).slice(0, 600),
+      },
+    }
   }
 }

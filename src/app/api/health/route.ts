@@ -1,3 +1,4 @@
+import { braveApiSearchConfigured } from '../../../lib/brave-search-api'
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { geminiGroundedSearchCapabilities } from '../../../lib/gemini-grounded-search'
@@ -42,6 +43,8 @@ function healthPayload() {
       geminiGroundedSearchModel: geminiSearch.model,
       geminiGroundedSearchPolicy: 'weak-coverage-only',
       samGovOfficialApi: Boolean(process.env.SAM_GOV_API_KEY?.trim()),
+      braveSearchApi: braveApiSearchConfigured(),
+      braveSearchApiPolicy: 'weak-coverage-rescue-only',
       tavilySearch: tavilySearchConfigured(),
       tavilySearchPolicy: 'weak-coverage-rescue-only',
       structuredIntentPlanning: true,
@@ -67,7 +70,7 @@ function healthPayload() {
       managedSearch: managedSearch.configured,
       managedSearchProviders: managedSearch.providers,
       configuredButUnwiredSearchKeys: managedSearch.configuredButUnwired,
-      publicWebRfpSources: ['bing-rss', 'duckduckgo-lite', 'mojeek', 'yahoo', 'brave'],
+      publicWebRfpSources: ['bing-rss', 'duckduckgo-lite', 'mojeek', 'yahoo', 'brave-html'],
       legacyHtmlSearch: process.env.ENABLE_LEGACY_HTML_SEARCH === 'true',
       cloudflareReranker: cloudflare.configured,
       cloudflareRerankModel: cloudflare.model,
