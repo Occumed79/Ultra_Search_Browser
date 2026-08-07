@@ -14,6 +14,11 @@ import { useLocalStorage } from './use-local-storage'
 import { DEFAULT_USER_SETTINGS, normalizeUserSettings, toSearchRequestPreferences } from '@/lib/search-settings'
 import type { SemanticIntentPlan } from '@/lib/semantic-intent'
 import { buildSearchPath, parseSearchUrl } from '@/lib/search-url'
+import {
+  browserCompanionAvailable,
+  runBrowserSearchPlan,
+  type BrowserBridgePlan,
+} from '@/lib/browser-search-bridge'
 
 interface UseSearchReturn {
   query: string
@@ -36,6 +41,23 @@ interface UseSearchReturn {
 }
 
 type HistoryMode = 'push' | 'replace' | 'none'
+
+interface SearchPayload {
+  error?: string
+  detail?: string
+  query?: string
+  lens?: SearchLens
+  requestedLens?: SearchLens
+  summary?: string
+  expandedQueries?: string[]
+  signals?: Array<{ name: string; score: number; description: string }>
+  results?: ScrapedResult[]
+  sources?: string[]
+  timestamp?: string
+  confidence?: number
+  searchRunId?: string | null
+  intent?: SemanticIntentPlan
+}
 
 const EMPTY_BUCKETS: SearchResultBuckets = {
   valid: [],
@@ -62,11 +84,19 @@ function parseSseBlock(block: string): { event: string; data: unknown } | null {
   }
 }
 
+function searchSuggestions(queries: string[]): SearchSuggestion[] {
+  return queries.map((text, index) => ({
+    text,
+    type: index === 0 ? ('related' as const) : ('ai' as const),
+    score: Math.max(0.1, 1 - index * 0.1),
+  }))
+}
+
 export function useSearch(): UseSearchReturn {
   const [storedSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
   const settings = useMemo(() => normalizeUserSettings(storedSettings), [storedSettings])
   const [query, setQuery] = useState('')
-  const [lens, setLens] = useState<SearchLens>('web')
+  const [lens, setLens] = useState<SearchLens>('procurement')
   const [intelligence, setIntelligence] = useState<IntelligenceObject | null>(null)
   const [scrapedResults, setScrapedResults] = useState<ScrapedResult[]>([])
   const [resultBuckets, setResultBuckets] = useState<SearchResultBuckets>(EMPTY_BUCKETS)
@@ -87,7 +117,7 @@ export function useSearch(): UseSearchReturn {
     validationController.current?.abort()
     validationController.current = null
     setQuery('')
-    setLens('web')
+    setLens('procurement')
     setIntelligence(null)
     setScrapedResults([])
     setResultBuckets(EMPTY_BUCKETS)
@@ -257,11 +287,12 @@ export function useSearch(): UseSearchReturn {
 
   const executeSearch = useCallback(async (
     searchQuery: string,
-    searchLens: SearchLens,
+    _searchLens: SearchLens,
     historyMode: HistoryMode = 'none'
   ) => {
     const normalizedSearchQuery = searchQuery.trim()
     if (!normalizedSearchQuery) return
+    const searchLens: SearchLens = 'procurement'
 
     if (historyMode !== 'none') {
       const nextPath = buildSearchPath(
@@ -296,67 +327,76 @@ export function useSearch(): UseSearchReturn {
     const startTime = performance.now()
 
     try {
-      const response = await fetch('/api/search', {
+      const planResponse = await fetch('/api/search/plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: normalizedSearchQuery, maxSearches: 8 }),
+      })
+      const searchPlan = await planResponse.json().catch(() => null) as (BrowserBridgePlan & {
+        error?: string
+        detail?: string
+      }) | null
+      if (!planResponse.ok || !searchPlan?.query || !Array.isArray(searchPlan.searches)) {
+        throw new Error(searchPlan?.detail || searchPlan?.error || 'Ultra Search could not build the browser search plan.')
+      }
+      if (searchSequence.current !== sequence) return
+
+      const plannedQueries = searchPlan.searches.map(search => search.query)
+      setSuggestions(searchSuggestions(plannedQueries))
+      setLens('procurement')
+
+      const companionReady = await browserCompanionAvailable()
+      if (!companionReady) {
+        setIntelligence({
+          query: searchPlan.query,
+          lens: 'procurement',
+          summary: 'Ultra Search built the Occu-Med search plan, but the browser companion is not installed or enabled.',
+          confidence: 0,
+          signals: [],
+          sources: ['browser-companion-required'],
+          queryExpansions: plannedQueries,
+          timestamp: searchPlan.timestamp,
+        })
+        setHasSearched(true)
+        setSearchTime(performance.now() - startTime)
+        setError('Browser companion not detected. Ultra Search intentionally does not call search APIs from Render. Install the browser-extension folder from this repository as an unpacked Chrome/Chromium extension, then search again.')
+        return
+      }
+
+      const browserBatch = await runBrowserSearchPlan(searchPlan)
+      if (searchSequence.current !== sequence) return
+
+      const ingestResponse = await fetch('/api/search/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: normalizedSearchQuery,
-          lens: searchLens,
+          query: searchPlan.query,
+          intent: searchPlan.intent,
+          searches: searchPlan.searches,
+          results: browserBatch.results,
           settings: toSearchRequestPreferences(settings),
         }),
       })
-
-      const payload = await response.json().catch(() => null) as {
-        error?: string
-        detail?: string
-        query?: string
-        lens?: SearchLens
-        requestedLens?: SearchLens
-        summary?: string
-        expandedQueries?: string[]
-        signals?: Array<{ name: string; score: number; description: string }>
-        results?: ScrapedResult[]
-        sources?: string[]
-        timestamp?: string
-        confidence?: number
-        searchRunId?: string | null
-        intent?: SemanticIntentPlan
-      } | null
-
-      if (!response.ok) {
-        const message = payload?.detail || payload?.error || response.statusText || `HTTP ${response.status}`
-        throw new Error(`Search failed: ${message}`)
+      const payload = await ingestResponse.json().catch(() => null) as SearchPayload | null
+      if (!ingestResponse.ok) {
+        throw new Error(payload?.detail || payload?.error || `Browser result filtering failed (HTTP ${ingestResponse.status}).`)
       }
-
       if (!payload?.query || !payload.lens || !payload.timestamp) {
-        throw new Error('Search failed: the server returned an incomplete response')
+        throw new Error('Browser result filtering returned an incomplete response.')
       }
-
       if (searchSequence.current !== sequence) return
 
       const data = {
         query: payload.query,
         lens: payload.lens,
         summary: payload.summary,
-        expandedQueries: payload.expandedQueries ?? [],
+        expandedQueries: payload.expandedQueries ?? plannedQueries,
         signals: payload.signals ?? [],
         results: payload.results ?? [],
-        sources: payload.sources ?? [],
+        sources: payload.sources ?? browserBatch.engines.map(engine => `Browser · ${engine}`),
         timestamp: payload.timestamp,
         confidence: payload.confidence ?? 0,
-        intent: payload.intent,
-      }
-
-      if (data.lens !== searchLens) {
-        setLens(data.lens)
-        const routedPath = buildSearchPath(
-          window.location.pathname,
-          window.location.search,
-          normalizedSearchQuery,
-          data.lens,
-          window.location.hash
-        )
-        window.history.replaceState({}, '', routedPath)
+        intent: payload.intent || searchPlan.intent,
       }
 
       setIntelligence({
@@ -369,25 +409,15 @@ export function useSearch(): UseSearchReturn {
         queryExpansions: data.expandedQueries,
         timestamp: data.timestamp,
       })
-      // Search results are useful discovery candidates before the optional
-      // destination-page review completes. Keep them visible and enhance them
-      // in place as validation events arrive.
       setScrapedResults(data.results)
       setHasSearched(true)
       setSearchTime(performance.now() - startTime)
       setIsLoading(false)
+      setSuggestions(searchSuggestions(data.expandedQueries))
 
       if (data.results.length > 0) {
         void runStreamingValidation(data.query, data.lens, data.results, sequence, data.intent)
       }
-
-      setSuggestions(data.expandedQueries.length
-        ? data.expandedQueries.map((text, index) => ({
-            text,
-            type: index === 0 ? ('related' as const) : ('ai' as const),
-            score: 1 - index * 0.1,
-          }))
-        : [])
 
       try {
         const stored = localStorage.getItem('search_history')
@@ -399,6 +429,7 @@ export function useSearch(): UseSearchReturn {
           vertical: data.lens,
           result_count: data.results.length,
           timestamp: new Date().toISOString(),
+          retrieval_mode: 'browser-fed',
         }
         const nextHistory = [nextEntry, ...(Array.isArray(history) ? history : [])]
           .filter((entry, index, entries) => {
@@ -408,15 +439,13 @@ export function useSearch(): UseSearchReturn {
           .slice(0, 100)
         localStorage.setItem('search_history', JSON.stringify(nextHistory))
       } catch {
-        // Browser storage is an optional fallback; search remains functional without it.
+        // Browser storage is optional; search remains functional without it.
       }
     } catch (searchError) {
       if (searchSequence.current === sequence) {
-        setIntelligence(null)
         setScrapedResults([])
         setResultBuckets(EMPTY_BUCKETS)
         setValidationProgress(null)
-        setSuggestions([])
         setHasSearched(true)
         setSearchTime(performance.now() - startTime)
         setError(searchError instanceof Error ? searchError.message : 'Search failed')
@@ -427,8 +456,8 @@ export function useSearch(): UseSearchReturn {
   }, [runStreamingValidation, settings])
 
   const performSearch = useCallback(
-    async () => executeSearch(query, lens, 'push'),
-    [executeSearch, lens, query]
+    async () => executeSearch(query, 'procurement', 'push'),
+    [executeSearch, query]
   )
 
   useEffect(() => {
@@ -439,8 +468,8 @@ export function useSearch(): UseSearchReturn {
         return
       }
       setQuery(requestedSearch.query)
-      setLens(requestedSearch.lens)
-      void executeSearch(requestedSearch.query, requestedSearch.lens, 'none')
+      setLens('procurement')
+      void executeSearch(requestedSearch.query, 'procurement', 'none')
     }
 
     if (!initializedFromUrl.current) {
@@ -448,8 +477,8 @@ export function useSearch(): UseSearchReturn {
       const requestedSearch = parseSearchUrl(window.location.search)
       if (requestedSearch) {
         setQuery(requestedSearch.query)
-        setLens(requestedSearch.lens)
-        void executeSearch(requestedSearch.query, requestedSearch.lens, 'none')
+        setLens('procurement')
+        void executeSearch(requestedSearch.query, 'procurement', 'none')
       }
     }
 
