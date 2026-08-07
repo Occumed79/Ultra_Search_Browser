@@ -46,7 +46,6 @@ function commitMatches(actual, expected) {
 async function waitForDeployment() {
   const deadline = Date.now() + MAX_WAIT_MS
   let lastState = 'No response yet.'
-
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${APP_URL}/api/health?ts=${Date.now()}`, {
@@ -57,61 +56,68 @@ async function waitForDeployment() {
       const health = await readJson(response)
       lastState = `HTTP ${response.status}; commit=${health.commit || 'missing'}; pipeline=${health.searchPipeline || 'missing'}`
       console.log(`[deployment] ${lastState}`)
-      if (
-        response.ok
-        && health.status === 'ok'
-        && health.productMode === 'rfp-finder-www'
-        && health.searchPipeline === EXPECTED_PIPELINE
-        && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
-      ) return health
+      if (response.ok && health.status === 'ok' && health.productMode === 'rfp-finder-www' && health.searchPipeline === EXPECTED_PIPELINE && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))) return health
     } catch (error) {
       lastState = error instanceof Error ? error.message : String(error)
       console.log(`[deployment] waiting: ${lastState}`)
     }
     await sleep(POLL_INTERVAL_MS)
   }
-
   throw new Error(`Render did not serve the expected deployment before timeout. Last state: ${lastState}`)
 }
 
 function assertCandidateUrls(results, lens) {
   for (const result of results) {
     const host = new URL(result.url).hostname.toLowerCase()
-    if (FORBIDDEN_HOSTS.has(host)) {
-      throw new Error(`${lens} leaked search/auth navigation: ${result.title} — ${result.url}`)
-    }
+    if (FORBIDDEN_HOSTS.has(host)) throw new Error(`${lens} leaked search/auth navigation: ${result.title} — ${result.url}`)
   }
 }
 
 function assertProcurementQuality(results) {
   for (const result of results) {
     const text = `${result.title} ${result.description} ${result.url}`
-    if (GENERIC_PROCUREMENT_TITLES.test(result.title)) {
-      throw new Error(`Procurement search leaked a generic page: ${result.title} — ${result.url}`)
-    }
-    if (!PROCUREMENT_EVIDENCE.test(text) && !PROCUREMENT_PORTALS.test(result.url)) {
-      throw new Error(`Procurement candidate lacks opportunity evidence: ${result.title} — ${result.url}`)
-    }
+    if (GENERIC_PROCUREMENT_TITLES.test(result.title)) throw new Error(`Procurement search leaked a generic page: ${result.title} — ${result.url}`)
+    if (!PROCUREMENT_EVIDENCE.test(text) && !PROCUREMENT_PORTALS.test(result.url)) throw new Error(`Procurement candidate lacks opportunity evidence: ${result.title} — ${result.url}`)
   }
 }
 
 function assertDiversifiedProcurementRescue(diagnostics) {
   const rescue = diagnostics.procurementRescue || {}
   const queries = Array.isArray(rescue.queries) ? rescue.queries.slice(0, 4) : []
-  if (Number(rescue.attemptedTasks || 0) < 4) {
-    throw new Error(`Procurement rescue did not fan out across enough tasks: ${JSON.stringify(rescue).slice(0, 1_500)}`)
-  }
-  if (queries.length < 4) {
-    throw new Error(`Procurement rescue did not expose four primary strategies: ${JSON.stringify(rescue).slice(0, 1_500)}`)
-  }
-  if (/\b(?:site:|filetype:)/i.test(queries[0])) {
-    throw new Error(`Literal procurement strategy was replaced by an operator-only query: ${queries[0]}`)
-  }
-  if (!/site:\.gov/i.test(queries[2])) {
-    throw new Error(`Official-government strategy missing from rescue slot 3: ${queries[2]}`)
-  }
-  if (!/filetype:pdf/i.test(queries[3])) {
-    throw new Error(`Direct-document strategy missing from rescue slot 4: ${queries[3]}`)
+  if (Number(rescue.attemptedTasks || 0) < 4) throw new Error(`Procurement rescue did not fan out across enough tasks: ${JSON.stringify(rescue).slice(0, 1_500)}`)
+  if (queries.length < 4) throw new Error(`Procurement rescue did not expose four primary strategies: ${JSON.stringify(rescue).slice(0, 1_500)}`)
+  if (/\b(?:site:|filetype:)/i.test(queries[0])) throw new Error(`Literal procurement strategy was replaced by an operator-only query: ${queries[0]}`)
+  if (!/site:\.gov/i.test(queries[2])) throw new Error(`Official-government strategy missing from rescue slot 3: ${queries[2]}`)
+  if (!/filetype:pdf/i.test(queries[3])) throw new Error(`Direct-document strategy missing from rescue slot 4: ${queries[3]}`)
+}
+
+function zeroCandidateDiagnostics(data, health) {
+  const diagnostics = data.diagnostics || {}
+  const rescue = diagnostics.procurementRescue || {}
+  return {
+    enabledSources: diagnostics.enabledSources,
+    failures: Array.isArray(diagnostics.failures) ? diagnostics.failures.slice(0, 12) : [],
+    intentGate: diagnostics.intentGate,
+    smartFilter: diagnostics.smartFilter,
+    rescue: {
+      rawCandidates: rescue.rawCandidates,
+      retainedCandidates: rescue.retainedCandidates,
+      attemptedTasks: rescue.attemptedTasks,
+      successfulTasks: rescue.successfulTasks,
+      samGov: rescue.samGov,
+      braveApi: rescue.braveApi,
+      tavily: rescue.tavily,
+      geminiGroundedSearch: rescue.geminiGroundedSearch,
+      rawPreview: Array.isArray(rescue.rawPreview) ? rescue.rawPreview.slice(0, 8) : [],
+    },
+    health: {
+      managedSearch: health?.capabilities?.managedSearch,
+      managedSearchProviders: health?.capabilities?.managedSearchProviders,
+      braveSearchApi: health?.capabilities?.braveSearchApi,
+      tavilySearch: health?.capabilities?.tavilySearch,
+      samGovOfficialApi: health?.capabilities?.samGovOfficialApi,
+      geminiGroundedSearch: health?.capabilities?.geminiGroundedSearch,
+    },
   }
 }
 
@@ -136,32 +142,18 @@ async function runSearch(query, health, expectations = {}) {
   const data = await readJson(response)
   if (!response.ok) throw new Error(`procurement search HTTP ${response.status}: ${JSON.stringify(data).slice(0, 1_500)}`)
   if (!Array.isArray(data.results) || data.results.length === 0) {
-    throw new Error(`procurement search returned no candidates: ${JSON.stringify(data.diagnostics || data).slice(0, 1_500)}`)
+    throw new Error(`procurement search returned no candidates: ${JSON.stringify(zeroCandidateDiagnostics(data, health)).slice(0, 5_000)}`)
   }
   assertCandidateUrls(data.results, 'procurement')
 
   const diagnostics = data.diagnostics || {}
-  if (
-    !data.intent
-    || !Array.isArray(data.intent.conceptGroups)
-    || data.intent.conceptGroups.length === 0
-  ) {
-    throw new Error(`Procurement search did not return a structured intent plan: ${JSON.stringify(data.intent)}`)
-  }
-  if (data.lens !== 'procurement') {
-    throw new Error(`Expected procurement lens but production returned ${data.lens}.`)
-  }
-  if (diagnostics.intentGate?.applied !== true) {
-    throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
-  }
+  if (!data.intent || !Array.isArray(data.intent.conceptGroups) || data.intent.conceptGroups.length === 0) throw new Error(`Procurement search did not return a structured intent plan: ${JSON.stringify(data.intent)}`)
+  if (data.lens !== 'procurement') throw new Error(`Expected procurement lens but production returned ${data.lens}.`)
+  if (diagnostics.intentGate?.applied !== true) throw new Error(`Production did not apply the procurement intent gate: ${JSON.stringify(diagnostics.intentGate)}`)
   if (expectations.requireDiversifiedRescue) assertDiversifiedProcurementRescue(diagnostics)
   assertProcurementQuality(data.results)
-  if (Number(data.confidence || 0) !== 0) {
-    throw new Error(`Candidate-stage confidence must be 0, received ${data.confidence}.`)
-  }
-  if (data.summary) {
-    throw new Error(`Candidate-stage search returned a premature summary: ${data.summary}`)
-  }
+  if (Number(data.confidence || 0) !== 0) throw new Error(`Candidate-stage confidence must be 0, received ${data.confidence}.`)
+  if (data.summary) throw new Error(`Candidate-stage search returned a premature summary: ${data.summary}`)
 
   const rescue = diagnostics.procurementRescue || {}
   console.log(`[procurement] candidates=${data.results.length}; rescue=${rescue.successfulTasks || 0}/${rescue.attemptedTasks || 0}; memory=${diagnostics.memoryKeywordMatches || 0}/${diagnostics.memoryVectorMatches || 0}`)
@@ -183,17 +175,10 @@ async function runEvidenceValidation() {
   const response = await fetch(`${APP_URL}/api/search/validate`, {
     method: 'POST',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      query: 'Ultra Search Browser production validation evidence',
-      lens: 'web',
-      results: SELF_HOSTED_EVIDENCE_CANDIDATES,
-      maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
-    }),
+    body: JSON.stringify({ query: 'Ultra Search Browser production validation evidence', lens: 'web', results: SELF_HOSTED_EVIDENCE_CANDIDATES, maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length }),
     signal: AbortSignal.timeout(120_000),
   })
-  if (!response.ok || !response.body) {
-    throw new Error(`Evidence validation HTTP ${response.status}: ${(await response.text()).slice(0, 800)}`)
-  }
+  if (!response.ok || !response.body) throw new Error(`Evidence validation HTTP ${response.status}: ${(await response.text()).slice(0, 800)}`)
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
@@ -201,7 +186,6 @@ async function runEvidenceValidation() {
   let complete
   let progressEvents = 0
   let resultEvents = 0
-
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
@@ -220,17 +204,9 @@ async function runEvidenceValidation() {
 
   if (!complete) throw new Error('Evidence stream ended without completion.')
   if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
-  if (Number(complete.progress?.reachable || 0) < 1) {
-    throw new Error(`No reachable evidence: ${JSON.stringify({ progress: complete.progress, buckets: complete.buckets }).slice(0, 2_500)}`)
-  }
-  if (!Array.isArray(complete.results) || complete.results.length < 1) {
-    throw new Error(`No verified evidence result: ${JSON.stringify(complete.buckets).slice(0, 2_000)}`)
-  }
-  const verified = complete.results.filter(result =>
-    result.bucket === 'valid'
-    && result.validation?.status === 'valid'
-    && result.pageValidation?.availability === 'reachable'
-  )
+  if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify({ progress: complete.progress, buckets: complete.buckets }).slice(0, 2_500)}`)
+  if (!Array.isArray(complete.results) || complete.results.length < 1) throw new Error(`No verified evidence result: ${JSON.stringify(complete.buckets).slice(0, 2_000)}`)
+  const verified = complete.results.filter(result => result.bucket === 'valid' && result.validation?.status === 'valid' && result.pageValidation?.availability === 'reachable')
   if (verified.length < 1) throw new Error(`No verified main result: ${JSON.stringify(complete.results).slice(0, 2_000)}`)
   if (Number(complete.diagnostics?.verifiedCount || 0) < 1) throw new Error('Verified result count was not reported.')
   if (progressEvents < 1 || resultEvents < 1) throw new Error('Evidence stream emitted no live progress/results.')
@@ -247,12 +223,8 @@ async function main() {
   const health = await waitForDeployment()
   console.log(`Production deployment ready: ${health.commit}`)
   console.log(`Capabilities: ${JSON.stringify(health.capabilities)}`)
-
-  await runSearch('Occupational Health Services RFP', health, {
-    requireDiversifiedRescue: true,
-  })
+  await runSearch('Occupational Health Services RFP', health, { requireDiversifiedRescue: true })
   await runEvidenceValidation()
-
   console.log('Production smoke test passed.')
 }
 
