@@ -4,7 +4,7 @@ import {
   type BrowserSearchPlan,
   type BrowserSearchVariant,
 } from '../../../lib/browser-search-pipeline'
-import { searchBingHTML, searchDuckDuckGo } from '../../../lib/search'
+import { searchBingHTML, searchDuckDuckGo, searchGoogleScrape } from '../../../lib/search'
 import { searchSearXNG } from '../../../lib/searxng'
 import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
 import type { ScrapedResult } from '../../../types/search'
@@ -75,6 +75,7 @@ async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number
 
 async function runDirectRescue(variant: BrowserSearchVariant) {
   const jobs = [
+    { name: 'Google', run: () => searchGoogleScrape(variant.query, { safeSearch: true, preferredLanguage: 'en', region: 'us' }) },
     { name: 'DuckDuckGo', run: () => searchDuckDuckGo(variant.query, { safeSearch: true, preferredLanguage: 'en', region: 'us' }) },
     { name: 'Bing', run: () => searchBingHTML(variant.query, { safeSearch: true, preferredLanguage: 'en', region: 'us' }) },
   ]
@@ -113,8 +114,9 @@ function transportFor(searxCandidates: number, rescueCandidates: number): Search
  * Zero-install, zero-search-key retrieval endpoint.
  *
  * Private SearXNG is the preferred metasearch layer. If it is not configured,
- * unreachable, or sparse, a bounded DuckDuckGo/Bing HTML rescue keeps this
- * single-user internal app usable without extensions, downloads, or paid search APIs.
+ * unreachable, or sparse, a bounded Google/DuckDuckGo/Bing HTML rescue keeps
+ * this single-user internal app usable without extensions, downloads, or paid
+ * search APIs.
  */
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
