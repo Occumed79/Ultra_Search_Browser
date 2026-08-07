@@ -2,7 +2,7 @@ const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.c
 const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
 const MAX_WAIT_MS = Number(process.env.MAX_WAIT_MS || 12 * 60 * 1000)
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15_000)
-const EXPECTED_PIPELINE = 'rfp-finder-v5-browser-fed-zero-key'
+const EXPECTED_PIPELINE = 'rfp-finder-v6-searxng-zero-key'
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
@@ -16,12 +16,12 @@ const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   },
 ]
 
-const BROWSER_SERP_FIXTURE = [
+const METASEARCH_FIXTURE = [
   {
     title: 'Occupational Health Services Request for Proposals',
-    url: 'https://procurement.example.gov/bids/occupational-health-services?utm_source=google',
+    url: 'https://procurement.example.gov/bids/occupational-health-services?utm_source=brave',
     description: 'Request for proposals from qualified vendors for employee occupational health services including pre-employment physical examinations, medical surveillance, audiograms, spirometry, drug testing, and related employer medical services. Responses due September 30, 2026.',
-    source: 'Browser · Google',
+    source: 'SearXNG · brave',
     rank: 1,
     score: 100,
     query: 'Occupational Health Services RFP',
@@ -31,7 +31,7 @@ const BROWSER_SERP_FIXTURE = [
     title: 'Occupational Health Definition and Careers',
     url: 'https://example.org/dictionary/occupational-health',
     description: 'Definition, jobs, careers and educational information about occupational health.',
-    source: 'Browser · Bing',
+    source: 'SearXNG · bing',
     rank: 2,
     score: 96,
     query: 'Occupational Health Services RFP',
@@ -71,7 +71,7 @@ async function waitForDeployment() {
       if (
         response.ok
         && health.status === 'ok'
-        && health.productMode === 'rfp-finder-browser-fed'
+        && health.productMode === 'rfp-finder-searxng'
         && health.searchPipeline === EXPECTED_PIPELINE
         && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
       ) return health
@@ -93,13 +93,13 @@ async function runPlan() {
   })
   const plan = await readJson(response)
   if (!response.ok) throw new Error(`search plan HTTP ${response.status}: ${JSON.stringify(plan).slice(0, 1_500)}`)
-  if (plan.transport !== 'browser-extension') throw new Error(`Unexpected retrieval transport: ${plan.transport}`)
+  if (plan.transport !== 'searxng') throw new Error(`Unexpected retrieval transport: ${plan.transport}`)
   if (plan.apiKeysRequired !== false) throw new Error('Core search plan incorrectly requires API keys.')
   if (plan.intent?.provider !== 'deterministic' || plan.intent?.usedExternal !== false) {
     throw new Error(`Search plan was not deterministic: ${JSON.stringify(plan.intent).slice(0, 1_500)}`)
   }
   if (!Array.isArray(plan.searches) || plan.searches.length < 4) {
-    throw new Error(`Search plan did not produce enough targeted browser queries: ${JSON.stringify(plan.searches)}`)
+    throw new Error(`Search plan did not produce enough targeted queries: ${JSON.stringify(plan.searches)}`)
   }
   if (/\b(?:site:|filetype:)/i.test(plan.searches[0].query)) {
     throw new Error(`Literal search was replaced by an operator-only query: ${plan.searches[0].query}`)
@@ -110,11 +110,11 @@ async function runPlan() {
   if (!plan.searches.some(search => /filetype:pdf/i.test(search.query))) {
     throw new Error(`Search plan has no direct-document strategy: ${JSON.stringify(plan.searches)}`)
   }
-  console.log(`[plan] ${plan.searches.length} browser queries; intent=${plan.intent.intentKind}; apiKeysRequired=${plan.apiKeysRequired}`)
+  console.log(`[plan] ${plan.searches.length} server queries; intent=${plan.intent.intentKind}; transport=${plan.transport}; apiKeysRequired=${plan.apiKeysRequired}`)
   return plan
 }
 
-async function runBrowserIngest(plan) {
+async function runMetasearchIngest(plan) {
   const response = await fetch(`${APP_URL}/api/search/ingest`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -122,43 +122,56 @@ async function runBrowserIngest(plan) {
       query: plan.query,
       intent: plan.intent,
       searches: plan.searches,
-      results: BROWSER_SERP_FIXTURE,
+      results: METASEARCH_FIXTURE,
       settings: { resultsPerPage: 20, safeSearch: true, preferredLanguage: 'en', region: 'us' },
     }),
     signal: AbortSignal.timeout(45_000),
   })
   const data = await readJson(response)
-  if (!response.ok) throw new Error(`browser ingest HTTP ${response.status}: ${JSON.stringify(data).slice(0, 2_500)}`)
-  if (data.lens !== 'procurement') throw new Error(`Browser ingest returned lens ${data.lens}.`)
-  if (data.diagnostics?.retrievalMode !== 'browser-fed') throw new Error(`Browser ingest did not report browser-fed mode: ${JSON.stringify(data.diagnostics)}`)
-  if (data.diagnostics?.apiKeysRequired !== false) throw new Error('Browser ingest incorrectly requires API keys.')
+  if (!response.ok) throw new Error(`metasearch ingest HTTP ${response.status}: ${JSON.stringify(data).slice(0, 2_500)}`)
+  if (data.lens !== 'procurement') throw new Error(`Metasearch ingest returned lens ${data.lens}.`)
+  if (data.diagnostics?.retrievalMode !== 'searxng-metasearch') throw new Error(`Ingest did not report SearXNG mode: ${JSON.stringify(data.diagnostics)}`)
+  if (data.diagnostics?.apiKeysRequired !== false) throw new Error('Metasearch ingest incorrectly requires API keys.')
   if (data.diagnostics?.intentGate?.applied !== true) throw new Error(`Intent gate was not applied: ${JSON.stringify(data.diagnostics?.intentGate)}`)
-  if (!Array.isArray(data.results) || data.results.length < 1) throw new Error(`Relevant browser fixture was discarded: ${JSON.stringify(data).slice(0, 3_500)}`)
+  if (!Array.isArray(data.results) || data.results.length < 1) throw new Error(`Relevant metasearch fixture was discarded: ${JSON.stringify(data).slice(0, 3_500)}`)
   if (!data.results.some(result => /request for proposals/i.test(`${result.title} ${result.description}`))) {
     throw new Error(`Procurement candidate did not survive filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
   }
   if (data.results.some(result => /definition|careers/i.test(result.title))) {
-    throw new Error(`Junk browser result survived Occu-Med filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
+    throw new Error(`Junk result survived Occu-Med filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
   }
   if (Number(data.confidence || 0) !== 0) throw new Error(`Candidate-stage confidence must remain 0; received ${data.confidence}.`)
-  console.log(`[ingest] raw=${BROWSER_SERP_FIXTURE.length}; retained=${data.results.length}; sources=${data.sources?.join(', ')}`)
+  console.log(`[ingest] raw=${METASEARCH_FIXTURE.length}; retained=${data.results.length}; sources=${data.sources?.join(', ')}`)
 }
 
-async function assertLegacyServerSearchRetired() {
+async function assertServerRetrievalActive(plan) {
   const response = await fetch(`${APP_URL}/api/search`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: 'Occupational Health Services RFP' }),
-    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify({ plan }),
+    signal: AbortSignal.timeout(90_000),
   })
   const data = await readJson(response)
-  if (response.status !== 428 || data.code !== 'BROWSER_RESULTS_REQUIRED') {
-    throw new Error(`Legacy server retrieval is still active: HTTP ${response.status} ${JSON.stringify(data).slice(0, 1_500)}`)
+
+  if (response.status === 428 || data.code === 'BROWSER_RESULTS_REQUIRED') {
+    throw new Error(`Browser-extension dependency is still active: HTTP ${response.status} ${JSON.stringify(data).slice(0, 1_500)}`)
   }
-  if (data.apiKeysRequired !== false || data.transport !== 'browser-extension') {
-    throw new Error(`Legacy route did not redirect to zero-key browser transport: ${JSON.stringify(data).slice(0, 1_500)}`)
+  if (data.apiKeysRequired !== false) {
+    throw new Error(`Server retrieval no longer reports zero-key operation: ${JSON.stringify(data).slice(0, 1_500)}`)
   }
-  console.log('[legacy] server-side search retrieval correctly retired')
+  if (response.ok) {
+    if (!Array.isArray(data.results)) throw new Error('Successful server retrieval did not return a candidate array.')
+    console.log(`[retrieval] server active; transport=${data.transport}; raw=${data.results.length}; searxngConfigured=${data.searxngConfigured}`)
+    return
+  }
+
+  // Upstream engines can block a Render IP. That is a retrieval health issue, not
+  // an architecture regression. The contract still requires a real server-side
+  // attempt with diagnostics and no browser-extension fallback.
+  if (![502, 503].includes(response.status) || !Array.isArray(data.diagnostics)) {
+    throw new Error(`Server retrieval failed outside the expected zero-key contract: HTTP ${response.status} ${JSON.stringify(data).slice(0, 2_000)}`)
+  }
+  console.log(`[retrieval] server contract active but upstream pool empty; code=${data.code}; diagnostics=${data.diagnostics.length}`)
 }
 
 function parseSseBlock(block) {
@@ -212,11 +225,7 @@ async function runEvidenceValidation() {
   if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
   if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify(complete.progress)}`)
   if (!Array.isArray(complete.results) || complete.results.length < 1) {
-    throw new Error(`Synthetic Occu-Med RFP did not reach SHOW: ${JSON.stringify({
-      progress: complete.progress,
-      diagnostics: complete.diagnostics,
-      buckets: complete.buckets,
-    }).slice(0, 5_000)}`)
+    throw new Error(`Synthetic Occu-Med RFP did not reach SHOW: ${JSON.stringify({ progress: complete.progress, diagnostics: complete.diagnostics, buckets: complete.buckets }).slice(0, 5_000)}`)
   }
   if (!complete.results.some(result => result.occuMedDecision?.decision === 'SHOW')) {
     throw new Error(`Verified evidence lacks a SHOW decision: ${JSON.stringify(complete.results).slice(0, 3_000)}`)
@@ -234,13 +243,17 @@ async function main() {
   if (EXPECTED_COMMIT) console.log(`Expected commit: ${EXPECTED_COMMIT}`)
   const health = await waitForDeployment()
   console.log(`Production deployment ready: ${health.commit}`)
+
   if (health.capabilities?.coreSearchApiKeysRequired !== false) throw new Error('Health contract says core search requires API keys.')
-  if (health.capabilities?.serverSideSearchRetrieval !== false) throw new Error('Health contract says server-side search retrieval is still active.')
-  if (health.capabilities?.browserFedSearch !== true) throw new Error('Health contract does not expose browser-fed search.')
+  if (health.capabilities?.serverSideSearchRetrieval !== true) throw new Error('Health contract does not expose server-side retrieval.')
+  if (health.capabilities?.browserCompanionRequired !== false) throw new Error('Health contract still requires a browser companion.')
+  if (health.capabilities?.extensionsRequired !== false || health.capabilities?.downloadsRequired !== false) {
+    throw new Error('Health contract still requires local installation.')
+  }
 
   const plan = await runPlan()
-  await runBrowserIngest(plan)
-  await assertLegacyServerSearchRetired()
+  await runMetasearchIngest(plan)
+  await assertServerRetrievalActive(plan)
   await runEvidenceValidation()
   console.log('Production smoke test passed.')
 }
