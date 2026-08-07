@@ -2,16 +2,9 @@
 // Private/self-hosted metasearch transport for Ultra Search.
 
 import type { ScrapedResult } from '../types/search'
+import { SEARXNG_WEB_ENGINES } from './searxng-engines'
 
-export const SEARXNG_WEB_ENGINES = [
-  'brave',
-  'duckduckgo',
-  'startpage',
-  'bing',
-  'qwant',
-  'mojeek',
-  'yahoo',
-] as const
+export { SEARXNG_WEB_ENGINES } from './searxng-engines'
 
 export interface SearXNGResult {
   title?: string
@@ -41,7 +34,7 @@ export interface SearXNGSearchResponse {
   error?: string
 }
 
-/** Resolve and validate SEARXNG_URL. */
+/** Resolve and validate SEARXNG_URL while preserving an optional path prefix. */
 export function resolveSearxngBase(): string | null {
   const raw = process.env.SEARXNG_URL?.trim()
   if (!raw) return null
@@ -49,7 +42,8 @@ export function resolveSearxngBase(): string | null {
     const u = new URL(raw)
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
     if (u.username || u.password || !u.hostname) return null
-    return `${u.protocol}//${u.host}`
+    const pathname = u.pathname.replace(/\/+$/, '')
+    return `${u.protocol}//${u.host}${pathname}`
   } catch {
     return null
   }
@@ -67,6 +61,38 @@ function sourceEngines(result: SearXNGResult): string[] {
     .map(value => String(value).trim())
     .filter(Boolean)
   return Array.from(new Set(values))
+}
+
+function normalizeResult(result: SearXNGResult, index: number): ScrapedResult | null {
+  const title = String(result.title || '').trim()
+  const rawUrl = String(result.url || '').trim()
+  if (!title || !rawUrl) return null
+
+  let domain = ''
+  try {
+    const parsed = new URL(rawUrl)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    domain = parsed.hostname.replace(/^www\./, '')
+    if (!domain) return null
+  } catch {
+    return null
+  }
+
+  const engines = sourceEngines(result)
+  const engineLabel = engines.length > 0 ? engines.join(' + ') : 'metasearch'
+  const score = Number.isFinite(Number(result.score))
+    ? Math.max(0, Math.min(100, Number(result.score) * 20))
+    : Math.max(10, 100 - index * 2)
+
+  return {
+    url: rawUrl,
+    title: title.slice(0, 500),
+    description: String(result.content || '').trim().slice(0, 2_000),
+    domain,
+    source: `SearXNG · ${engineLabel}`,
+    rank: index + 1,
+    score,
+  }
 }
 
 /**
@@ -138,39 +164,14 @@ export async function searchSearXNG(
     }
 
     const maxResults = Math.max(1, Math.min(50, options.maxResults || 20))
-    const observedEngines = new Set<string>()
-    const results = data.results
+    const normalized = data.results
+      .map((result, index) => ({ result: normalizeResult(result, index), engines: sourceEngines(result) }))
+      .filter((entry): entry is { result: ScrapedResult; engines: string[] } => entry.result != null)
       .slice(0, maxResults)
-      .map((result, index) => {
-        const title = String(result.title || '').trim()
-        const rawUrl = String(result.url || '').trim()
-        if (!title || !rawUrl) return null
 
-        let domain = ''
-        try {
-          domain = new URL(rawUrl).hostname.replace(/^www\./, '')
-        } catch {
-          return null
-        }
-
-        const engines = sourceEngines(result)
-        engines.forEach(engine => observedEngines.add(engine))
-        const engineLabel = engines.length > 0 ? engines.join(' + ') : 'metasearch'
-        const score = Number.isFinite(Number(result.score))
-          ? Math.max(0, Math.min(100, Number(result.score) * 20))
-          : Math.max(10, 100 - index * 2)
-
-        return {
-          url: rawUrl,
-          title: title.slice(0, 500),
-          description: String(result.content || '').trim().slice(0, 2_000),
-          domain,
-          source: `SearXNG · ${engineLabel}`,
-          rank: index + 1,
-          score,
-        } satisfies ScrapedResult
-      })
-      .filter((result): result is ScrapedResult => result != null)
+    const observedEngines = new Set<string>()
+    normalized.forEach(entry => entry.engines.forEach(engine => observedEngines.add(engine)))
+    const results = normalized.map((entry, index) => ({ ...entry.result, rank: index + 1 }))
 
     return {
       text: results.map(result => `${result.title} ${result.description}`).join(' '),
