@@ -1,3 +1,8 @@
+import {
+  geminiGroundedSearchCapabilities,
+  searchGeminiGroundedWeb,
+  type GeminiGroundedSearchDiagnostics,
+} from './gemini-grounded-search'
 import { searchManagedWeb } from './managed-search'
 import {
   buildProcurementBrowserRescueTasks,
@@ -21,6 +26,7 @@ export interface ProcurementRescueDiagnostics {
   queries: string[]
   rawPreview: Array<{ source: string; title: string; url: string }>
   samGov: SamGovSearchDiagnostics
+  geminiGroundedSearch: GeminiGroundedSearchDiagnostics
 }
 
 export interface ProcurementRescueOptions {
@@ -96,15 +102,25 @@ async function runBrowserTask(
   }))
 }
 
+function skippedGroundedDiagnostics(): GeminiGroundedSearchDiagnostics {
+  return {
+    ...geminiGroundedSearchCapabilities(),
+    attempted: false,
+    successful: false,
+    resultCount: 0,
+    runtimeMs: 0,
+    searchQueries: [],
+  }
+}
+
 export async function rescueProcurementCandidates(
   query: string,
   options: ProcurementRescueOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
 
-  // The official SAM.gov Opportunities API is the structured federal member of
-  // the ensemble. It runs independently of managed-search keys and public web
-  // indexes so one source cannot suppress the others.
+  // Structured federal data is one independent member of the ensemble; it does
+  // not replace or suppress the public-web search path.
   const samPromise = searchSamGovOfficial(query, 15)
 
   const managed = options.skipManagedSearch
@@ -131,9 +147,8 @@ export async function rescueProcurementCandidates(
         queryVariants: queries,
       })
 
-  // Public indexes run on every request. The first four queries deliberately
-  // cover literal, buyer-language, official-government, and direct-document
-  // strategies and are distributed across independent engines.
+  // Public indexes remain the normal rescue layer. The first four queries cover
+  // literal, buyer-language, official-government, and direct-document strategies.
   const browserTasks = buildProcurementBrowserRescueTasks(queries)
   const [sam, browserSettled] = await Promise.all([
     samPromise,
@@ -142,13 +157,32 @@ export async function rescueProcurementCandidates(
   const browserResults = browserSettled.flatMap(item =>
     item.status === 'fulfilled' ? item.value : []
   )
-  const rawResults = mergeUniqueResults([sam.results, managed.results, browserResults])
-  const gated = applyIntentCandidateGate(
+  const firstPassRaw = mergeUniqueResults([sam.results, managed.results, browserResults])
+  const firstPassGate = applyIntentCandidateGate(
     query,
     'procurement',
-    rawResults,
+    firstPassRaw,
     options.semanticIntent
   )
+
+  // Gemini grounding is intentionally selective. Only spend a grounded-search
+  // request when the ordinary rescue ensemble produced zero usable procurement
+  // candidates after the same relevance gate the user-facing pipeline applies.
+  // Raw junk from a scraper therefore cannot suppress the stronger fallback.
+  const grounded = firstPassGate.results.length === 0
+    ? await searchGeminiGroundedWeb(query, 'procurement')
+    : {
+        text: '',
+        results: [] as ScrapedResult[],
+        diagnostics: skippedGroundedDiagnostics(),
+      }
+
+  const rawResults = grounded.results.length > 0
+    ? mergeUniqueResults([firstPassRaw, grounded.results])
+    : firstPassRaw
+  const gated = grounded.results.length > 0
+    ? applyIntentCandidateGate(query, 'procurement', rawResults, options.semanticIntent)
+    : firstPassGate
 
   const managedFailures = managed.diagnostics.attempts
     .filter(attempt => attempt.status !== 'success')
@@ -167,12 +201,18 @@ export async function rescueProcurementCandidates(
   const samFailures = sam.diagnostics.error
     ? [`SAM.gov: ${sam.diagnostics.error}`]
     : []
+  const groundedFailures = grounded.diagnostics.attempted
+    && !grounded.diagnostics.successful
+    && grounded.diagnostics.error
+    ? [`gemini-google-search: ${grounded.diagnostics.error}`]
+    : []
   const successfulBrowserTasks = browserSettled.filter(
     item => item.status === 'fulfilled' && item.value.length > 0
   ).length
   const attemptedQuerySet = new Set([
     ...managed.diagnostics.attempts.map(attempt => attempt.query),
     ...browserTasks.map(task => task.query),
+    ...grounded.diagnostics.searchQueries,
   ])
 
   return {
@@ -181,13 +221,15 @@ export async function rescueProcurementCandidates(
       attemptedQueries: attemptedQuerySet.size,
       attemptedTasks: managed.diagnostics.attemptedRequests
         + browserTasks.length
-        + (sam.diagnostics.attempted ? 1 : 0),
+        + (sam.diagnostics.attempted ? 1 : 0)
+        + (grounded.diagnostics.attempted ? 1 : 0),
       successfulTasks: managed.diagnostics.successfulRequests
         + successfulBrowserTasks
-        + (sam.diagnostics.successful ? 1 : 0),
+        + (sam.diagnostics.successful ? 1 : 0)
+        + (grounded.diagnostics.successful ? 1 : 0),
       rawCandidates: rawResults.length,
       retainedCandidates: gated.results.length,
-      failures: [...samFailures, ...managedFailures, ...browserFailures],
+      failures: [...samFailures, ...managedFailures, ...browserFailures, ...groundedFailures],
       queries,
       rawPreview: rawResults.slice(0, 12).map(result => ({
         source: result.source,
@@ -195,6 +237,7 @@ export async function rescueProcurementCandidates(
         url: result.url,
       })),
       samGov: sam.diagnostics,
+      geminiGroundedSearch: grounded.diagnostics,
     },
   }
 }

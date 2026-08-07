@@ -39,6 +39,8 @@ function healthPayload() {
       geminiIntentModel: gemini.model,
       geminiGroundedSearch: geminiSearch.configured,
       geminiGroundedSearchModel: geminiSearch.model,
+      geminiGroundedSearchPolicy: 'weak-coverage-only',
+      samGovOfficialApi: Boolean(process.env.SAM_GOV_API_KEY?.trim()),
       structuredIntentPlanning: true,
       procurementOnly: true,
       sourceAgnosticRfpSearch: true,
