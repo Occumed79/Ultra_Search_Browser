@@ -33,7 +33,7 @@ test('browser SERP ingestion normalizes tracking URLs and merges duplicate evide
     {
       title: 'Occupational Health Services Request for Proposals',
       url: 'https://county.example.gov/bids/occupational-health',
-      description: 'Responses due September 30, 2026.',
+      description: 'Request for proposals for employee occupational health services. Responses due September 30, 2026.',
       source: 'Browser · Bing',
       rank: 2,
       query: 'site:.gov occupational health services RFP',
