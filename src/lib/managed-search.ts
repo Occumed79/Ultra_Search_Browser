@@ -133,6 +133,28 @@ const PROVIDER_TIMEOUT_MS = 7_000
 const PRIMARY_PROVIDER_COUNT = 3
 const MINIMUM_RESULT_POOL = 8
 
+const PROVIDER_ENV_ALIASES: Record<string, string[]> = {
+  SERPER_API_KEY: ['SERPER_KEY', 'SERPER_API', 'SERPER_API_TOKEN'],
+  YOU_API_KEY: ['YDC_API_KEY', 'YOUCOM_API_KEY', 'YOU_COM_API_KEY', 'YOU_API', 'YOUCOM_KEY'],
+  PARALLEL_API_KEY: ['PARALLEL_KEY', 'PARALLEL_API', 'PARALLEL_SEARCH_API_KEY'],
+  LINKUP_API_KEY: ['LINKUP_KEY', 'LINKUP_API', 'LINKUP_SEARCH_API_KEY'],
+  EXA_API_KEY: ['EXA_KEY', 'EXA_API', 'EXA_SEARCH_API_KEY'],
+  LANGSEARCH_API_KEY: ['LANGSEARCH_KEY', 'LANGSEARCH_API', 'LANG_SEARCH_API_KEY'],
+  FIRECRAWL_API_KEY: ['FIRECRAWL_KEY', 'FIRECRAWL_API', 'FIRECRAWL_SEARCH_API_KEY'],
+  OLOSTEP_API_KEY: ['OLOSTEP_KEY', 'OLOSTEP_API', 'OLOSTEP_SEARCH_API_KEY'],
+}
+
+const PROVIDER_ENV_PREFIXES: Record<string, string[]> = {
+  SERPER_API_KEY: ['SERPER_'],
+  YOU_API_KEY: ['YOU_', 'YOUCOM_', 'YOU_COM_', 'YDC_'],
+  PARALLEL_API_KEY: ['PARALLEL_'],
+  LINKUP_API_KEY: ['LINKUP_'],
+  EXA_API_KEY: ['EXA_'],
+  LANGSEARCH_API_KEY: ['LANGSEARCH_', 'LANG_SEARCH_'],
+  FIRECRAWL_API_KEY: ['FIRECRAWL_'],
+  OLOSTEP_API_KEY: ['OLOSTEP_'],
+}
+
 function unique(values: string[]): string[] {
   const seen = new Set<string>()
   return values.filter(value => {
@@ -152,13 +174,29 @@ function stableHash(value: string): number {
   return Math.abs(hash)
 }
 
+function providerEnvironmentVariables(
+  environmentVariable: string,
+  environment: ManagedSearchEnvironment
+): string[] {
+  const explicit = [
+    environmentVariable,
+    ...(PROVIDER_ENV_ALIASES[environmentVariable] || []),
+  ]
+  const prefixes = PROVIDER_ENV_PREFIXES[environmentVariable] || []
+  const inferred = Object.keys(environment).filter(name => {
+    const upper = name.toUpperCase()
+    if (!prefixes.some(prefix => upper.startsWith(prefix))) return false
+    if (!/(?:^|_)(?:KEY|TOKEN)(?:_|$)/.test(upper)) return false
+    return !/(?:URL|ENDPOINT|MODEL)/.test(upper)
+  })
+  return unique([...explicit, ...inferred])
+}
+
 function configuredKeys(
   environmentVariable: string,
   environment: ManagedSearchEnvironment
 ): string[] {
-  const baseVariables = environmentVariable === 'YOU_API_KEY'
-    ? [environmentVariable, 'YDC_API_KEY']
-    : [environmentVariable]
+  const baseVariables = providerEnvironmentVariables(environmentVariable, environment)
   const names = baseVariables.flatMap(baseVariable => [
     baseVariable,
     `${baseVariable}_SECONDARY`,
