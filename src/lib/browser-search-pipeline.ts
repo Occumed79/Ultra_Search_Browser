@@ -21,7 +21,7 @@ export interface BrowserSearchPlan {
   lens: 'procurement'
   intent: SemanticIntentPlan
   searches: BrowserSearchVariant[]
-  transport: 'browser-extension'
+  transport: 'searxng'
   apiKeysRequired: false
   maxResultsPerSearch: number
   timestamp: string
@@ -109,7 +109,7 @@ export function buildBrowserSearchPlan(rawQuery: string, maxSearches = 8): Brows
     lens: 'procurement',
     intent,
     searches,
-    transport: 'browser-extension',
+    transport: 'searxng',
     apiKeysRequired: false,
     maxResultsPerSearch: 20,
     timestamp: new Date().toISOString(),
@@ -134,7 +134,7 @@ export function normalizeBrowserSerpCandidates(
 
     const domain = new URL(url).hostname.replace(/^www\./, '').toLowerCase()
     const description = stringValue(raw.description, 2_000)
-    const source = stringValue(raw.source, 120) || 'Browser SERP'
+    const source = stringValue(raw.source, 120) || 'SearXNG'
     const query = stringValue(raw.query, 500)
     const purpose = stringValue(raw.purpose, 80)
     const rank = Math.max(1, Math.round(numericValue(raw.rank, index + 1)))
