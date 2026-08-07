@@ -26,6 +26,7 @@ interface ValidationRequest {
   results?: ScrapedResult[]
   maxTargets?: number
   intent?: unknown
+  testMode?: boolean
 }
 
 type PersistableRfpResult = ScrapedResult & {
@@ -88,6 +89,17 @@ function applyLearnedOrder<T extends { url: string }>(results: T[], learned: Scr
     .sort((left, right) => (rankByUrl.get(left.url)?.rank || 9_999) - (rankByUrl.get(right.url)?.rank || 9_999))
 }
 
+function isProductionSmokeFixture(request: NextRequest, result: ScrapedResult): boolean {
+  try {
+    const url = new URL(result.url)
+    return result.source === 'production-smoke'
+      && url.hostname === request.nextUrl.hostname
+      && url.pathname === '/search-validation-evidence.txt'
+  } catch {
+    return false
+  }
+}
+
 export async function POST(request: NextRequest) {
   let body: ValidationRequest
   try {
@@ -105,6 +117,9 @@ export async function POST(request: NextRequest) {
   const maxTargets = Number.isFinite(Number(body.maxTargets))
     ? Math.max(1, Math.min(60, Number(body.maxTargets)))
     : undefined
+  const testMode = body.testMode === true
+    && results.length === 1
+    && results.every(result => isProductionSmokeFixture(request, result))
 
   if (!query) return Response.json({ error: 'Query is required' }, { status: 400 })
   if (results.length === 0) return Response.json({ error: 'At least one result is required' }, { status: 400 })
@@ -123,7 +138,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      write('ready', { query, lens, requestedLens, candidateCount: results.length })
+      write('ready', { query, lens, requestedLens, candidateCount: results.length, testMode })
 
       try {
         const rawOutcome = await deepValidateResults(query, lens, results, {
@@ -142,15 +157,32 @@ export async function POST(request: NextRequest) {
         outcome.buckets.valid = applyLearnedOrder(outcome.buckets.valid, learnedResults)
 
         const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
-        const [persistentMemory, verifiedPersistence] = await Promise.all([
-          indexResultsInPersistentMemory(
-            verifiedResults,
-            lens,
-            Math.min(20, verifiedResults.length),
-            4_000
-          ),
-          persistVerifiedResults(verifiedResults, lens),
-        ])
+        const persistence = testMode
+          ? {
+              persistentMemory: {
+                skipped: true,
+                reason: 'synthetic-production-validation',
+              },
+              verifiedPersistence: {
+                attempted: 0,
+                persisted: 0,
+                failed: 0,
+                skipped: true,
+              },
+            }
+          : await (async () => {
+              const [persistentMemory, verifiedPersistence] = await Promise.all([
+                indexResultsInPersistentMemory(
+                  verifiedResults,
+                  lens,
+                  Math.min(20, verifiedResults.length),
+                  4_000
+                ),
+                persistVerifiedResults(verifiedResults, lens),
+              ])
+              return { persistentMemory, verifiedPersistence }
+            })()
+
         write('complete', {
           ...outcome,
           results: outcome.results,
@@ -164,9 +196,10 @@ export async function POST(request: NextRequest) {
             ...outcome.diagnostics,
             verifiedOnly: true,
             verifiedCount: verifiedResults.length,
-            pursuitLearningApplied: true,
-            persistentMemory,
-            verifiedPersistence,
+            pursuitLearningApplied: !testMode,
+            productionValidationMode: testMode,
+            persistentMemory: persistence.persistentMemory,
+            verifiedPersistence: persistence.verifiedPersistence,
           },
         })
       } catch (error) {
