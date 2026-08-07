@@ -2,6 +2,8 @@ import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { isSearxngConfigured } from '../../../lib/searxng'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   const providers = externalSmartFilterCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
@@ -56,5 +58,7 @@ export async function GET() {
         label: providers.groq.configured ? `Optional fallback evidence review · ${providers.groq.reviewModel}` : 'Optional fallback evidence review',
       },
     },
+  }, {
+    headers: { 'Cache-Control': 'no-store, max-age=0' },
   })
 }

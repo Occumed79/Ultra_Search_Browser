@@ -4,7 +4,8 @@ import {
   buildBrowserSearchPlan,
   normalizeBrowserSerpCandidates,
 } from '../src/lib/browser-search-pipeline'
-import { SEARXNG_WEB_ENGINES } from '../src/lib/searxng'
+import { SEARXNG_WEB_ENGINES } from '../src/lib/searxng-engines'
+import { resolveSearxngBase, searchSearXNG } from '../src/lib/searxng'
 
 test('zero-key search plan is deterministic, procurement-focused, and server transported', () => {
   const plan = buildBrowserSearchPlan('Occupational Health Services RFP')
@@ -28,6 +29,47 @@ test('SearXNG ensemble contains broad independent web engines', () => {
   assert.ok(SEARXNG_WEB_ENGINES.includes('qwant'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('mojeek'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('yahoo'))
+})
+
+test('SearXNG base URL preserves a deployment path prefix', () => {
+  const original = process.env.SEARXNG_URL
+  try {
+    process.env.SEARXNG_URL = 'https://search.example.test/internal/searx/'
+    assert.equal(resolveSearxngBase(), 'https://search.example.test/internal/searx')
+  } finally {
+    if (original === undefined) delete process.env.SEARXNG_URL
+    else process.env.SEARXNG_URL = original
+  }
+})
+
+test('SearXNG drops unsafe/invalid URLs before applying maxResults', async () => {
+  const originalUrl = process.env.SEARXNG_URL
+  const originalFetch = globalThis.fetch
+  try {
+    process.env.SEARXNG_URL = 'https://search.example.test'
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      results: [
+        { title: 'Unsafe', url: 'javascript:alert(1)', content: 'ignore', engine: 'brave' },
+        { title: '', url: 'https://example.test/missing-title', content: 'ignore', engine: 'bing' },
+        { title: 'Valid one', url: 'https://one.example.test/rfp', content: 'RFP one', engine: 'brave' },
+        { title: 'Valid two', url: 'https://two.example.test/rfp', content: 'RFP two', engine: 'bing' },
+        { title: 'Valid three', url: 'https://three.example.test/rfp', content: 'RFP three', engine: 'qwant' },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+
+    const response = await searchSearXNG('occupational health RFP', { maxResults: 2 })
+    assert.equal(response.ok, true)
+    assert.equal(response.results.length, 2)
+    assert.deepEqual(response.results.map(result => result.title), ['Valid one', 'Valid two'])
+    assert.ok(response.results.every(result => /^https:\/\//.test(result.url)))
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalUrl === undefined) delete process.env.SEARXNG_URL
+    else process.env.SEARXNG_URL = originalUrl
+  }
 })
 
 test('metasearch candidate ingestion normalizes tracking URLs and merges duplicate evidence', () => {
