@@ -6,7 +6,7 @@ import {
 import { searchBraveHtml, searchMojeekHtml, searchYahooHtml } from './public-search-fallbacks'
 import { buildProcurementRescueQueries } from './procurement-rescue-queries'
 import { searchBingResilient, searchDuckDuckGoResilient } from './resilient-search'
-import { searchProcurementApis } from './procurement-api-sources'
+import { searchSamGovOfficial, type SamGovSearchDiagnostics } from './sam-gov-opportunities'
 import { applyIntentCandidateGate } from './search-intent-gate'
 import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult } from '../types/search'
@@ -20,6 +20,7 @@ export interface ProcurementRescueDiagnostics {
   failures: string[]
   queries: string[]
   rawPreview: Array<{ source: string; title: string; url: string }>
+  samGov: SamGovSearchDiagnostics
 }
 
 export interface ProcurementRescueOptions {
@@ -100,23 +101,12 @@ export async function rescueProcurementCandidates(
   options: ProcurementRescueOptions
 ): Promise<{ results: ScrapedResult[]; diagnostics: ProcurementRescueDiagnostics }> {
   const queries = buildProcurementRescueQueries(query, options.semanticIntent)
-  
-  // Search specialized procurement APIs first (highest priority)
-  let apiResults: ScrapedResult[] = []
-  let apiFailures: string[] = []
-  try {
-    console.log('Starting procurement API search for query:', query)
-    apiResults = await searchProcurementApis(query, 15)
-    console.log('Procurement API search completed:', { resultCount: apiResults.length, sources: apiResults.map(r => r.source) })
-    if (apiResults.length === 0) {
-      apiFailures.push('procurement APIs: returned 0 results')
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.error('Procurement API search error:', error)
-    apiFailures.push(`procurement APIs: ${message}`)
-  }
-  
+
+  // The official SAM.gov Opportunities API is the structured federal member of
+  // the ensemble. It runs independently of managed-search keys and public web
+  // indexes so one source cannot suppress the others.
+  const samPromise = searchSamGovOfficial(query, 15)
+
   const managed = options.skipManagedSearch
     ? {
         results: [] as ScrapedResult[],
@@ -141,17 +131,18 @@ export async function rescueProcurementCandidates(
         queryVariants: queries,
       })
 
-  // RFP Finder is deliberately source-agnostic. Public web indexes run even
-  // when managed APIs already returned candidates so one provider cannot
-  // silently define the entire result pool.
+  // Public indexes run on every request. The first four queries deliberately
+  // cover literal, buyer-language, official-government, and direct-document
+  // strategies and are distributed across independent engines.
   const browserTasks = buildProcurementBrowserRescueTasks(queries)
-  const browserSettled = await Promise.allSettled(
-    browserTasks.map(task => runBrowserTask(task, options))
-  )
+  const [sam, browserSettled] = await Promise.all([
+    samPromise,
+    Promise.allSettled(browserTasks.map(task => runBrowserTask(task, options))),
+  ])
   const browserResults = browserSettled.flatMap(item =>
     item.status === 'fulfilled' ? item.value : []
   )
-  const rawResults = mergeUniqueResults([apiResults, managed.results, browserResults])
+  const rawResults = mergeUniqueResults([sam.results, managed.results, browserResults])
   const gated = applyIntentCandidateGate(
     query,
     'procurement',
@@ -173,6 +164,9 @@ export async function rescueProcurementCandidates(
     const message = item.reason instanceof Error ? item.reason.message : String(item.reason)
     return [`${browserTasks[index].source}: ${message}`]
   })
+  const samFailures = sam.diagnostics.error
+    ? [`SAM.gov: ${sam.diagnostics.error}`]
+    : []
   const successfulBrowserTasks = browserSettled.filter(
     item => item.status === 'fulfilled' && item.value.length > 0
   ).length
@@ -185,17 +179,22 @@ export async function rescueProcurementCandidates(
     results: gated.results,
     diagnostics: {
       attemptedQueries: attemptedQuerySet.size,
-      attemptedTasks: managed.diagnostics.attemptedRequests + browserTasks.length + 1, // +1 for API search
-      successfulTasks: managed.diagnostics.successfulRequests + successfulBrowserTasks + (apiResults.length > 0 ? 1 : 0),
+      attemptedTasks: managed.diagnostics.attemptedRequests
+        + browserTasks.length
+        + (sam.diagnostics.attempted ? 1 : 0),
+      successfulTasks: managed.diagnostics.successfulRequests
+        + successfulBrowserTasks
+        + (sam.diagnostics.successful ? 1 : 0),
       rawCandidates: rawResults.length,
       retainedCandidates: gated.results.length,
-      failures: [...apiFailures, ...managedFailures, ...browserFailures],
+      failures: [...samFailures, ...managedFailures, ...browserFailures],
       queries,
       rawPreview: rawResults.slice(0, 12).map(result => ({
         source: result.source,
         title: result.title,
         url: result.url,
       })),
+      samGov: sam.diagnostics,
     },
   }
 }
