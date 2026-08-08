@@ -75,6 +75,9 @@ function assert(condition, message) {
 }
 
 async function installRoutes(page) {
+  await page.route('**/favicon.ico', route => route.fulfill({ status: 204, body: '' }))
+  await page.route('https://www.google.com/s2/favicons**', route => route.fulfill({ status: 204, body: '' }))
+
   await page.route('**/api/domain-preferences?**', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -193,9 +196,25 @@ async function runViewport(browser, width, height) {
   const page = await context.newPage()
   await installRoutes(page)
   const errors = []
+  const failedResponses = []
+  const appOrigin = new URL(baseUrl).origin
+
   page.on('pageerror', error => errors.push(`pageerror: ${error.message}`))
   page.on('console', message => {
-    if (message.type() === 'error') errors.push(`console: ${message.text()}`)
+    if (message.type() === 'error' && !/Failed to load resource/i.test(message.text())) {
+      errors.push(`console: ${message.text()}`)
+    }
+  })
+  page.on('response', response => {
+    if (response.status() < 400) return
+    try {
+      const url = new URL(response.url())
+      if (url.origin === appOrigin && url.pathname !== '/favicon.ico') {
+        failedResponses.push(`${response.status()} ${url.pathname}`)
+      }
+    } catch {
+      // Ignore malformed external URLs; the browser itself will surface real script errors.
+    }
   })
 
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
@@ -232,6 +251,7 @@ async function runViewport(browser, width, height) {
   await page.evaluate(() => { document.documentElement.style.zoom = '1.25' })
   await assertNoHorizontalOverflow(page, `${width}x${height}@125%`)
 
+  assert(failedResponses.length === 0, `same-origin resource failures detected: ${failedResponses.join(' | ')}`)
   assert(errors.length === 0, `browser errors detected: ${errors.join(' | ')}`)
   await context.close()
 }
