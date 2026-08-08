@@ -335,13 +335,20 @@ export async function validateCandidatePage(
 
     const document = await extractResponse(response, type, finalUrl)
     const primaryText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
-    const signal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
+    const initialSignal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
+    const hasSolicitationPackageLink = (document.links || []).some(link =>
+      /\b(?:rfp|rfq|rfi|ifb|solicitation|bid|tender|procurement|request for proposals?|request for quotations?|attachment|amendment|addendum|scope of work|statement of work|specifications?)\b|\.(?:pdf|docx?)(?:$|[?#])/i
+        .test(`${link.text} ${link.url}`)
+    )
     let packageAnalysis: SolicitationPackageAnalysis | undefined
 
     if (
       lens === 'procurement'
-      && signal.availability === 'reachable'
       && options.inspectPackage !== false
+      && (
+        initialSignal.availability === 'reachable'
+        || (initialSignal.availability === 'thin' && hasSolicitationPackageLink)
+      )
     ) {
       try {
         packageAnalysis = await inspectSolicitationPackage(finalUrl, document, {
@@ -356,6 +363,9 @@ export async function validateCandidatePage(
     }
 
     const extractedText = clean(packageAnalysis?.combinedText || primaryText).slice(0, MAX_EXTRACTED_TEXT)
+    const signal = packageAnalysis && packageAnalysis.inspectedCount > 0
+      ? inspectPageSignals(extractedText, finalUrl, result.url, document.title || result.title)
+      : initialSignal
     const lifecycle = signal.availability === 'reachable'
       ? (packageAnalysis?.lifecycle || classifyResultStatus(`${document.title || ''} ${extractedText}`, lens))
       : {
