@@ -15,10 +15,23 @@ import { DEFAULT_USER_SETTINGS, normalizeUserSettings, toSearchRequestPreference
 import type { SemanticIntentPlan } from '@/lib/semantic-intent'
 import { buildSearchPath, parseSearchUrl } from '@/lib/search-url'
 import {
-  browserCompanionAvailable,
-  runBrowserSearchPlan,
-  type BrowserBridgePlan,
+  runServerSearchPlan,
+  type ServerSearchPlan,
+  type ServerSearchTransport,
 } from '@/lib/browser-search-bridge'
+
+interface RetrievalStatus {
+  transport: ServerSearchTransport | 'unknown'
+  attemptedSearches: number
+  successfulSearches: number
+  engines: string[]
+  diagnostics: Array<{
+    query?: string
+    engine?: string
+    resultCount?: number
+    error?: string
+  }>
+}
 
 interface UseSearchReturn {
   query: string
@@ -29,6 +42,7 @@ interface UseSearchReturn {
   scrapedResults: ScrapedResult[]
   resultBuckets: SearchResultBuckets
   validationProgress: SearchValidationProgress | null
+  retrievalStatus: RetrievalStatus | null
   isLoading: boolean
   isEnriching: boolean
   enrichmentError: string | null
@@ -68,6 +82,12 @@ const EMPTY_BUCKETS: SearchResultBuckets = {
   duplicate: [],
 }
 
+const PLAN_TIMEOUT_MS = 15_000
+const INGEST_TIMEOUT_MS = 30_000
+const ENRICH_TIMEOUT_MS = 25_000
+const VALIDATION_TIMEOUT_MS = 118_000
+const MAX_VALIDATION_TARGETS = 48
+
 function parseSseBlock(block: string): { event: string; data: unknown } | null {
   if (!block.trim()) return null
   let event = 'message'
@@ -92,6 +112,36 @@ function searchSuggestions(queries: string[]): SearchSuggestion[] {
   }))
 }
 
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): Promise<Response> {
+  const controller = new AbortController()
+  let timedOut = false
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort(new DOMException('Request timed out', 'TimeoutError'))
+  }, timeoutMs)
+  const abortFromExternal = () => controller.abort(externalSignal?.reason)
+
+  if (externalSignal) {
+    if (externalSignal.aborted) abortFromExternal()
+    else externalSignal.addEventListener('abort', abortFromExternal, { once: true })
+  }
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } catch (error) {
+    if (timedOut) throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds.`)
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+    externalSignal?.removeEventListener('abort', abortFromExternal)
+  }
+}
+
 export function useSearch(): UseSearchReturn {
   const [storedSettings] = useLocalStorage<UserSettings>('user-settings', DEFAULT_USER_SETTINGS)
   const settings = useMemo(() => normalizeUserSettings(storedSettings), [storedSettings])
@@ -101,6 +151,7 @@ export function useSearch(): UseSearchReturn {
   const [scrapedResults, setScrapedResults] = useState<ScrapedResult[]>([])
   const [resultBuckets, setResultBuckets] = useState<SearchResultBuckets>(EMPTY_BUCKETS)
   const [validationProgress, setValidationProgress] = useState<SearchValidationProgress | null>(null)
+  const [retrievalStatus, setRetrievalStatus] = useState<RetrievalStatus | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isEnriching, setIsEnriching] = useState(false)
   const [enrichmentError, setEnrichmentError] = useState<string | null>(null)
@@ -109,19 +160,27 @@ export function useSearch(): UseSearchReturn {
   const [hasSearched, setHasSearched] = useState(false)
   const [searchTime, setSearchTime] = useState(0)
   const searchSequence = useRef(0)
+  const searchController = useRef<AbortController | null>(null)
   const validationController = useRef<AbortController | null>(null)
   const initializedFromUrl = useRef(false)
 
+  const abortActiveWork = useCallback(() => {
+    searchController.current?.abort(new DOMException('Superseded by a newer search', 'AbortError'))
+    validationController.current?.abort(new DOMException('Superseded by a newer search', 'AbortError'))
+    searchController.current = null
+    validationController.current = null
+  }, [])
+
   const resetSearch = useCallback(() => {
     searchSequence.current += 1
-    validationController.current?.abort()
-    validationController.current = null
+    abortActiveWork()
     setQuery('')
     setLens('procurement')
     setIntelligence(null)
     setScrapedResults([])
     setResultBuckets(EMPTY_BUCKETS)
     setValidationProgress(null)
+    setRetrievalStatus(null)
     setIsLoading(false)
     setIsEnriching(false)
     setEnrichmentError(null)
@@ -129,20 +188,21 @@ export function useSearch(): UseSearchReturn {
     setSuggestions([])
     setHasSearched(false)
     setSearchTime(0)
-  }, [])
+  }, [abortActiveWork])
 
   const runFallbackEnrichment = useCallback(async (
     searchQuery: string,
     searchLens: SearchLens,
     results: ScrapedResult[],
     sequence: number,
-    semanticIntent?: SemanticIntentPlan
+    semanticIntent?: SemanticIntentPlan,
+    signal?: AbortSignal
   ) => {
-    const response = await fetch('/api/search/enrich', {
+    const response = await fetchWithTimeout('/api/search/enrich', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: searchQuery, lens: searchLens, results, intent: semanticIntent }),
-    })
+    }, ENRICH_TIMEOUT_MS, signal)
     const enrichment = await response.json().catch(() => null) as {
       results?: ScrapedResult[]
       error?: string
@@ -176,11 +236,17 @@ export function useSearch(): UseSearchReturn {
     validationController.current?.abort()
     const controller = new AbortController()
     validationController.current = controller
+    let timedOut = false
+    const timeout = window.setTimeout(() => {
+      timedOut = true
+      controller.abort(new DOMException('Complete-package validation timed out', 'TimeoutError'))
+    }, VALIDATION_TIMEOUT_MS)
+
     setIsEnriching(true)
     setEnrichmentError(null)
     setValidationProgress({
       phase: 'opening-pages',
-      total: Math.min(24, results.length),
+      total: Math.min(MAX_VALIDATION_TARGETS, results.length),
       checked: 0,
       reachable: 0,
       valid: 0,
@@ -190,6 +256,62 @@ export function useSearch(): UseSearchReturn {
       rejected: 0,
       duplicates: 0,
     })
+
+    const handleEvent = (block: string) => {
+      if (searchSequence.current !== sequence) return
+      const parsed = parseSseBlock(block)
+      if (!parsed) return
+
+      if (parsed.event === 'progress') {
+        const payload = parsed.data as { progress?: SearchValidationProgress }
+        if (payload.progress) setValidationProgress(payload.progress)
+        return
+      }
+
+      if (parsed.event === 'result') {
+        const payload = parsed.data as {
+          progress?: SearchValidationProgress
+          result?: ScrapedResult
+        }
+        if (payload.progress) setValidationProgress(payload.progress)
+        if (payload.result) {
+          const validatedResult = payload.result
+          setScrapedResults(current => current.map(result => {
+            const requestedUrl = validatedResult.pageValidation?.requestedUrl
+            return result.url === requestedUrl || result.url === validatedResult.url
+              ? { ...validatedResult, bucket: 'uncertain' }
+              : result
+          }))
+        }
+        return
+      }
+
+      if (parsed.event === 'complete') {
+        const payload = parsed.data as {
+          results?: ScrapedResult[]
+          buckets?: SearchResultBuckets
+          progress?: SearchValidationProgress
+          summary?: string
+          confidence?: number
+          lens?: SearchLens
+        }
+        if (payload.results) setScrapedResults(payload.results)
+        if (payload.buckets) setResultBuckets(payload.buckets)
+        if (payload.progress) setValidationProgress(payload.progress)
+        setIntelligence(current => current ? {
+          ...current,
+          lens: payload.lens || current.lens,
+          summary: payload.summary,
+          confidence: payload.confidence ?? 0,
+        } : current)
+        return
+      }
+
+      if (parsed.event === 'error') {
+        const payload = parsed.data as { detail?: string; error?: string }
+        throw new Error(payload.detail || payload.error || 'Deep validation failed')
+      }
+    }
 
     try {
       const response = await fetch('/api/search/validate', {
@@ -219,67 +341,39 @@ export function useSearch(): UseSearchReturn {
         buffer = blocks.pop() || ''
 
         for (const block of blocks) {
-          if (searchSequence.current !== sequence) return
           const parsed = parseSseBlock(block)
-          if (!parsed) continue
-
-          if (parsed.event === 'progress') {
-            const payload = parsed.data as { progress?: SearchValidationProgress }
-            if (payload.progress) setValidationProgress(payload.progress)
-          } else if (parsed.event === 'result') {
-            const payload = parsed.data as {
-              progress?: SearchValidationProgress
-              result?: ScrapedResult
-            }
-            if (payload.progress) setValidationProgress(payload.progress)
-            if (payload.result) {
-              const validatedResult = payload.result
-              setScrapedResults(current => current.map(result => {
-                const requestedUrl = validatedResult.pageValidation?.requestedUrl
-                return result.url === requestedUrl || result.url === validatedResult.url
-                  ? { ...validatedResult, bucket: 'uncertain' }
-                  : result
-              }))
-            }
-          } else if (parsed.event === 'complete') {
-            const payload = parsed.data as {
-              results?: ScrapedResult[]
-              buckets?: SearchResultBuckets
-              progress?: SearchValidationProgress
-              summary?: string
-              confidence?: number
-              lens?: SearchLens
-            }
-            if (payload.results) setScrapedResults(payload.results)
-            if (payload.buckets) setResultBuckets(payload.buckets)
-            if (payload.progress) setValidationProgress(payload.progress)
-            setIntelligence(current => current ? {
-              ...current,
-              lens: payload.lens || current.lens,
-              summary: payload.summary,
-              confidence: payload.confidence ?? 0,
-            } : current)
-            completed = true
-          } else if (parsed.event === 'error') {
-            const payload = parsed.data as { detail?: string; error?: string }
-            throw new Error(payload.detail || payload.error || 'Deep validation failed')
-          }
+          if (parsed?.event === 'complete') completed = true
+          handleEvent(block)
         }
+      }
+
+      if (buffer.trim()) {
+        const parsed = parseSseBlock(buffer)
+        if (parsed?.event === 'complete') completed = true
+        handleEvent(buffer)
       }
 
       if (!completed) throw new Error('Validation stream ended before completion')
     } catch (validationFailure) {
-      if (controller.signal.aborted || searchSequence.current !== sequence) return
+      if (searchSequence.current !== sequence) return
+      if (controller.signal.aborted && !timedOut) return
+
+      const fallbackController = new AbortController()
+      if (validationController.current === controller) validationController.current = fallbackController
       try {
-        await runFallbackEnrichment(searchQuery, searchLens, results, sequence, semanticIntent)
+        await runFallbackEnrichment(searchQuery, searchLens, results, sequence, semanticIntent, fallbackController.signal)
       } catch (fallbackFailure) {
-        if (searchSequence.current === sequence) {
-          const primary = validationFailure instanceof Error ? validationFailure.message : 'Validation failed'
-          const fallback = fallbackFailure instanceof Error ? fallbackFailure.message : 'Fallback enrichment failed'
-          setEnrichmentError(`${primary}. ${fallback}`)
-        }
+        if (fallbackController.signal.aborted || searchSequence.current !== sequence) return
+        const primary = timedOut
+          ? `Complete-package validation timed out after ${Math.round(VALIDATION_TIMEOUT_MS / 1000)} seconds`
+          : validationFailure instanceof Error ? validationFailure.message : 'Validation failed'
+        const fallback = fallbackFailure instanceof Error ? fallbackFailure.message : 'Fallback enrichment failed'
+        setEnrichmentError(`${primary}. ${fallback}`)
+      } finally {
+        if (validationController.current === fallbackController) validationController.current = null
       }
     } finally {
+      window.clearTimeout(timeout)
       if (validationController.current === controller) validationController.current = null
       if (searchSequence.current === sequence) setIsEnriching(false)
     }
@@ -311,13 +405,16 @@ export function useSearch(): UseSearchReturn {
 
     const sequence = searchSequence.current + 1
     searchSequence.current = sequence
-    validationController.current?.abort()
-    validationController.current = null
+    abortActiveWork()
+    const controller = new AbortController()
+    searchController.current = controller
+
     setIsLoading(true)
     setIsEnriching(false)
     setScrapedResults([])
     setResultBuckets(EMPTY_BUCKETS)
     setValidationProgress(null)
+    setRetrievalStatus(null)
     setEnrichmentError(null)
     setError(null)
     setIntelligence(null)
@@ -327,17 +424,17 @@ export function useSearch(): UseSearchReturn {
     const startTime = performance.now()
 
     try {
-      const planResponse = await fetch('/api/search/plan', {
+      const planResponse = await fetchWithTimeout('/api/search/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: normalizedSearchQuery, maxSearches: 8 }),
-      })
-      const searchPlan = await planResponse.json().catch(() => null) as (BrowserBridgePlan & {
+      }, PLAN_TIMEOUT_MS, controller.signal)
+      const searchPlan = await planResponse.json().catch(() => null) as (ServerSearchPlan & {
         error?: string
         detail?: string
       }) | null
       if (!planResponse.ok || !searchPlan?.query || !Array.isArray(searchPlan.searches)) {
-        throw new Error(searchPlan?.detail || searchPlan?.error || 'Ultra Search could not build the browser search plan.')
+        throw new Error(searchPlan?.detail || searchPlan?.error || 'Ultra Search could not build the Occu-Med search plan.')
       }
       if (searchSequence.current !== sequence) return
 
@@ -345,44 +442,39 @@ export function useSearch(): UseSearchReturn {
       setSuggestions(searchSuggestions(plannedQueries))
       setLens('procurement')
 
-      const companionReady = await browserCompanionAvailable()
-      if (!companionReady) {
-        setIntelligence({
-          query: searchPlan.query,
-          lens: 'procurement',
-          summary: 'Ultra Search built the Occu-Med search plan, but the browser companion is not installed or enabled.',
-          confidence: 0,
-          signals: [],
-          sources: ['browser-companion-required'],
-          queryExpansions: plannedQueries,
-          timestamp: searchPlan.timestamp,
-        })
-        setHasSearched(true)
-        setSearchTime(performance.now() - startTime)
-        setError('Browser companion not detected. Ultra Search intentionally does not call search APIs from Render. Install the browser-extension folder from this repository as an unpacked Chrome/Chromium extension, then search again.')
-        return
-      }
-
-      const browserBatch = await runBrowserSearchPlan(searchPlan)
+      const serverBatch = await runServerSearchPlan(searchPlan, {
+        timeoutMs: 70_000,
+        signal: controller.signal,
+      })
       if (searchSequence.current !== sequence) return
 
-      const ingestResponse = await fetch('/api/search/ingest', {
+      const transport = serverBatch.transport || 'unknown'
+      setRetrievalStatus({
+        transport,
+        attemptedSearches: serverBatch.attemptedSearches,
+        successfulSearches: serverBatch.successfulSearches,
+        engines: serverBatch.engines,
+        diagnostics: serverBatch.diagnostics || [],
+      })
+
+      const ingestResponse = await fetchWithTimeout('/api/search/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: searchPlan.query,
           intent: searchPlan.intent,
           searches: searchPlan.searches,
-          results: browserBatch.results,
+          results: serverBatch.results,
+          transport: serverBatch.transport,
           settings: toSearchRequestPreferences(settings),
         }),
-      })
+      }, INGEST_TIMEOUT_MS, controller.signal)
       const payload = await ingestResponse.json().catch(() => null) as SearchPayload | null
       if (!ingestResponse.ok) {
-        throw new Error(payload?.detail || payload?.error || `Browser result filtering failed (HTTP ${ingestResponse.status}).`)
+        throw new Error(payload?.detail || payload?.error || `Search result filtering failed (HTTP ${ingestResponse.status}).`)
       }
       if (!payload?.query || !payload.lens || !payload.timestamp) {
-        throw new Error('Browser result filtering returned an incomplete response.')
+        throw new Error('Search result filtering returned an incomplete response.')
       }
       if (searchSequence.current !== sequence) return
 
@@ -393,7 +485,7 @@ export function useSearch(): UseSearchReturn {
         expandedQueries: payload.expandedQueries ?? plannedQueries,
         signals: payload.signals ?? [],
         results: payload.results ?? [],
-        sources: payload.sources ?? browserBatch.engines.map(engine => `Browser · ${engine}`),
+        sources: payload.sources ?? serverBatch.engines,
         timestamp: payload.timestamp,
         confidence: payload.confidence ?? 0,
         intent: payload.intent || searchPlan.intent,
@@ -408,6 +500,7 @@ export function useSearch(): UseSearchReturn {
         sources: data.sources,
         queryExpansions: data.expandedQueries,
         timestamp: data.timestamp,
+        note: `Retrieval: ${transport}; ${serverBatch.successfulSearches}/${serverBatch.attemptedSearches} planned searches returned candidates.`,
       })
       setScrapedResults(data.results)
       setHasSearched(true)
@@ -429,7 +522,10 @@ export function useSearch(): UseSearchReturn {
           vertical: data.lens,
           result_count: data.results.length,
           timestamp: new Date().toISOString(),
-          retrieval_mode: 'browser-fed',
+          retrieval_mode: transport,
+          retrieval_engines: serverBatch.engines,
+          attempted_searches: serverBatch.attemptedSearches,
+          successful_searches: serverBatch.successfulSearches,
         }
         const nextHistory = [nextEntry, ...(Array.isArray(history) ? history : [])]
           .filter((entry, index, entries) => {
@@ -439,21 +535,21 @@ export function useSearch(): UseSearchReturn {
           .slice(0, 100)
         localStorage.setItem('search_history', JSON.stringify(nextHistory))
       } catch {
-        // Browser storage is optional; search remains functional without it.
+        // Local history is optional; search remains functional without it.
       }
     } catch (searchError) {
-      if (searchSequence.current === sequence) {
-        setScrapedResults([])
-        setResultBuckets(EMPTY_BUCKETS)
-        setValidationProgress(null)
-        setHasSearched(true)
-        setSearchTime(performance.now() - startTime)
-        setError(searchError instanceof Error ? searchError.message : 'Search failed')
-      }
+      if (controller.signal.aborted || searchSequence.current !== sequence) return
+      setScrapedResults([])
+      setResultBuckets(EMPTY_BUCKETS)
+      setValidationProgress(null)
+      setHasSearched(true)
+      setSearchTime(performance.now() - startTime)
+      setError(searchError instanceof Error ? searchError.message : 'Search failed')
     } finally {
+      if (searchController.current === controller) searchController.current = null
       if (searchSequence.current === sequence) setIsLoading(false)
     }
-  }, [runStreamingValidation, settings])
+  }, [abortActiveWork, runStreamingValidation, settings])
 
   const performSearch = useCallback(
     async () => executeSearch(query, 'procurement', 'push'),
@@ -486,7 +582,7 @@ export function useSearch(): UseSearchReturn {
     return () => window.removeEventListener('popstate', applyUrlState)
   }, [executeSearch, resetSearch])
 
-  useEffect(() => () => validationController.current?.abort(), [])
+  useEffect(() => () => abortActiveWork(), [abortActiveWork])
 
   return {
     query,
@@ -497,6 +593,7 @@ export function useSearch(): UseSearchReturn {
     scrapedResults,
     resultBuckets,
     validationProgress,
+    retrievalStatus,
     isLoading,
     isEnriching,
     enrichmentError,
