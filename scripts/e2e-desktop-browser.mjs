@@ -184,6 +184,10 @@ async function assertNoHorizontalOverflow(page, label) {
   assert(metrics.bodyScrollWidth <= metrics.clientWidth + 2, `${label}: body horizontal overflow ${JSON.stringify(metrics)}`)
 }
 
+function filterSelect(page, labelText) {
+  return page.locator('label').filter({ has: page.locator('select'), hasText: new RegExp(`^${labelText}`) }).locator('select')
+}
+
 async function runViewport(browser, width, height) {
   const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true })
   const page = await context.newPage()
@@ -209,9 +213,9 @@ async function runViewport(browser, width, height) {
   assert(page.url().includes('q=employee+medical+examinations') || page.url().includes('q=employee%20medical%20examinations'), `shareable URL did not track final search: ${page.url()}`)
 
   await page.getByRole('button', { name: 'Filters' }).click()
-  await page.getByLabel('Fit', { exact: true }).selectOption('strong')
-  await page.getByLabel('Due', { exact: true }).selectOption('90')
-  await page.getByLabel('Source', { exact: true }).selectOption('SearXNG · brave')
+  await filterSelect(page, 'Fit').selectOption('strong')
+  await filterSelect(page, 'Due').selectOption('90')
+  await filterSelect(page, 'Source').selectOption('SearXNG · brave')
   await page.getByRole('button', { name: 'Clear' }).click()
 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K')
