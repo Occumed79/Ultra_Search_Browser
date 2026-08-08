@@ -20,6 +20,8 @@ export interface BrowserBridgePlan {
   timestamp: string
 }
 
+export type ServerSearchPlan = BrowserBridgePlan
+
 export interface BrowserBridgeCandidate {
   title: string
   url: string
@@ -32,6 +34,7 @@ export interface BrowserBridgeCandidate {
 }
 
 export type BrowserBridgeTransport = 'searxng' | 'zero-key-direct-rescue' | 'searxng+direct-rescue'
+export type ServerSearchTransport = BrowserBridgeTransport
 
 export interface BrowserBridgeResult {
   results: BrowserBridgeCandidate[]
@@ -47,55 +50,90 @@ export interface BrowserBridgeResult {
   }>
 }
 
-/**
- * Historical export name retained to avoid a large caller churn. There is no
- * browser companion anymore; a normal browser session is sufficient because
- * retrieval now happens through the app's own server endpoint.
- */
-export async function browserCompanionAvailable(): Promise<boolean> {
-  return typeof window !== 'undefined'
+export type ServerSearchResult = BrowserBridgeResult
+
+interface ServerSearchOptions {
+  timeoutMs?: number
+  signal?: AbortSignal
 }
 
-/** Execute the deterministic Occu-Med search plan through the app server. */
-export async function runBrowserSearchPlan(
-  plan: BrowserBridgePlan,
-  timeoutMs = 70_000
-): Promise<BrowserBridgeResult> {
+function createRequestSignal(timeoutMs: number, externalSignal?: AbortSignal) {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(new DOMException('Search retrieval timed out', 'TimeoutError')), timeoutMs)
+  const abortFromExternal = () => controller.abort(externalSignal?.reason)
+
+  if (externalSignal) {
+    if (externalSignal.aborted) abortFromExternal()
+    else externalSignal.addEventListener('abort', abortFromExternal, { once: true })
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup() {
+      window.clearTimeout(timeout)
+      externalSignal?.removeEventListener('abort', abortFromExternal)
+    },
+  }
+}
+
+/** Execute the deterministic Occu-Med plan through the app's server retrieval endpoint. */
+export async function runServerSearchPlan(
+  plan: ServerSearchPlan,
+  options: ServerSearchOptions = {}
+): Promise<ServerSearchResult> {
   if (typeof window === 'undefined') throw new Error('Ultra Search retrieval is only available from the app.')
 
-  let response: Response
+  const timeoutMs = Math.max(5_000, Math.min(options.timeoutMs ?? 70_000, 90_000))
+  const requestSignal = createRequestSignal(timeoutMs, options.signal)
+
   try {
-    response = await fetch('/api/search', {
+    const response = await fetch('/api/search', {
       method: 'POST',
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ plan }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: requestSignal.signal,
     })
+
+    const payload = await response.json().catch(() => null) as (ServerSearchResult & {
+      error?: string
+      detail?: string
+    }) | null
+
+    if (!response.ok || !payload) {
+      throw new Error(payload?.detail || payload?.error || `Search retrieval failed (HTTP ${response.status}).`)
+    }
+
+    return {
+      results: Array.isArray(payload.results) ? payload.results : [],
+      engines: Array.isArray(payload.engines) ? payload.engines : [],
+      attemptedSearches: Number(payload.attemptedSearches || 0),
+      successfulSearches: Number(payload.successfulSearches || 0),
+      transport: payload.transport,
+      diagnostics: Array.isArray(payload.diagnostics) ? payload.diagnostics : [],
+    }
   } catch (error) {
-    if (error instanceof DOMException && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    if (requestSignal.signal.aborted) {
+      if (options.signal?.aborted) throw new DOMException('Search cancelled', 'AbortError')
       throw new Error(`Search retrieval timed out after ${Math.round(timeoutMs / 1000)} seconds.`)
     }
     throw error
+  } finally {
+    requestSignal.cleanup()
   }
+}
 
-  const payload = await response.json().catch(() => null) as (BrowserBridgeResult & {
-    error?: string
-    detail?: string
-  }) | null
+/** @deprecated The app no longer requires a browser companion. */
+export async function browserCompanionAvailable(): Promise<boolean> {
+  return typeof window !== 'undefined'
+}
 
-  if (!response.ok || !payload) {
-    throw new Error(payload?.detail || payload?.error || `Search retrieval failed (HTTP ${response.status}).`)
-  }
-
-  return {
-    results: Array.isArray(payload.results) ? payload.results : [],
-    engines: Array.isArray(payload.engines) ? payload.engines : [],
-    attemptedSearches: Number(payload.attemptedSearches || 0),
-    successfulSearches: Number(payload.successfulSearches || 0),
-    transport: payload.transport,
-    diagnostics: Array.isArray(payload.diagnostics) ? payload.diagnostics : [],
-  }
+/** @deprecated Use runServerSearchPlan. Kept for compatibility with older callers. */
+export async function runBrowserSearchPlan(
+  plan: BrowserBridgePlan,
+  timeoutMs = 70_000
+): Promise<BrowserBridgeResult> {
+  return runServerSearchPlan(plan, { timeoutMs })
 }
