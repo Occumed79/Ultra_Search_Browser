@@ -16,6 +16,7 @@ interface GoldenCase {
   availability: PageAvailability
   title: string
   text: string
+  extractedText?: string
 }
 
 const fixturePath = fileURLToPath(new URL('./fixtures/occumed-golden-benchmark.json', import.meta.url))
@@ -36,6 +37,15 @@ function makeResult(item: GoldenCase, index: number): ScrapedResult {
           : item.availability === 'dead'
             ? 'The destination is dead.'
             : 'The destination could not be independently verified.'
+
+  const lifecycleReason = item.category === 'not-procurement'
+    ? 'The provider marketing page appears current, but it is not a procurement notice or bid opportunity.'
+    : item.status === 'open' || item.status === 'active'
+      ? 'The procurement is currently accepting responses.'
+      : item.status === 'unknown'
+        ? 'The response deadline and current open status could not be confirmed.'
+        : `The opportunity is ${item.status}.`
+  const extractedEvidence = item.extractedText ?? item.text
 
   return {
     title: item.title,
@@ -61,17 +71,13 @@ function makeResult(item: GoldenCase, index: number): ScrapedResult {
       contentType: item.id.includes('scanned') ? 'application/pdf' : 'text/html',
       availability: item.availability,
       reason: availabilityReason,
-      evidence: [item.text],
-      extractedText: item.availability === 'unsupported' ? '' : item.text,
-      extractedTextLength: item.availability === 'unsupported' ? 0 : item.text.length,
+      evidence: [extractedEvidence],
+      extractedText: item.availability === 'unsupported' ? '' : extractedEvidence,
+      extractedTextLength: item.availability === 'unsupported' ? 0 : extractedEvidence.length,
       cached: false,
       lifecycle: {
         status: item.status,
-        reason: item.status === 'open' || item.status === 'active'
-          ? 'The procurement is currently accepting responses.'
-          : item.status === 'unknown'
-            ? 'The response deadline and current open status could not be confirmed.'
-            : `The opportunity is ${item.status}.`,
+        reason: lifecycleReason,
         confidence: item.status === 'unknown' ? 0.5 : 0.97,
         dates: [],
       },

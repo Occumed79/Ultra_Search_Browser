@@ -2,7 +2,10 @@ import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { databaseSchemaState } from '../../../lib/database-schema-lifecycle'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { headlessRecoveryCapabilities } from '../../../lib/headless-page-recovery'
-import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historical-pursuits'
+import {
+  OCCUMED_HISTORICAL_PURSUIT_SEEDS,
+  OCCUMED_VERIFIED_AWARD_SEEDS,
+} from '../../../lib/occumed-historical-pursuits'
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { isSearxngConfigured } from '../../../lib/searxng'
@@ -26,6 +29,9 @@ function healthPayload() {
   const searxngConfigured = isSearxngConfigured()
   const headless = headlessRecoveryCapabilities()
   const schema = databaseSchemaState()
+  const verifiedPrimeAwardSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-prime-award').length
+  const verifiedSubawardSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-subcontract-award').length
+  const verifiedPerformanceSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-performance-record').length
 
   return {
     status: 'ok',
@@ -58,6 +64,11 @@ function healthPayload() {
       occuMedRelevanceProfileVersion: OCCUMED_PROFILE_VERSION,
       occuMedOfficialSources: OCCUMED_OFFICIAL_SOURCES,
       historicalPursuitSeedCount: OCCUMED_HISTORICAL_PURSUIT_SEEDS.length,
+      verifiedHistoricalAwardSeedCount: OCCUMED_VERIFIED_AWARD_SEEDS.length,
+      verifiedPrimeAwardSeedCount,
+      verifiedHistoricalSubawardSeedCount: verifiedSubawardSeedCount,
+      verifiedHistoricalPerformanceSeedCount: verifiedPerformanceSeedCount,
+      historicalAwardsAreSimilarityEvidenceOnly: true,
       mandatoryShowReviewRejectGate: true,
       primaryResultsRequireShowDecision: true,
       expiredAndIrrelevantHiddenFromPrimaryResults: true,

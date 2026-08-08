@@ -8,6 +8,7 @@ const CANARY_QUERIES = [
   'employee medical examinations',
   'drug and alcohol testing services',
   'deployment medical readiness examinations',
+  'fitness for duty occupational medicine services',
   'OCONUS occupational health services',
 ]
 const VALID_RETRIEVAL_TRANSPORTS = new Set(['searxng', 'zero-key-direct-rescue', 'searxng+direct-rescue'])
