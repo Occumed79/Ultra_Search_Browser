@@ -73,11 +73,19 @@ function resultEvidenceText(result: RfpDecisionCandidate): string {
 }
 
 function evidenceClauseBefore(text: string, index: number): string {
-  return text
-    .slice(Math.max(0, index - 180), index)
-    .split(/[.!?;\n]/)
-    .at(-1)
-    ?.toLowerCase() || ''
+  // Procurement vocabulary may occur hundreds of characters after a negation
+  // inside a long provider-marketing sentence. Looking back only a tiny fixed
+  // window turns "contains no ... solicitation" into false affirmative evidence.
+  // Bound the scan for safety, but recover the whole current clause/sentence.
+  const prefix = text.slice(Math.max(0, index - 1_200), index)
+  const boundary = Math.max(
+    prefix.lastIndexOf('.'),
+    prefix.lastIndexOf('!'),
+    prefix.lastIndexOf('?'),
+    prefix.lastIndexOf(';'),
+    prefix.lastIndexOf('\n')
+  )
+  return prefix.slice(boundary + 1).toLowerCase()
 }
 
 /**
