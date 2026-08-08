@@ -92,6 +92,10 @@ function applyUmbrellaOccuMedFilter(
   }
 }
 
+function externalSemanticReviewEnabled(): boolean {
+  return process.env.ENABLE_EXTERNAL_SMART_FILTER === 'true'
+}
+
 export async function applyOccuMedSmartFilter(
   query: string,
   lens: SearchLens,
@@ -115,9 +119,15 @@ export async function applyOccuMedSmartFilter(
 
   const augmentedIntent = augmentOccuMedSemanticIntent(options.semanticIntent)
   const alignedIntent = alignOccuMedSemanticIntent(query, augmentedIntent)
+  const useExternalProviders = options.useExternalProviders === true
+    && externalSemanticReviewEnabled()
 
   return applySmartFilter(query, lens, results, displayLimit, {
     ...options,
+    // Core procurement review is deterministic and zero-key by default. Merely
+    // having a trial Cerebras/Groq key present in Render must not alter latency
+    // or classification. External semantic reviewers are an explicit opt-in.
+    useExternalProviders,
     semanticIntent: alignedIntent,
   })
 }
