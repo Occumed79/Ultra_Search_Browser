@@ -37,6 +37,14 @@ function makeResult(item: GoldenCase, index: number): ScrapedResult {
             ? 'The destination is dead.'
             : 'The destination could not be independently verified.'
 
+  const lifecycleReason = item.category === 'not-procurement'
+    ? 'The provider marketing page appears current, but it is not a procurement notice or bid opportunity.'
+    : item.status === 'open' || item.status === 'active'
+      ? 'The procurement is currently accepting responses.'
+      : item.status === 'unknown'
+        ? 'The response deadline and current open status could not be confirmed.'
+        : `The opportunity is ${item.status}.`
+
   return {
     title: item.title,
     url,
@@ -67,11 +75,7 @@ function makeResult(item: GoldenCase, index: number): ScrapedResult {
       cached: false,
       lifecycle: {
         status: item.status,
-        reason: item.status === 'open' || item.status === 'active'
-          ? 'The procurement is currently accepting responses.'
-          : item.status === 'unknown'
-            ? 'The response deadline and current open status could not be confirmed.'
-            : `The opportunity is ${item.status}.`,
+        reason: lifecycleReason,
         confidence: item.status === 'unknown' ? 0.5 : 0.97,
         dates: [],
       },
