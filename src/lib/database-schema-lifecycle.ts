@@ -54,7 +54,7 @@ function publish(state: DatabaseSchemaState): DatabaseSchemaState {
 }
 
 async function installedVersion(): Promise<number> {
-  const result = await query<{ version: number }>(
+  const result = await query(
     'SELECT COALESCE(MAX(version), 0)::int AS version FROM ultra_search_schema_versions'
   )
   return Number(result?.rows?.[0]?.version || 0)
@@ -63,7 +63,7 @@ async function installedVersion(): Promise<number> {
 async function verifyRequiredTables(): Promise<string[]> {
   const missing: string[] = []
   for (const table of REQUIRED_CORE_TABLES) {
-    const result = await query<{ relation: string | null }>('SELECT to_regclass($1) AS relation', [`public.${table}`])
+    const result = await query('SELECT to_regclass($1) AS relation', [`public.${table}`])
     if (!result?.rows?.[0]?.relation) missing.push(table)
   }
   return missing
