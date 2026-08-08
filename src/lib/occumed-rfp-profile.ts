@@ -1,6 +1,6 @@
 import type { SemanticIntentPlan } from './semantic-intent'
 
-export const OCCUMED_PROFILE_VERSION = '2026-07-30'
+export const OCCUMED_PROFILE_VERSION = '2026-08-08-award-history-v1'
 
 export const OCCUMED_OFFICIAL_SOURCES = [
   'https://www.occu-med.com/',
@@ -50,11 +50,15 @@ export const OCCUMED_CAPABILITY_GROUPS = [
     label: 'employment and occupational medical evaluations',
     terms: [
       'occupational health', 'occupational medicine', 'employee health', 'workforce health',
+      'occupational health exams', 'occupational health examination', 'job-related medical examinations',
       'employment medical evaluation', 'employment physical', 'pre employment physical',
-      'pre-employment physical', 'pre placement medical', 'pre-placement medical',
-      'post offer medical', 'post-offer medical', 'fitness for duty', 'fit for duty',
-      'return to work evaluation', 'return-to-work evaluation', 'medical clearance',
-      'medical screening services', 'employee medical examinations',
+      'pre-employment physical', 'pre-employment physicals', 'pre-employment exams',
+      'pre placement medical', 'pre-placement medical', 'pre-placement physical exams',
+      'post offer medical', 'post-offer medical', 'periodic employee exams', 'exit physical exams',
+      'termination exams', 'fitness for duty', 'fit for duty', 'fitness-for-duty evaluations',
+      'return to work evaluation', 'return-to-work evaluation', 'return-to-duty reviews',
+      'medical clearance', 'medical screening services', 'employee medical examinations',
+      'medical examinations and fitness determinations',
     ],
   },
   {
@@ -66,39 +70,50 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'dod medical examination', 'department of state medical', 'overseas medical clearance',
       'oconus medical', 'contractor medical clearance', 'travel health assessment',
       'global immunization', 'travel vaccination', 'deployment vaccination',
+      'mass medical screening', 'contractor workforce screening', 'overseas workforce medical screening',
     ],
   },
   {
     label: 'medical surveillance and regulated workforce programs',
     terms: [
-      'medical surveillance', 'osha medical surveillance', 'periodic medical examination',
-      'periodic physical examination', 'respirator medical clearance', 'respirator clearance',
-      'respirator fit testing', 'hearing conservation', 'audiometric testing', 'audiogram',
-      'spirometry', 'pulmonary function test', 'pft', 'silica surveillance',
-      'asbestos surveillance', 'hazwoper medical', 'hazmat medical', 'lead surveillance',
-      'fmcsr medical', 'fmcsa medical', 'dot physical', 'commercial driver medical',
+      'medical surveillance', 'medical surveillance services', 'medical surveillance exams',
+      'medical surveillance testing services', 'occupational health medical surveillance exams',
+      'osha medical surveillance', 'periodic medical examination', 'periodic physical examination',
+      'respirator medical clearance', 'respirator clearance', 'respirator fit testing',
+      'hearing conservation', 'audiometric testing', 'audiogram', 'audiometry',
+      'audiology consultation', 'audiology consultations', 'spirometry', 'spirometry testing',
+      'pulmonary function test', 'pft', 'silica surveillance', 'asbestos surveillance',
+      'hazwoper medical', 'hazmat medical', 'lead surveillance', 'cancer screening',
+      'fmcsr medical', 'fmcsa medical', 'dot physical', 'dot physicals',
+      'dot dmv medical exams', 'commercial driver medical',
     ],
   },
   {
     label: 'ancillary occupational testing and examination coordination',
     terms: [
       'drug testing', 'drug screening', 'alcohol testing', 'laboratory testing',
-      'blood draw', 'urine testing', 'tuberculosis testing', 'tb testing', 'quantiferon',
+      'laboratory work', 'laboratory diagnostics', 'lab services', 'blood draw',
+      'urine testing', 'tuberculosis testing', 'tb testing', 'quantiferon',
       'chest x ray', 'chest x-ray', 'electrocardiogram', 'ekg', 'ecg',
-      'vision testing', 'hearing testing', 'immunization services', 'vaccination services',
-      'dental readiness', 'dental examination', 'specialty medical examination',
+      'vision testing', 'hearing testing', 'vision and hearing testing',
+      'immunization services', 'vaccination services', 'dental readiness',
+      'dental examination', 'specialty medical examination',
     ],
   },
   {
     label: 'medical review and program administration',
     terms: [
       'medical review', 'medical case review', 'medical advisor services',
-      'fitness determination', 'placement recommendation', 'accommodation review',
-      'job compatibility assessment', 'job demands analysis', 'exam quality assurance',
-      'quality assurance review', 'medical records review', 'medical waiver support',
-      'provider network coordination', 'nationwide provider network', 'global provider network',
+      'record and case review', 'medical review and consultation',
+      'fitness determination', 'fitness determination services', 'placement recommendation',
+      'accommodation review', 'job compatibility assessment', 'job demands analysis',
+      'exam quality assurance', 'quality assurance review', 'medical records review',
+      'medical waiver support', 'provider network coordination', 'nationwide provider network',
+      'global provider network', 'nationwide medical exam locations',
       'multi location medical exams', 'multi-location medical exams',
-      'occupational health program management', 'medical surveillance program management',
+      'clinics throughout the state', 'occupational health program management',
+      'medical surveillance program management', 'professional occupational health consulting services',
+      'occupational health consulting', 'medical surveillance reporting',
     ],
   },
 ] as const
@@ -106,11 +121,13 @@ export const OCCUMED_CAPABILITY_GROUPS = [
 export const OCCUMED_BUYER_SEGMENTS = [
   'defense contractor', 'government contractor', 'federal contractor', 'public agency',
   'municipality', 'county government', 'state agency', 'special district', 'university',
-  'public safety', 'law enforcement', 'fire department', 'fire district', 'ems',
+  'public safety', 'law enforcement', 'federal law enforcement', 'protective service division',
+  'firefighter', 'fire department', 'fire district', 'ems', 'army national guard',
+  'national guard', 'army corps of engineers', 'usace', 'forest service',
   'safety sensitive workforce', 'safety-sensitive workforce', 'industrial workforce',
   'construction workforce', 'environmental remediation', 'oil and gas', 'mining',
-  'utilities', 'transportation', 'aviation maintenance', 'maritime', 'offshore',
-  'security contractor', 'overseas workforce', 'deployed personnel',
+  'utilities', 'utility workforce', 'transportation', 'aviation maintenance',
+  'maritime', 'offshore', 'security contractor', 'overseas workforce', 'deployed personnel',
 ] as const
 
 export const OCCUMED_HARD_EXCLUSIONS = [
@@ -125,13 +142,27 @@ export const OCCUMED_HARD_EXCLUSIONS = [
   'bid tabulation', 'vendor registration only',
 ] as const
 
+/**
+ * These are compressed examples of publicly documented Occu-Med wins and
+ * performance records. They are relevance examples only; historical award
+ * pages remain excluded from the live opportunity list.
+ */
+export const OCCUMED_VERIFIED_WIN_EXAMPLES = [
+  'Department of Transportation protective-service medical examinations and fitness determinations: pre-employment, periodic, return-to-duty and fitness-for-duty exams with vision, hearing, labs, EKG and spirometry through nationwide exam locations.',
+  'Army National Guard occupational health exams: job-related periodic, new-hire, exit and termination examinations, medical surveillance, audiology, labs and medical review.',
+  'Army and USACE medical-surveillance programs: recurring physical exams, occupational testing, laboratory services, audiometry, spirometry and reporting across multiple locations.',
+  'CISA medical surveillance support: pre-placement, periodic and exit physicals; return-to-work and fit-for-duty exams; record and case review.',
+  'Forest Service firefighter medical service exams and other public-safety occupational medical evaluations.',
+  'Municipal and county contracts for pre-employment physicals, DOT/DMV medical exams, occupational medicine, employee examinations and occupational-health consulting.',
+  'Defense-prime fit-for-duty medical-services subcontracts and overseas contractor workforce screening, including mass screening of deployed/base-operations personnel.',
+] as const
+
 export const OCCUMED_POSITIVE_EXAMPLES = [
+  ...OCCUMED_VERIFIED_WIN_EXAMPLES,
   'Employee occupational-health services including physicals, surveillance, testing, and fitness evaluations.',
   'Medical readiness examinations for deployed or deployable personnel.',
-  'Firefighter NFPA medical evaluations or comparable public-safety fitness examinations.',
   'Nationwide or international employee-health screening network coordination.',
   'Medical-advisor, clinical-review, fitness-for-duty, or accommodation-review services.',
-  'Periodic OSHA medical surveillance, respirator clearance, audiograms, spirometry, laboratory testing, or immunizations.',
 ] as const
 
 export const OCCUMED_NEGATIVE_EXAMPLES = [
@@ -140,6 +171,7 @@ export const OCCUMED_NEGATIVE_EXAMPLES = [
   'Community behavioral-health treatment: patient treatment rather than workforce evaluation.',
   'Health-insurance administration: benefits and insurance rather than occupational medicine.',
   'A relevant occupational-health solicitation whose deadline has passed: expired and never displayable.',
+  'An Occu-Med award notice or historical contract record: useful similarity evidence, but never a current bid opportunity.',
 ] as const
 
 function normalize(value: string): string {
@@ -224,6 +256,7 @@ export function augmentOccuMedSemanticIntent(
   const capabilityTerms = OCCUMED_CAPABILITY_GROUPS.flatMap(group => group.terms)
   const clientContext = OCCUMED_CLIENT_ANCHORS.join(', ')
   const websiteContext = OCCUMED_OFFICIAL_SOURCES.join(', ')
+  const winContext = OCCUMED_VERIFIED_WIN_EXAMPLES.join(' ')
   const occuMedGroup = {
     id: 'occumed-capable-service',
     label: 'Occu-Med capable service',
@@ -241,6 +274,8 @@ export function augmentOccuMedSemanticIntent(
       'Occu-Med is a global employment-evaluation and occupational-health program administrator with a distributed provider network; it does not need to own every clinic or directly employ every examining provider.',
       `Official capability sources: ${websiteContext}.`,
       `Existing-client similarity anchors: ${clientContext}.`,
+      `Verified historical win patterns: ${winContext}`,
+      'Historical awards are similarity evidence only. Never treat an award notice, expired solicitation, or closed historical record as an active opportunity.',
     ].join(' '),
     requiredConcepts: Array.from(new Set([...intent.requiredConcepts, occuMedGroup.label])),
     conceptGroups: [
@@ -263,6 +298,7 @@ export const OCCUMED_AI_PROFILE = {
   capabilityGroups: OCCUMED_CAPABILITY_GROUPS,
   buyerSegments: OCCUMED_BUYER_SEGMENTS,
   clientSimilarityAnchors: OCCUMED_CLIENT_ANCHORS,
+  verifiedWinExamples: OCCUMED_VERIFIED_WIN_EXAMPLES,
   hardExclusions: OCCUMED_HARD_EXCLUSIONS,
   positiveExamples: OCCUMED_POSITIVE_EXAMPLES,
   negativeExamples: OCCUMED_NEGATIVE_EXAMPLES,
