@@ -146,30 +146,23 @@ function looksLikeGenericRedirect(requested: URL, finalUrl: URL): boolean {
   return (!finalPath || finalPath === '/') && requestedPath.split('/').filter(Boolean).length >= 1
 }
 
-function recoverThinEvidence(finalUrl: string, requestedUrl: string): PageSignalAssessment | undefined {
+function isProcurementDestination(finalUrl: string, requestedUrl: string): boolean {
   const final = safeUrl(finalUrl)
   const requested = safeUrl(requestedUrl)
-  const directDocument = DIRECT_DOCUMENT_URL.test(finalUrl) || DIRECT_DOCUMENT_URL.test(requestedUrl)
-  const procurementDestination = Boolean(
+  return Boolean(
     (final && PROCUREMENT_PORTAL_HOST.test(final.hostname))
     || (requested && PROCUREMENT_PORTAL_HOST.test(requested.hostname))
     || (final && PROCUREMENT_PATH_HINT.test(final.pathname))
     || (requested && PROCUREMENT_PATH_HINT.test(requested.pathname))
   )
+}
 
-  if (directDocument) {
-    return {
-      availability: 'unsupported',
-      reason: 'The document is reachable, but text extraction returned too little readable content. It may be scanned or image-only and requires manual review.',
-    }
+function recoverThinDirectDocument(finalUrl: string, requestedUrl: string): PageSignalAssessment | undefined {
+  if (!DIRECT_DOCUMENT_URL.test(finalUrl) && !DIRECT_DOCUMENT_URL.test(requestedUrl)) return undefined
+  return {
+    availability: 'unsupported',
+    reason: 'The document is reachable, but text extraction returned too little readable content. It may be scanned or image-only and requires manual review.',
   }
-  if (procurementDestination) {
-    return {
-      availability: 'unsupported',
-      reason: 'The procurement destination is reachable, but it returned too little server-rendered text to verify. It may be a client-rendered procurement portal and requires manual review.',
-    }
-  }
-  return undefined
 }
 
 export function inspectPageSignals(
@@ -202,7 +195,7 @@ export function inspectPageSignals(
     return { availability: 'dead', reason: 'The destination content says the page is missing or unavailable.' }
   }
   if (clean(text).length < 180) {
-    return recoverThinEvidence(finalUrl, requestedUrl)
+    return recoverThinDirectDocument(finalUrl, requestedUrl)
       || { availability: 'thin', reason: 'The destination returned too little readable content to validate the result.' }
   }
   return { availability: 'reachable', reason: 'The destination is reachable and contains substantive public content.' }
@@ -394,9 +387,17 @@ export async function validateCandidatePage(
     }
 
     const extractedText = clean(packageAnalysis?.combinedText || primaryText).slice(0, MAX_EXTRACTED_TEXT)
-    const signal = packageAnalysis && packageAnalysis.inspectedCount > 0
+    const packageSignal = packageAnalysis && packageAnalysis.inspectedCount > 0
       ? inspectPageSignals(extractedText, finalUrl, result.url, document.title || result.title)
       : initialSignal
+    const signal: PageSignalAssessment = packageSignal.availability === 'thin'
+      && lens === 'procurement'
+      && isProcurementDestination(finalUrl, result.url)
+      ? {
+          availability: 'unsupported',
+          reason: 'The procurement destination is reachable, but it returned too little server-rendered text to verify after package inspection. It may be a client-rendered procurement portal and requires manual review.',
+        }
+      : packageSignal
     const lifecycle = signal.availability === 'reachable'
       ? (packageAnalysis?.lifecycle || classifyResultStatus(`${document.title || ''} ${extractedText}`, lens))
       : {
