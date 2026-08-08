@@ -1,6 +1,6 @@
 import type { SemanticIntentPlan } from './semantic-intent'
 
-export const OCCUMED_PROFILE_VERSION = '2026-07-30'
+export const OCCUMED_PROFILE_VERSION = '2026-08-08'
 
 export const OCCUMED_OFFICIAL_SOURCES = [
   'https://www.occu-med.com/',
@@ -53,8 +53,10 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'employment medical evaluation', 'employment physical', 'pre employment physical',
       'pre-employment physical', 'pre placement medical', 'pre-placement medical',
       'post offer medical', 'post-offer medical', 'fitness for duty', 'fit for duty',
-      'return to work evaluation', 'return-to-work evaluation', 'medical clearance',
-      'medical screening services', 'employee medical examinations',
+      'return to work evaluation', 'return-to-work evaluation', 'return to work', 'return-to-work',
+      'medical clearance', 'medical screening services', 'employee medical examination',
+      'employee medical examinations', 'pre employment medical examination',
+      'pre-employment medical examination',
     ],
   },
   {
@@ -72,9 +74,10 @@ export const OCCUMED_CAPABILITY_GROUPS = [
     label: 'medical surveillance and regulated workforce programs',
     terms: [
       'medical surveillance', 'osha medical surveillance', 'periodic medical examination',
-      'periodic physical examination', 'respirator medical clearance', 'respirator clearance',
-      'respirator fit testing', 'hearing conservation', 'audiometric testing', 'audiogram',
-      'spirometry', 'pulmonary function test', 'pft', 'silica surveillance',
+      'periodic physical examination', 'respirator medical evaluation', 'respirator medical clearance',
+      'respirator clearance', 'respirator fit testing', 'hearing conservation',
+      'audiometric testing', 'audiometry', 'audiogram', 'spirometry',
+      'pulmonary function test', 'pft', 'silica surveillance',
       'asbestos surveillance', 'hazwoper medical', 'hazmat medical', 'lead surveillance',
       'fmcsr medical', 'fmcsa medical', 'dot physical', 'commercial driver medical',
     ],
@@ -95,8 +98,9 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'medical review', 'medical case review', 'medical advisor services',
       'fitness determination', 'placement recommendation', 'accommodation review',
       'job compatibility assessment', 'job demands analysis', 'exam quality assurance',
-      'quality assurance review', 'medical records review', 'medical waiver support',
-      'provider network coordination', 'nationwide provider network', 'global provider network',
+      'quality assurance review', 'medical records review', 'medical record review',
+      'medical waiver support', 'provider network coordination', 'provider-network coordination',
+      'nationwide provider network', 'global provider network',
       'multi location medical exams', 'multi-location medical exams',
       'occupational health program management', 'medical surveillance program management',
     ],
@@ -114,8 +118,11 @@ export const OCCUMED_BUYER_SEGMENTS = [
 ] as const
 
 export const OCCUMED_HARD_EXCLUSIONS = [
-  'medical equipment purchase', 'medical supplies purchase', 'pharmaceutical purchase',
-  'prescription drug purchase', 'health insurance', 'benefits administration',
+  'medical equipment purchase', 'medical supplies purchase',
+  'pharmaceutical purchase', 'pharmaceutical supply', 'pharmaceutical drugs',
+  'prescription drug purchase', 'prescription drug supply', 'medication supply',
+  'wholesale pharmaceutical', 'drug distribution',
+  'health insurance', 'benefits administration',
   'hospital construction', 'clinic construction', 'information technology system',
   'electronic health record system', 'ehr software', 'medical billing software',
   'general nursing staffing', 'hospital staffing', 'physician staffing',
@@ -167,11 +174,15 @@ export interface OccuMedRelevanceAssessment {
 }
 
 export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
-  const matchedCapabilities = OCCUMED_CAPABILITY_GROUPS
-    .filter(group => matchingTerms(text, group.terms).length > 0)
-    .map(group => group.label)
+  const capabilityEvidence = OCCUMED_CAPABILITY_GROUPS.map(group => ({
+    label: group.label,
+    terms: matchingTerms(text, group.terms),
+  })).filter(group => group.terms.length > 0)
+  const matchedCapabilities = capabilityEvidence.map(group => group.label)
   const matchedBuyerSegments = matchingTerms(text, OCCUMED_BUYER_SEGMENTS)
   const exclusions = matchingTerms(text, OCCUMED_HARD_EXCLUSIONS)
+  const strongSingleFamilyEvidence = capabilityEvidence.some(group => group.terms.length >= 2)
+  const matchedTermCount = capabilityEvidence.reduce((total, group) => total + group.terms.length, 0)
 
   if (exclusions.length > 0 && matchedCapabilities.length === 0) {
     return {
@@ -184,10 +195,18 @@ export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
     }
   }
 
-  if (matchedCapabilities.length >= 2 || (matchedCapabilities.length >= 1 && matchedBuyerSegments.length >= 1)) {
+  // A buyer does not need to request two unrelated capability families to be a
+  // legitimate Occu-Med opportunity. A focused audiometry, respirator-clearance,
+  // drug-testing, or fitness-for-duty solicitation can be a strong fit when its
+  // scope contains multiple concrete terms from one supported family.
+  if (
+    matchedCapabilities.length >= 2
+    || strongSingleFamilyEvidence
+    || (matchedCapabilities.length >= 1 && matchedBuyerSegments.length >= 1)
+  ) {
     return {
       status: 'relevant',
-      score: Math.min(1, 0.62 + matchedCapabilities.length * 0.1 + matchedBuyerSegments.length * 0.04),
+      score: Math.min(1, 0.62 + matchedCapabilities.length * 0.1 + Math.min(4, matchedTermCount) * 0.035 + matchedBuyerSegments.length * 0.04),
       matchedCapabilities,
       matchedBuyerSegments,
       exclusions,
