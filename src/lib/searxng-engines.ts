@@ -1,4 +1,5 @@
 export const SEARXNG_WEB_ENGINES = [
+  'google cse',
   'brave',
   'duckduckgo',
   'startpage',
@@ -11,6 +12,7 @@ export const SEARXNG_WEB_ENGINES = [
 export type SearXNGWebEngine = typeof SEARXNG_WEB_ENGINES[number]
 
 const ENGINE_LABELS: Record<SearXNGWebEngine, string> = {
+  'google cse': 'Google CSE',
   brave: 'Brave',
   duckduckgo: 'DuckDuckGo',
   startpage: 'Startpage',
