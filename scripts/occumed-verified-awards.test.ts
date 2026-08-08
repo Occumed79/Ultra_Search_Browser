@@ -105,7 +105,7 @@ test('verified win language strengthens active opportunity recognition across pr
     'Army National Guard solicitation for occupational health exams, medical surveillance and audiology consultations.',
     'USACE request for medical surveillance services across multiple locations including laboratory diagnostics, audiometry and spirometry testing.',
     'Federal law enforcement RFQ for pre-employment exams, periodic employee exams, return-to-duty reviews and fitness-for-duty evaluations.',
-    'Public-safety solicitation for fitness-for-duty exams for firefighters and periodic occupational medical evaluations.',
+    'Forest Service solicitation for firefighter medical service exams for a public-safety workforce.',
   ]
 
   for (const sample of samples) {
