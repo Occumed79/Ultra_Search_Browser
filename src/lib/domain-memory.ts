@@ -1,9 +1,7 @@
 // ─── DOMAIN MEMORY (Personalized Results) ───
-// Allows users to raise, lower, pin, or block domains
+// Allows users to raise, lower, pin, or block domains.
 
-import pg from 'pg'
-
-const { Pool } = pg
+import { hasDatabase, query } from './db'
 
 export type DomainAction = 'raise' | 'lower' | 'pin' | 'block'
 
@@ -15,172 +13,138 @@ export interface DomainPreference {
   updatedAt: Date
 }
 
-let pool: pg.Pool | null = null
-
-function getPool(): pg.Pool {
-  if (!pool) {
-    const databaseUrl = process.env.DATABASE_URL
-    if (!databaseUrl) {
-      throw new Error('DATABASE_URL is required for domain memory')
-    }
-    pool = new Pool({ connectionString: databaseUrl })
-  }
-  return pool
+interface DomainPreferenceRow {
+  user_id: string
+  domain: string
+  action: DomainAction
+  created_at: Date
+  updated_at: Date
 }
 
-/**
- * Initialize domain memory table
- */
+function normalizeDomain(domain: string): string {
+  return domain.toLowerCase().replace(/^www\./, '')
+}
+
+function normalizePreferenceRow(row: DomainPreferenceRow): DomainPreference {
+  return {
+    userId: row.user_id,
+    domain: row.domain,
+    action: row.action,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function requireWrite(result: Awaited<ReturnType<typeof query>>, operation: string): void {
+  if (!result || result.rowCount === 0) {
+    throw new Error(`${operation} was not acknowledged by the database`)
+  }
+}
+
+/** Initialize domain memory table when PostgreSQL is configured. */
 export async function initializeDomainMemory(): Promise<void> {
-  const client = getPool()
-  try {
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS domain_preferences (
-        user_id TEXT NOT NULL,
-        domain TEXT NOT NULL,
-        action TEXT NOT NULL CHECK (action IN ('raise', 'lower', 'pin', 'block')),
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW(),
-        PRIMARY KEY (user_id, domain)
-      )
-    `)
+  if (!hasDatabase()) return
 
-    // Create index for fast lookups by user
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS domain_preferences_user_idx 
-      ON domain_preferences (user_id)
-    `)
+  const table = await query(`
+    CREATE TABLE IF NOT EXISTS domain_preferences (
+      user_id TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('raise', 'lower', 'pin', 'block')),
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      PRIMARY KEY (user_id, domain)
+    )
+  `)
+  if (!table) throw new Error('Domain memory table initialization failed')
 
-    // Create index for fast lookups by domain
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS domain_preferences_domain_idx 
-      ON domain_preferences (domain)
-    `)
-
-    console.log('Domain memory table initialized')
-  } catch (error) {
-    console.error('Failed to initialize domain memory:', error)
-    throw error
-  }
+  const userIndex = await query(`
+    CREATE INDEX IF NOT EXISTS domain_preferences_user_idx
+    ON domain_preferences (user_id)
+  `)
+  const domainIndex = await query(`
+    CREATE INDEX IF NOT EXISTS domain_preferences_domain_idx
+    ON domain_preferences (domain)
+  `)
+  if (!userIndex || !domainIndex) throw new Error('Domain memory index initialization failed')
 }
 
-/**
- * Set a domain preference for a user
- */
+/** Set a domain preference for a user. Writes are truthful: failure throws. */
 export async function setDomainPreference(
   userId: string,
   domain: string,
   action: DomainAction
 ): Promise<void> {
-  const client = getPool()
-  const normalizedDomain = domain.toLowerCase().replace(/^www\./, '')
-  
-  try {
-    await client.query(
-      `
-      INSERT INTO domain_preferences (user_id, domain, action, updated_at)
-      VALUES ($1, $2, $3, NOW())
-      ON CONFLICT (user_id, domain) 
-      DO UPDATE SET action = EXCLUDED.action, updated_at = NOW()
-      `,
-      [userId, normalizedDomain, action]
-    )
-  } catch (error) {
-    console.error('Failed to set domain preference:', error)
-    throw error
-  }
+  if (!hasDatabase()) throw new Error('DATABASE_URL is required for domain memory writes')
+  const result = await query(
+    `
+    INSERT INTO domain_preferences (user_id, domain, action, updated_at)
+    VALUES ($1, $2, $3, NOW())
+    ON CONFLICT (user_id, domain)
+    DO UPDATE SET action = EXCLUDED.action, updated_at = NOW()
+    `,
+    [userId, normalizeDomain(domain), action]
+  )
+  requireWrite(result, 'Domain preference write')
 }
 
-/**
- * Remove a domain preference for a user
- */
+/** Remove a domain preference for a user. */
 export async function removeDomainPreference(
   userId: string,
   domain: string
 ): Promise<void> {
-  const client = getPool()
-  const normalizedDomain = domain.toLowerCase().replace(/^www\./, '')
-  
-  try {
-    await client.query(
-      'DELETE FROM domain_preferences WHERE user_id = $1 AND domain = $2',
-      [userId, normalizedDomain]
-    )
-  } catch (error) {
-    console.error('Failed to remove domain preference:', error)
-    throw error
-  }
+  if (!hasDatabase()) throw new Error('DATABASE_URL is required for domain memory writes')
+  const result = await query(
+    'DELETE FROM domain_preferences WHERE user_id = $1 AND domain = $2',
+    [userId, normalizeDomain(domain)]
+  )
+  if (!result) throw new Error('Domain preference delete failed')
 }
 
 /**
- * Get all domain preferences for a user
+ * Get all domain preferences for a user. Reads fail open because domain memory
+ * is optional personalization and must never break result rendering.
  */
-export async function getDomainPreferences(
-  userId: string
-): Promise<DomainPreference[]> {
-  const client = getPool()
-  
-  try {
-    const result = await client.query(
-      'SELECT user_id, domain, action, created_at, updated_at FROM domain_preferences WHERE user_id = $1',
-      [userId]
-    )
-    return result.rows
-  } catch (error) {
-    console.error('Failed to get domain preferences:', error)
-    throw error
-  }
+export async function getDomainPreferences(userId: string): Promise<DomainPreference[]> {
+  if (!hasDatabase()) return []
+  const result = await query(
+    'SELECT user_id, domain, action, created_at, updated_at FROM domain_preferences WHERE user_id = $1',
+    [userId]
+  )
+  if (!result) return []
+  return (result.rows as DomainPreferenceRow[]).map(normalizePreferenceRow)
 }
 
-/**
- * Get preference for a specific domain
- */
+/** Get preference for a specific domain. Optional reads fail open to null. */
 export async function getDomainPreference(
   userId: string,
   domain: string
 ): Promise<DomainAction | null> {
-  const client = getPool()
-  const normalizedDomain = domain.toLowerCase().replace(/^www\./, '')
-  
-  try {
-    const result = await client.query(
-      'SELECT action FROM domain_preferences WHERE user_id = $1 AND domain = $2',
-      [userId, normalizedDomain]
-    )
-    if (result.rows.length > 0) {
-      return result.rows[0].action as DomainAction
-    }
-    return null
-  } catch (error) {
-    console.error('Failed to get domain preference:', error)
-    throw error
-  }
+  if (!hasDatabase()) return null
+  const result = await query(
+    'SELECT action FROM domain_preferences WHERE user_id = $1 AND domain = $2',
+    [userId, normalizeDomain(domain)]
+  )
+  if (!result || result.rows.length === 0) return null
+  return result.rows[0].action as DomainAction
 }
 
-/**
- * Get all domains with a specific action for a user
- */
+/** Get all domains with a specific action for a user. */
 export async function getDomainsByAction(
   userId: string,
   action: DomainAction
 ): Promise<string[]> {
-  const client = getPool()
-  
-  try {
-    const result = await client.query(
-      'SELECT domain FROM domain_preferences WHERE user_id = $1 AND action = $2',
-      [userId, action]
-    )
-    return result.rows.map(row => row.domain)
-  } catch (error) {
-    console.error('Failed to get domains by action:', error)
-    throw error
-  }
+  if (!hasDatabase()) return []
+  const result = await query(
+    'SELECT domain FROM domain_preferences WHERE user_id = $1 AND action = $2',
+    [userId, action]
+  )
+  if (!result) return []
+  return result.rows.map(row => String(row.domain))
 }
 
 /**
- * Apply domain preferences to search results
- * Returns adjusted scores and filtered results
+ * Apply domain preferences to search results.
+ * Returns adjusted scores and filtered results.
  */
 export interface AdjustedResult {
   originalScore: number
@@ -194,89 +158,67 @@ export function applyDomainPreferences(
 ): { results: typeof results; adjustments: Map<string, AdjustedResult> } {
   const adjustments = new Map<string, AdjustedResult>()
   const blockedDomains = new Set(
-    preferences
-      .filter(p => p.action === 'block')
-      .map(p => p.domain)
+    preferences.filter(preference => preference.action === 'block').map(preference => preference.domain)
   )
   const pinnedDomains = new Set(
-    preferences
-      .filter(p => p.action === 'pin')
-      .map(p => p.domain)
+    preferences.filter(preference => preference.action === 'pin').map(preference => preference.domain)
   )
   const raisedDomains = new Set(
-    preferences
-      .filter(p => p.action === 'raise')
-      .map(p => p.domain)
+    preferences.filter(preference => preference.action === 'raise').map(preference => preference.domain)
   )
   const loweredDomains = new Set(
-    preferences
-      .filter(p => p.action === 'lower')
-      .map(p => p.domain)
+    preferences.filter(preference => preference.action === 'lower').map(preference => preference.domain)
   )
 
-  // Filter out blocked domains and adjust scores
   const filteredResults = results.filter(result => {
     try {
-      const hostname = new URL(result.url).hostname.toLowerCase().replace(/^www\./, '')
-      
+      const hostname = normalizeDomain(new URL(result.url).hostname)
       if (blockedDomains.has(hostname)) {
         adjustments.set(result.url, {
           originalScore: result.score ?? 0,
           adjustedScore: 0,
           action: 'block',
         })
-        return false // Blocked domains are filtered out
+        return false
       }
       return true
     } catch {
-      return true // Invalid URLs pass through
+      return true
     }
   })
 
-  // Adjust scores for remaining results
   filteredResults.forEach(result => {
     try {
-      const hostname = new URL(result.url).hostname.toLowerCase().replace(/^www\./, '')
+      const hostname = normalizeDomain(new URL(result.url).hostname)
       const originalScore = result.score ?? (1 / (result.rank ?? 1))
       let adjustedScore = originalScore
       let action: DomainAction | undefined
 
       if (pinnedDomains.has(hostname)) {
-        // Pinned domains get maximum boost
         adjustedScore = originalScore * 10
         action = 'pin'
       } else if (raisedDomains.has(hostname)) {
-        // Raised domains get moderate boost
         adjustedScore = originalScore * 2
         action = 'raise'
       } else if (loweredDomains.has(hostname)) {
-        // Lowered domains get penalty
         adjustedScore = originalScore * 0.5
         action = 'lower'
       }
 
       if (action) {
-        adjustments.set(result.url, {
-          originalScore,
-          adjustedScore,
-          action,
-        })
+        adjustments.set(result.url, { originalScore, adjustedScore, action })
       }
     } catch {
-      // Invalid URLs keep original score
+      // Invalid URLs keep their original score.
     }
   })
 
-  // Re-sort by adjusted scores
-  filteredResults.sort((a, b) => {
-    const aAdjustment = adjustments.get(a.url)
-    const bAdjustment = adjustments.get(b.url)
-    const aScore = aAdjustment?.adjustedScore ?? (a.score ?? 0)
-    const bScore = bAdjustment?.adjustedScore ?? (b.score ?? 0)
-    return bScore - aScore
+  filteredResults.sort((left, right) => {
+    const leftScore = adjustments.get(left.url)?.adjustedScore ?? (left.score ?? 0)
+    const rightScore = adjustments.get(right.url)?.adjustedScore ?? (right.score ?? 0)
+    return rightScore - leftScore
   })
 
-  // Update ranks after reordering
   filteredResults.forEach((result, index) => {
     result.rank = index + 1
   })

@@ -13,7 +13,9 @@ Server-side retrieval
     ↓
 Private SearXNG metasearch
     ↓
-Brave / DuckDuckGo / Startpage / Bing / Qwant / Mojeek / Yahoo
+Configured public web engines
+    ↓
+Bounded Google / DuckDuckGo / Bing rescue when coverage is weak
     ↓
 Merged raw candidates
     ↓
@@ -23,10 +25,10 @@ Deep destination-page / document / lifecycle validation
     ↓
 SHOW / REVIEW / REJECT
     ↓
-Feedback + pursuit learning
+Optional feedback + pursuit learning
 ```
 
-If the private SearXNG service is unavailable or the result pool is too sparse, Ultra Search makes a small zero-key direct DuckDuckGo/Bing rescue pass. That rescue is intentionally bounded and is not the preferred retrieval path.
+If the private SearXNG service is unavailable or its distinct destination/query coverage is too sparse, Ultra Search makes a bounded zero-key direct Google/DuckDuckGo/Bing rescue pass. Rescue deliberately favors official, document, portal, buyer-language, and freshness strategies rather than spending its limited slots on generic provider-page searches.
 
 ## What Ultra Search does
 
@@ -34,13 +36,15 @@ If the private SearXNG service is unavailable or the result pool is too sparse, 
 - Expands searches using Occu-Med capabilities and buyer-language vocabulary.
 - Builds broad, official-source, direct-document, procurement-portal, and capability-specific query variants.
 - Uses SearXNG as the preferred server-side metasearch transport.
+- Measures retrieval coverage using canonical distinct destinations and query diversity rather than raw result count.
 - Merges and deduplicates cross-query / cross-engine candidates.
 - Rejects generic pages, jobs, definitions, unrelated patient care, marketing noise, expired notices, and other known junk patterns.
 - Applies the Occu-Med relevance profile, hard exclusions, relevant/irrelevant examples, historical pursuit patterns, and feedback learning.
 - Opens promising destination pages and supported documents for evidence review.
 - Detects solicitation identity, lifecycle, due dates, amendments, attachments, and duplicate opportunities.
+- Sends scanned/image-only procurement documents and thin client-rendered procurement portals to REVIEW instead of falsely calling them junk.
 - Applies the mandatory SHOW / REVIEW / REJECT decision gate.
-- Stores bookmarks, feedback, and pursuit learning when PostgreSQL is configured.
+- Stores bookmarks, feedback, and pursuit learning when PostgreSQL is configured; persistence is bounded and fail-open.
 
 ## Search lifecycle
 
@@ -50,17 +54,7 @@ If the private SearXNG service is unavailable or the result pool is too sparse, 
 
 ### 2. Retrieve
 
-The website calls `POST /api/search`. The server executes the plan through SearXNG. SearXNG aggregates its configured upstream web engines. No search-provider API key is required.
-
-The default SearXNG engine request is:
-
-- Brave
-- DuckDuckGo
-- Startpage
-- Bing
-- Qwant
-- Mojeek
-- Yahoo
+The website calls `POST /api/search`. The server executes the plan through SearXNG first and can invoke a bounded zero-key direct public-engine rescue when SearXNG coverage is weak. No search-provider API key is required.
 
 Individual SearXNG engines can be disabled by the SearXNG instance when an upstream source is unhealthy. Ultra Search does not assume every engine succeeds on every request.
 
@@ -73,15 +67,17 @@ Individual SearXNG engines can be disabled by the SearXNG instance when an upstr
 - procurement intent gate
 - Occu-Med smart filter
 - hard exclusions
-- feedback reranking
+- bounded feedback reranking
 
 Candidate confidence intentionally remains `0` until destination evidence is verified.
 
 ### 4. Deep validate
 
-`POST /api/search/validate` opens promising pages and supported documents, classifies availability and lifecycle, extracts procurement intelligence, and applies the mandatory Occu-Med decision gate.
+`POST /api/search/validate` opens promising pages and supported documents, classifies availability and lifecycle, extracts procurement intelligence, inspects linked solicitation packages, and applies the mandatory Occu-Med decision gate.
 
 Only `SHOW` results are promoted as verified matches. `REVIEW`, expired, dead, rejected, and duplicate results remain in evidence buckets without being presented as confirmed opportunities.
+
+Verified feedback learning and persistence are optional bounded enrichments; they cannot hold the evidence-complete response open indefinitely.
 
 ## Runtime contract
 
@@ -112,11 +108,12 @@ Open `http://localhost:3000`. No browser extension is required.
 | `DATABASE_URL` | No | Persistent bookmarks, feedback, pursuit learning, history, and search memory |
 | `ENABLE_LOCAL_EMBEDDINGS=true` | No | Enables the local MiniLM embedding model |
 | `ENABLE_OCR=true` | No | Enables OCR for images and scanned documents |
-| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | No | Optional semantic reranking enhancement |
-| `CEREBRAS_API_KEY` | No | Optional evidence-review enhancement |
-| `GROQ_API_KEY` | No | Optional fallback evidence-review enhancement |
+| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | No | Optional semantic reranking experiment; not part of core retrieval |
+| `CEREBRAS_API_KEY` | No | Optional external semantic reviewer credential |
+| `GROQ_API_KEY` | No | Optional external semantic reviewer credential |
+| `ENABLE_EXTERNAL_SMART_FILTER=true` | No | Explicitly opts procurement into Cerebras/Groq semantic review; off by default |
 
-Search-provider API keys are not part of the core retrieval architecture.
+Search-provider API keys are not part of the core retrieval architecture. Merely setting optional trial AI keys does not put those providers on the default procurement critical path.
 
 ## SearXNG requirements
 
@@ -129,7 +126,7 @@ search:
     - json
 ```
 
-Ultra Search calls the SearXNG `/search` endpoint with `format=json`, `categories=general`, Safe Search, and the configured web-engine ensemble.
+Ultra Search calls the SearXNG `/search` endpoint with `format=json`, `categories=general`, Safe Search, and the instance's enabled engine configuration.
 
 ## Verification
 
@@ -145,7 +142,7 @@ Or:
 npm run verify
 ```
 
-The production smoke contract verifies the exact deployed commit, deterministic query planning, zero-key server retrieval, Occu-Med candidate filtering, deep SHOW validation, and non-persistence of synthetic validation evidence.
+The production smoke contract verifies the exact deployed commit, deterministic zero-key planning/retrieval, Occu-Med candidate filtering, deep SHOW validation, non-persistence of synthetic validation evidence, and a live `occupational health services` plan → retrieval → ingest canary that rejects provider-page leakage.
 
 ## Render deployment
 
