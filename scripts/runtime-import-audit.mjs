@@ -4,6 +4,7 @@ import process from 'node:process'
 
 const root = process.cwd()
 const srcRoot = path.join(root, 'src')
+const scriptsRoot = path.join(root, 'scripts')
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
 const ENTRY_BASENAMES = new Set([
   'page.ts', 'page.tsx', 'route.ts', 'route.tsx', 'layout.ts', 'layout.tsx',
@@ -15,11 +16,15 @@ const NON_RUNTIME_ALLOWLIST = [/\.d\.ts$/]
 
 function walk(directory) {
   const files = []
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
-    const full = path.join(directory, entry.name)
-    if (entry.isDirectory()) files.push(...walk(full))
-    else if (SOURCE_EXTENSIONS.includes(path.extname(entry.name))) files.push(full)
+  try {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      const full = path.join(directory, entry.name)
+      if (entry.isDirectory()) files.push(...walk(full))
+      else if (SOURCE_EXTENSIONS.includes(path.extname(entry.name))) files.push(full)
+    }
+  } catch {
+    return files
   }
   return files
 }
@@ -94,11 +99,30 @@ while (queue.length) {
   }
 }
 
-const unreachable = allFiles
+const unreachableAbsolute = allFiles
   .filter(file => !reachable.has(path.resolve(file)))
-  .map(relative)
-  .filter(file => !NON_RUNTIME_ALLOWLIST.some(pattern => pattern.test(file)))
+  .filter(file => !NON_RUNTIME_ALLOWLIST.some(pattern => pattern.test(relative(file))))
+  .map(file => path.resolve(file))
   .sort()
+const unreachable = unreachableAbsolute.map(relative)
+const unreachableSet = new Set(unreachableAbsolute)
+
+const testReferences = []
+for (const script of walk(scriptsRoot)) {
+  for (const specifier of importsFor(script)) {
+    if (!isLocalSpecifier(specifier)) continue
+    const resolved = resolveImport(script, specifier)
+    if (resolved && unreachableSet.has(path.resolve(resolved))) {
+      testReferences.push({
+        test: relative(script),
+        module: relative(resolved),
+        specifier,
+      })
+    }
+  }
+}
+
+testReferences.sort((left, right) => left.module.localeCompare(right.module) || left.test.localeCompare(right.test))
 
 const grouped = Object.fromEntries(['src/lib/', 'src/hooks/', 'src/components/', 'src/app/'].map(prefix => [
   prefix.replace(/^src\//, '').replace(/\/$/, ''),
@@ -114,12 +138,13 @@ const report = {
   unreachable,
   grouped,
   unresolvedLocalImports,
+  testReferences,
 }
 
 if (process.argv.includes('--json')) {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
 } else {
-  console.log(`[runtime-import-audit] source=${report.sourceFiles} entrypoints=${report.runtimeEntrypoints.length} reachable=${report.reachableFiles} unreachable=${report.unreachableFiles}`)
+  console.log(`[runtime-import-audit] source=${report.sourceFiles} entrypoints=${report.runtimeEntrypoints.length} reachable=${report.reachableFiles} unreachable=${report.unreachableFiles} test-references=${testReferences.length}`)
   if (unresolvedLocalImports.length) {
     console.log('\nUnresolved local imports:')
     for (const item of unresolvedLocalImports) console.log(`  ${item.from} -> ${item.specifier}`)
@@ -127,6 +152,10 @@ if (process.argv.includes('--json')) {
   if (unreachable.length) {
     console.log('\nRuntime-unreachable source files:')
     for (const file of unreachable) console.log(`  ${file}`)
+  }
+  if (testReferences.length) {
+    console.log('\nTests importing runtime-unreachable modules:')
+    for (const item of testReferences) console.log(`  ${item.test} -> ${item.module}`)
   }
 }
 
