@@ -54,6 +54,8 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'pre-employment physical', 'pre placement medical', 'pre-placement medical',
       'post offer medical', 'post-offer medical', 'fitness for duty', 'fit for duty',
       'return to work evaluation', 'return-to-work evaluation', 'return to work', 'return-to-work',
+      'job specific medical evaluation', 'job-specific medical evaluation',
+      'job specific medical evaluations', 'job-specific medical evaluations',
       'medical clearance', 'medical screening services', 'employee medical examination',
       'employee medical examinations', 'pre employment medical examination',
       'pre-employment medical examination',
