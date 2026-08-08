@@ -88,6 +88,47 @@ test('sparse procurement snippets with one subject match reach page-level review
   assert.equal(gated.diagnostics.reasons['missing-query-subject'], 1)
 })
 
+test('procurement-targeted retrieval provenance keeps sparse Occu-Med candidates for deep validation', () => {
+  const targeted: ScrapedResult = {
+    ...result(
+      'Employee Medical Examinations',
+      'https://county.example.gov/hr/employee-medical-examinations',
+      'Occupational health examinations, fitness-for-duty evaluations, and employee medical screening services.'
+    ),
+    source: 'SearXNG · google cse',
+    retrieval: {
+      sources: ['SearXNG · google cse'],
+      queries: ['employee medical examinations RFP solicitation'],
+      purposes: ['ai-intent'],
+      overlap: 1,
+    },
+  }
+  const broadNoise: ScrapedResult = {
+    ...result(
+      'Employee Medical Examinations',
+      'https://clinic.example.com/services/employee-medical-examinations',
+      'Occupational health examinations and employee medical screening services.'
+    ),
+    source: 'SearXNG · google cse',
+    retrieval: {
+      sources: ['SearXNG · google cse'],
+      queries: ['employee medical examinations'],
+      purposes: ['broad'],
+      overlap: 1,
+    },
+  }
+
+  const gated = applyIntentCandidateGate(
+    'employee medical examinations',
+    'procurement',
+    [targeted, broadNoise],
+    buildDeterministicSemanticIntent('employee medical examinations', 'procurement')
+  )
+
+  assert.deepEqual(gated.results.map(item => item.url), [targeted.url])
+  assert.equal(gated.diagnostics.reasons['missing-procurement-evidence'], 1)
+})
+
 test('procurement rescue queries remove duplicate RFP language and preserve semantic aliases', () => {
   const query = 'request for proposal employment evaluation'
   const intent = buildDeterministicSemanticIntent(query)
