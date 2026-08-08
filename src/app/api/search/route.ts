@@ -9,12 +9,14 @@ import { searchSearXNG } from '../../../lib/searxng'
 import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
 import {
   distinctRetrievalCoverage,
+  selectDirectRescueVariants,
   shouldRunDirectRescue,
 } from '../../../lib/search-retrieval-coverage'
 import type { ScrapedResult } from '../../../types/search'
 
 const SEARCH_BUDGET_MS = 50_000
 const SEARX_VARIANT_TIMEOUT_MS = 10_000
+const MAX_DIRECT_RESCUE_VARIANTS = 5
 
 interface RetrievalCandidate {
   title: string
@@ -142,6 +144,7 @@ export async function POST(request: NextRequest) {
     let searxConfigured = true
     let searxCandidateCount = 0
     let rescueCandidateCount = 0
+    let rescueVariants: BrowserSearchVariant[] = []
 
     // Three-at-a-time waves limit pressure on the private metasearch service.
     for (let start = 0; start < variants.length; start += 3) {
@@ -174,8 +177,11 @@ export async function POST(request: NextRequest) {
 
     // Raw count is not enough: duplicate/tracking variants can make weak coverage
     // look healthy. Rescue based on distinct destinations and query diversity.
+    // When rescue is needed, deliberately sample complementary procurement
+    // purposes instead of blindly replaying planner slots 1–4.
     if (rescueNeeded && Date.now() - startedAt < SEARCH_BUDGET_MS - 5_000) {
-      const rescues = await Promise.all(variants.slice(0, 4).map(variant => runDirectRescue(variant)))
+      rescueVariants = selectDirectRescueVariants(variants, MAX_DIRECT_RESCUE_VARIANTS)
+      const rescues = await Promise.all(rescueVariants.map(variant => runDirectRescue(variant)))
       for (const rescue of rescues) {
         diagnostics.push(...rescue.diagnostics)
         rescue.engines.forEach(engine => engines.add(engine))
@@ -188,6 +194,10 @@ export async function POST(request: NextRequest) {
     const transport = transportFor(searxCandidateCount, rescueCandidateCount)
     const runtimeMs = Date.now() - startedAt
     const totalUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
+    const rescueStrategy = rescueVariants.map(variant => ({
+      purpose: variant.purpose,
+      query: variant.query,
+    }))
 
     if (allCandidates.length === 0) {
       return NextResponse.json({
@@ -203,6 +213,8 @@ export async function POST(request: NextRequest) {
         successfulSearches,
         runtimeMs,
         diagnostics,
+        rescueTriggered: rescueNeeded,
+        rescueStrategy,
         candidateCounts: {
           searxng: searxCandidateCount,
           searxngUnique: searxUniqueCandidateCount,
@@ -223,6 +235,7 @@ export async function POST(request: NextRequest) {
       apiKeysRequired: false,
       runtimeMs,
       rescueTriggered: rescueNeeded,
+      rescueStrategy,
       candidateCounts: {
         searxng: searxCandidateCount,
         searxngUnique: searxUniqueCandidateCount,
