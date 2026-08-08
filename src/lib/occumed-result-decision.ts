@@ -98,12 +98,16 @@ export function hasAffirmativeProcurementEvidence(text: string): boolean {
   for (const match of text.matchAll(new RegExp(PROCUREMENT_EVIDENCE.source, PROCUREMENT_EVIDENCE.flags))) {
     const index = match.index || 0
     const clause = evidenceClauseBefore(text, index)
+    // Include the matched procurement term in the negation context. Otherwise
+    // phrases such as "this is not a procurement notice" are inspected only as
+    // "this is not a" and the very term needed by the negation pattern is lost.
+    const context = `${clause}${String(match[0]).toLowerCase()}`
     const negated = /\b(?:contains?|includes?|has)\s+no\b/.test(clause)
       || /\bdoes\s+not\s+(?:contain|include|represent|constitute|provide)\b/.test(clause)
-      || /\b(?:is|are|was|were)\s+not\s+(?:an?\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
-      || /\bnot\s+(?:an?\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
-      || /\bwithout\s+(?:an?\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
-      || /\bno\s+(?:current\s+|active\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
+      || /\b(?:is|are|was|were)\s+not\s+(?:an?\s+)?(?:current\s+|active\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(context)
+      || /\bnot\s+(?:an?\s+)?(?:current\s+|active\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(context)
+      || /\bwithout\s+(?:an?\s+)?(?:current\s+|active\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(context)
+      || /\bno\s+(?:current\s+|active\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(context)
 
     if (!negated) return true
   }
