@@ -57,7 +57,7 @@ interface CacheEntry {
 }
 
 const PAGE_TIMEOUT_MS = 10_000
-const MAX_RESPONSE_BYTES = 6 * 1024 * 1024
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024
 const MAX_EXTRACTED_TEXT = 180_000
 const PAGE_CACHE_TTL_MS = 10 * 60 * 1000
 const MAX_REDIRECTS = 5
@@ -68,6 +68,10 @@ const REQUEST_HEADERS = {
   Accept: 'text/html,application/xhtml+xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain;q=0.9,*/*;q=0.2',
   'Accept-Language': 'en-US,en;q=0.8',
 }
+
+const PROCUREMENT_PORTAL_HOST = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
+const PROCUREMENT_PATH_HINT = /(?:^|\/)(?:procurement|purchasing|bids?|bid-opportunities|solicitations?|opportunities|contract-opportunities|vendor-opportunities|rfps?|rfqs?|ifbs?)(?:\/|$|[-_])/i
+const DIRECT_DOCUMENT_URL = /\.(?:pdf|docx?)(?:$|[?#])/i
 
 function clean(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -142,6 +146,32 @@ function looksLikeGenericRedirect(requested: URL, finalUrl: URL): boolean {
   return (!finalPath || finalPath === '/') && requestedPath.split('/').filter(Boolean).length >= 1
 }
 
+function recoverThinEvidence(finalUrl: string, requestedUrl: string): PageSignalAssessment | undefined {
+  const final = safeUrl(finalUrl)
+  const requested = safeUrl(requestedUrl)
+  const directDocument = DIRECT_DOCUMENT_URL.test(finalUrl) || DIRECT_DOCUMENT_URL.test(requestedUrl)
+  const procurementDestination = Boolean(
+    (final && PROCUREMENT_PORTAL_HOST.test(final.hostname))
+    || (requested && PROCUREMENT_PORTAL_HOST.test(requested.hostname))
+    || (final && PROCUREMENT_PATH_HINT.test(final.pathname))
+    || (requested && PROCUREMENT_PATH_HINT.test(requested.pathname))
+  )
+
+  if (directDocument) {
+    return {
+      availability: 'unsupported',
+      reason: 'The document is reachable, but text extraction returned too little readable content. It may be scanned or image-only and requires manual review.',
+    }
+  }
+  if (procurementDestination) {
+    return {
+      availability: 'unsupported',
+      reason: 'The procurement destination is reachable, but it returned too little server-rendered text to verify. It may be a client-rendered procurement portal and requires manual review.',
+    }
+  }
+  return undefined
+}
+
 export function inspectPageSignals(
   text: string,
   finalUrl: string,
@@ -172,7 +202,8 @@ export function inspectPageSignals(
     return { availability: 'dead', reason: 'The destination content says the page is missing or unavailable.' }
   }
   if (clean(text).length < 180) {
-    return { availability: 'thin', reason: 'The destination returned too little readable content to validate the result.' }
+    return recoverThinEvidence(finalUrl, requestedUrl)
+      || { availability: 'thin', reason: 'The destination returned too little readable content to validate the result.' }
   }
   return { availability: 'reachable', reason: 'The destination is reachable and contains substantive public content.' }
 }
