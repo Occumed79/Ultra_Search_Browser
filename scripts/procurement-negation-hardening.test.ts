@@ -9,6 +9,11 @@ test('long provider-marketing negation cannot become procurement evidence after 
   assert.equal(hasAffirmativeProcurementEvidence(text), false)
 })
 
+test('direct not-a-procurement wording cannot become affirmative evidence', () => {
+  const text = 'Our clinic provides occupational medicine, DOT physicals, drug testing, audiograms, and spirometry. This is a provider marketing page and it is not a procurement notice or bid opportunity.'
+  assert.equal(hasAffirmativeProcurementEvidence(text), false)
+})
+
 test('affirmative procurement language in a later independent sentence still survives earlier negation', () => {
   const text = 'This page is not an RFP and contains no current bid notice. The agency has now issued a Request for Proposals for occupational health services, with responses due October 30, 2026.'
   assert.equal(hasAffirmativeProcurementEvidence(text), true)
