@@ -91,14 +91,23 @@ export async function POST(request: NextRequest) {
       productMode: 'rfp-finder-searxng',
       rawCandidateLabel: 'rawSearchCandidates',
     })
+    const retainedCandidateCount = Array.isArray(payload.results) ? payload.results.length : 0
 
     recordSearchFlightStage(traceId, 'ingest.complete', {
       runtimeMs: Date.now() - startedAt,
       transport,
       rawCandidateCount: body.results.length,
-      retainedCandidateCount: Array.isArray(payload.results) ? payload.results.length : 0,
+      retainedCandidateCount,
       diagnostics: payload.diagnostics,
     })
+    if (retainedCandidateCount === 0) {
+      finishSearchTrace(traceId, 'complete', {
+        terminalStage: 'ingest',
+        rawCandidateCount: body.results.length,
+        retainedCandidateCount: 0,
+        reason: 'No candidates survived the procurement and Occu-Med candidate gates.',
+      })
+    }
 
     return NextResponse.json({ ...payload, traceId }, {
       headers: { 'Cache-Control': 'no-store, max-age=0', 'X-Ultra-Search-Trace': traceId },
