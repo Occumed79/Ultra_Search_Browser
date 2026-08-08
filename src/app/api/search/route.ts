@@ -7,6 +7,10 @@ import {
 import { searchBingHTML, searchDuckDuckGo, searchGoogleScrape } from '../../../lib/search'
 import { searchSearXNG } from '../../../lib/searxng'
 import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
+import {
+  distinctRetrievalCoverage,
+  shouldRunDirectRescue,
+} from '../../../lib/search-retrieval-coverage'
 import type { ScrapedResult } from '../../../types/search'
 
 const SEARCH_BUDGET_MS = 50_000
@@ -114,9 +118,9 @@ function transportFor(searxCandidates: number, rescueCandidates: number): Search
  * Zero-install, zero-search-key retrieval endpoint.
  *
  * Private SearXNG is the preferred metasearch layer. If it is not configured,
- * unreachable, or sparse, a bounded Google/DuckDuckGo/Bing HTML rescue keeps
- * this single-user internal app usable without extensions, downloads, or paid
- * search APIs.
+ * unreachable, or effectively sparse after URL normalization, a bounded
+ * Google/DuckDuckGo/Bing HTML rescue keeps this single-user internal app usable
+ * without extensions, downloads, or paid search APIs.
  */
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
@@ -134,6 +138,7 @@ export async function POST(request: NextRequest) {
     const allCandidates: RetrievalCandidate[] = []
     const engines = new Set<string>()
     let successfulSearches = 0
+    let searxSuccessfulSearches = 0
     let searxConfigured = true
     let searxCandidateCount = 0
     let rescueCandidateCount = 0
@@ -152,14 +157,24 @@ export async function POST(request: NextRequest) {
         result.engines.forEach(engine => engines.add(engine))
         allCandidates.push(...result.candidates)
         searxCandidateCount += result.candidates.length
-        if (result.ok) successfulSearches += 1
+        if (result.ok) {
+          successfulSearches += 1
+          searxSuccessfulSearches += 1
+        }
         if (!result.configured) searxConfigured = false
       }
     }
 
-    // Rescue only when the metasearch pool is sparse. Run variants concurrently
-    // so the worst case is bounded by one scraper timeout wave instead of four.
-    if (allCandidates.length < 12 && Date.now() - startedAt < SEARCH_BUDGET_MS - 5_000) {
+    const searxUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
+    const rescueNeeded = shouldRunDirectRescue({
+      uniqueCandidateCount: searxUniqueCandidateCount,
+      successfulSearches: searxSuccessfulSearches,
+      attemptedSearches: variants.length,
+    })
+
+    // Raw count is not enough: duplicate/tracking variants can make weak coverage
+    // look healthy. Rescue based on distinct destinations and query diversity.
+    if (rescueNeeded && Date.now() - startedAt < SEARCH_BUDGET_MS - 5_000) {
       const rescues = await Promise.all(variants.slice(0, 4).map(variant => runDirectRescue(variant)))
       for (const rescue of rescues) {
         diagnostics.push(...rescue.diagnostics)
@@ -172,6 +187,7 @@ export async function POST(request: NextRequest) {
 
     const transport = transportFor(searxCandidateCount, rescueCandidateCount)
     const runtimeMs = Date.now() - startedAt
+    const totalUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
 
     if (allCandidates.length === 0) {
       return NextResponse.json({
@@ -187,6 +203,12 @@ export async function POST(request: NextRequest) {
         successfulSearches,
         runtimeMs,
         diagnostics,
+        candidateCounts: {
+          searxng: searxCandidateCount,
+          searxngUnique: searxUniqueCandidateCount,
+          directRescue: rescueCandidateCount,
+          totalUnique: totalUniqueCandidateCount,
+        },
       }, { status: 502 })
     }
 
@@ -200,9 +222,12 @@ export async function POST(request: NextRequest) {
       searxngConfigured: searxConfigured,
       apiKeysRequired: false,
       runtimeMs,
+      rescueTriggered: rescueNeeded,
       candidateCounts: {
         searxng: searxCandidateCount,
+        searxngUnique: searxUniqueCandidateCount,
         directRescue: rescueCandidateCount,
+        totalUnique: totalUniqueCandidateCount,
       },
     }, {
       headers: { 'Cache-Control': 'no-store, max-age=0' },
