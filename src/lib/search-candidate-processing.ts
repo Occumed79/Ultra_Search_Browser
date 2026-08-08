@@ -25,8 +25,28 @@ export interface ProcessSearchCandidatesInput {
   persist?: boolean
 }
 
+const FEEDBACK_RANKING_BUDGET_MS = 2_500
+const CANDIDATE_PERSISTENCE_BUDGET_MS = 4_000
+const MAX_PERSISTED_CANDIDATES = 40
+
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)))
+}
+
+function withBudget<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms budget`)), timeoutMs)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
 }
 
 export async function processSearchCandidates(input: ProcessSearchCandidatesInput) {
@@ -49,9 +69,13 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
 
   let rankedResults = smartFilter.results
   try {
-    rankedResults = await applyResultFeedbackRanking(rankedResults)
+    rankedResults = await withBudget(
+      applyResultFeedbackRanking(rankedResults),
+      FEEDBACK_RANKING_BUDGET_MS,
+      'Candidate feedback reranking'
+    )
   } catch (error) {
-    console.warn('Candidate feedback reranking failed; preserving locally filtered order:', error)
+    console.warn('Candidate feedback reranking failed or timed out; preserving locally filtered order:', error)
   }
 
   const sources = uniqueStrings(normalizedCandidates.flatMap(result => result.retrieval?.sources || [result.source]))
@@ -62,9 +86,10 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
   const persistedResultIds = new Map<string, string>()
   const shouldPersist = input.persist !== false
   let persistenceFailures = 0
+  let persistenceTimedOut = false
 
   if (shouldPersist) {
-    try {
+    const persistenceWork = (async () => {
       searchRunId = await insertSearchRun({
         vertical: 'procurement',
         query: input.query,
@@ -84,47 +109,57 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
         },
       })
 
-      if (searchRunId) {
-        const persisted = await Promise.allSettled(
-          rankedResults.slice(0, 40).map(async result => {
-            const id = await insertSearchResult({
-              search_run_id: searchRunId as string,
-              url: result.url,
-              normalized_url: result.url,
-              domain: result.domain,
-              title: result.title,
-              snippet: result.description,
-              source_engine: result.source,
-              rank: result.rank,
-              score: result.score,
-              final_score: result.score,
-              extraction_status: 'candidate',
-              metadata: {
-                lens: 'procurement',
-                verificationStatus: 'candidate',
-                retrieval: result.retrieval,
-                validation: result.validation,
-                transport: input.transport,
-              },
-            })
-            return { url: result.url, id }
-          })
-        )
+      if (!searchRunId) {
+        persistenceFailures += 1
+        return
+      }
 
-        for (const item of persisted) {
-          if (item.status === 'fulfilled' && item.value.id) {
-            persistedResultIds.set(item.value.url, item.value.id)
-          } else if (item.status === 'rejected') {
-            persistenceFailures += 1
-          }
-        }
-        if (persistenceFailures > 0) {
-          console.warn(`Search result persistence failed for ${persistenceFailures} rows.`)
+      const candidatesToPersist = rankedResults.slice(0, MAX_PERSISTED_CANDIDATES)
+      const persisted = await Promise.allSettled(
+        candidatesToPersist.map(async result => {
+          const id = await insertSearchResult({
+            search_run_id: searchRunId as string,
+            url: result.url,
+            normalized_url: result.url,
+            domain: result.domain,
+            title: result.title,
+            snippet: result.description,
+            source_engine: result.source,
+            rank: result.rank,
+            score: result.score,
+            final_score: result.score,
+            extraction_status: 'candidate',
+            metadata: {
+              lens: 'procurement',
+              verificationStatus: 'candidate',
+              retrieval: result.retrieval,
+              validation: result.validation,
+              transport: input.transport,
+            },
+          })
+          return { url: result.url, id }
+        })
+      )
+
+      for (const item of persisted) {
+        if (item.status === 'fulfilled' && item.value.id) {
+          persistedResultIds.set(item.value.url, item.value.id)
+        } else {
+          persistenceFailures += 1
         }
       }
+    })()
+
+    try {
+      await withBudget(persistenceWork, CANDIDATE_PERSISTENCE_BUDGET_MS, 'Candidate persistence')
     } catch (error) {
-      persistenceFailures = Math.max(persistenceFailures, rankedResults.slice(0, 40).length || 1)
-      console.warn('Search candidate persistence failed:', error)
+      persistenceTimedOut = /exceeded .* budget/i.test(error instanceof Error ? error.message : String(error))
+      persistenceFailures = Math.max(persistenceFailures, 1)
+      console.warn('Search candidate persistence failed or timed out; returning search results without blocking:', error)
+    }
+
+    if (persistenceFailures > 0) {
+      console.warn(`Search candidate persistence did not confirm ${persistenceFailures} write${persistenceFailures === 1 ? '' : 's'}.`)
     }
   }
 
@@ -159,7 +194,8 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
       productMode: input.productMode,
       persistenceAttempted: shouldPersist,
       persistenceFailures,
-      persisted: shouldPersist && persistenceFailures === 0,
+      persistenceTimedOut,
+      persisted: shouldPersist && Boolean(searchRunId) && persistenceFailures === 0 && !persistenceTimedOut,
     },
   }
 }

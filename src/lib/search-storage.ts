@@ -1,4 +1,9 @@
-import { query, withClient, hasDatabase } from './db'
+import crypto from 'crypto'
+import { query, hasDatabase } from './db'
+
+function insertedOne(result: Awaited<ReturnType<typeof query>>): boolean {
+  return Boolean(result && result.rowCount === 1)
+}
 
 /**
  * Initialize the persistent schema for search runs, results, findings, feedback, domain prefs, and bookmarks.
@@ -10,10 +15,8 @@ export async function initializeSchema(): Promise<void> {
     return
   }
 
-  // Attempt to create pgcrypto extension for uuid generation, but don't fail if we cannot
-  await query("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+  await query('CREATE EXTENSION IF NOT EXISTS pgcrypto')
 
-  // Create tables
   await query(`
     CREATE TABLE IF NOT EXISTS search_runs (
       id UUID PRIMARY KEY,
@@ -79,7 +82,6 @@ export async function initializeSchema(): Promise<void> {
     )
   `)
 
-  // Keep domain_preferences shape aligned with existing domain-memory.ts
   await query(`
     CREATE TABLE IF NOT EXISTS domain_preferences (
       user_id TEXT NOT NULL,
@@ -91,7 +93,6 @@ export async function initializeSchema(): Promise<void> {
     )
   `)
 
-  // Bookmarks table (simple, additive)
   await query(`
     CREATE TABLE IF NOT EXISTS bookmarks (
       id UUID PRIMARY KEY,
@@ -109,7 +110,6 @@ export async function initializeSchema(): Promise<void> {
     )
   `)
 
-  // Indexes
   await query(`CREATE INDEX IF NOT EXISTS idx_search_results_domain ON search_results(domain)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_search_results_normalized_url ON search_results(normalized_url)`)
   await query(`CREATE INDEX IF NOT EXISTS idx_search_results_search_run_id ON search_results(search_run_id)`)
@@ -125,14 +125,12 @@ export async function initializeSchema(): Promise<void> {
   await query(`CREATE INDEX IF NOT EXISTS bookmarks_domain_idx ON bookmarks(domain)`)
   await query(`CREATE INDEX IF NOT EXISTS bookmarks_normalized_url_idx ON bookmarks(normalized_url)`)
 
-  console.info('Database schema initialized (if database configured)')
+  console.info('Database schema initialization attempted')
 }
 
-import crypto from 'crypto'
-
 /**
- * Helper insertion functions — fail-open when DB is not available.
- * These are minimal helpers for later wiring; they will return the generated id or null.
+ * Helper insertion functions fail open when the database is unavailable or a
+ * write fails. A non-null id now means the INSERT was actually acknowledged.
  */
 export async function insertSearchRun(data: {
   id?: string
@@ -148,7 +146,7 @@ export async function insertSearchRun(data: {
 }) {
   if (!hasDatabase()) return null
   const id = data.id || crypto.randomUUID()
-  await query(
+  const inserted = await query(
     `INSERT INTO search_runs (id, vertical, query, normalized_query, lens, result_count, runtime_ms, sources, operators, error)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [
@@ -164,7 +162,7 @@ export async function insertSearchRun(data: {
       data.error || null,
     ]
   )
-  return id
+  return insertedOne(inserted) ? id : null
 }
 
 export async function insertSearchResult(data: {
@@ -185,7 +183,7 @@ export async function insertSearchResult(data: {
 }) {
   if (!hasDatabase()) return null
   const id = data.id || crypto.randomUUID()
-  await query(
+  const inserted = await query(
     `INSERT INTO search_results (id, search_run_id, url, normalized_url, domain, title, snippet, source_engine, rank, score, final_score, extraction_status, extracted_text, metadata)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
     [
@@ -205,7 +203,7 @@ export async function insertSearchResult(data: {
       data.metadata ? JSON.stringify(data.metadata) : null,
     ]
   )
-  return id
+  return insertedOne(inserted) ? id : null
 }
 
 export async function insertPricingFinding(data: {
@@ -225,7 +223,7 @@ export async function insertPricingFinding(data: {
 }) {
   if (!hasDatabase()) return null
   const id = data.id || crypto.randomUUID()
-  await query(
+  const inserted = await query(
     `INSERT INTO pricing_findings (id, search_result_id, provider_name, service_name, price, price_text, currency, location, phone, email, evidence_text, source_url, confidence)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
     [
@@ -244,23 +242,39 @@ export async function insertPricingFinding(data: {
       data.confidence ?? null,
     ]
   )
-  return id
+  return insertedOne(inserted) ? id : null
 }
 
-export async function insertResultFeedback(data: { id?: string; result_id?: string; feedback_type?: string; notes?: string }) {
+export async function insertResultFeedback(data: {
+  id?: string
+  result_id?: string
+  feedback_type?: string
+  notes?: string
+}) {
   if (!hasDatabase()) return null
   const id = data.id || crypto.randomUUID()
-  await query(
+  const inserted = await query(
     `INSERT INTO result_feedback (id, result_id, feedback_type, notes) VALUES ($1,$2,$3,$4)`,
     [id, data.result_id || null, data.feedback_type || null, data.notes || null]
   )
-  return id
+  return insertedOne(inserted) ? id : null
 }
 
-export async function insertBookmark(data: { id?: string; user_id?: string; url: string; normalized_url?: string; domain?: string; title?: string; description?: string; folder?: string; tags?: any; metadata?: any }) {
+export async function insertBookmark(data: {
+  id?: string
+  user_id?: string
+  url: string
+  normalized_url?: string
+  domain?: string
+  title?: string
+  description?: string
+  folder?: string
+  tags?: any
+  metadata?: any
+}) {
   if (!hasDatabase()) return null
   const id = data.id || crypto.randomUUID()
-  await query(
+  const inserted = await query(
     `INSERT INTO bookmarks (id, user_id, url, normalized_url, domain, title, description, folder, tags, metadata)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
     [
@@ -276,5 +290,5 @@ export async function insertBookmark(data: { id?: string; user_id?: string; url:
       data.metadata ? JSON.stringify(data.metadata) : JSON.stringify({}),
     ]
   )
-  return id
+  return insertedOne(inserted) ? id : null
 }
