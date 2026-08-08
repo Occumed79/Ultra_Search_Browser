@@ -3,6 +3,7 @@ import type {
   BrowserSearchVariant,
   BrowserSerpCandidateInput,
 } from '../../../../lib/browser-search-pipeline'
+import { createSearchTrace, finishSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
 import {
   processSearchCandidates,
   type SearchRetrievalTransport,
@@ -44,6 +45,7 @@ function retrievalModeFor(transport: SearchRetrievalTransport): string {
 }
 
 export async function POST(request: NextRequest) {
+  let traceId: string | undefined
   try {
     const body = (await request.json()) as {
       query?: string
@@ -52,6 +54,7 @@ export async function POST(request: NextRequest) {
       searches?: BrowserSearchVariant[]
       settings?: unknown
       transport?: unknown
+      traceId?: unknown
     }
     const query = body.query?.trim() || ''
     if (!query) return NextResponse.json({ error: 'Query is required' }, { status: 400 })
@@ -59,7 +62,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Search retrieval results are required' }, { status: 400 })
     }
 
+    traceId = createSearchTrace(query, typeof body.traceId === 'string' ? body.traceId : undefined)
     const transport = inferTransport(body.transport, body.results)
+    recordSearchFlightStage(traceId, 'ingest.start', {
+      transport,
+      rawCandidateCount: body.results.length,
+      plannedSearches: Array.isArray(body.searches) ? body.searches.length : 0,
+    })
+
+    const startedAt = Date.now()
     const payload = await processSearchCandidates({
       query,
       intent: body.intent,
@@ -72,18 +83,31 @@ export async function POST(request: NextRequest) {
       rawCandidateLabel: 'rawSearchCandidates',
     })
 
-    return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'no-store, max-age=0' },
+    recordSearchFlightStage(traceId, 'ingest.complete', {
+      runtimeMs: Date.now() - startedAt,
+      transport,
+      rawCandidateCount: body.results.length,
+      retainedCandidateCount: Array.isArray(payload.results) ? payload.results.length : 0,
+      diagnostics: payload.diagnostics,
+    })
+
+    return NextResponse.json({ ...payload, traceId }, {
+      headers: { 'Cache-Control': 'no-store, max-age=0', 'X-Ultra-Search-Trace': traceId },
     })
   } catch (error) {
+    finishSearchTrace(traceId, 'error', {
+      stage: 'ingest',
+      error: error instanceof Error ? error.message : String(error),
+    })
     console.error('Search candidate ingestion failed:', error)
     return NextResponse.json(
       {
         error: 'Search result filtering failed',
         detail: error instanceof Error ? error.message : String(error),
         stage: 'searxng-candidate-filter',
+        traceId,
       },
-      { status: 500 }
+      { status: 500, headers: traceId ? { 'X-Ultra-Search-Trace': traceId } : undefined }
     )
   }
 }
