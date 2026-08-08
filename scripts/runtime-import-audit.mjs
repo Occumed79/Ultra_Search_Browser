@@ -11,9 +11,7 @@ const ENTRY_BASENAMES = new Set([
   'template.ts', 'template.tsx', 'default.ts', 'default.tsx',
 ])
 const ROOT_ENTRYPOINTS = ['instrumentation.ts', 'instrumentation.tsx', 'middleware.ts', 'middleware.tsx']
-const NON_RUNTIME_ALLOWLIST = [
-  /\.d\.ts$/,
-]
+const NON_RUNTIME_ALLOWLIST = [/\.d\.ts$/]
 
 function walk(directory) {
   const files = []
@@ -30,9 +28,7 @@ function relative(file) {
   return path.relative(root, file).split(path.sep).join('/')
 }
 
-function resolveImport(fromFile, specifier) {
-  if (!specifier.startsWith('.')) return null
-  const absolute = path.resolve(path.dirname(fromFile), specifier)
+function fileCandidate(absolute) {
   const candidates = [
     absolute,
     ...SOURCE_EXTENSIONS.map(extension => `${absolute}${extension}`),
@@ -45,6 +41,16 @@ function resolveImport(fromFile, specifier) {
       return false
     }
   }) || null
+}
+
+function resolveImport(fromFile, specifier) {
+  if (specifier.startsWith('.')) return fileCandidate(path.resolve(path.dirname(fromFile), specifier))
+  if (specifier.startsWith('@/')) return fileCandidate(path.join(srcRoot, specifier.slice(2)))
+  return null
+}
+
+function isLocalSpecifier(specifier) {
+  return specifier.startsWith('.') || specifier.startsWith('@/')
 }
 
 function importsFor(file) {
@@ -71,17 +77,17 @@ const entries = allFiles.filter(file => {
 
 const reachable = new Set()
 const queue = [...entries]
-const unresolvedRelativeImports = []
+const unresolvedLocalImports = []
 
 while (queue.length) {
   const file = path.resolve(queue.shift())
   if (reachable.has(file) || !allSet.has(file)) continue
   reachable.add(file)
   for (const specifier of importsFor(file)) {
-    if (!specifier.startsWith('.')) continue
+    if (!isLocalSpecifier(specifier)) continue
     const resolved = resolveImport(file, specifier)
     if (!resolved) {
-      unresolvedRelativeImports.push({ from: relative(file), specifier })
+      unresolvedLocalImports.push({ from: relative(file), specifier })
       continue
     }
     if (!reachable.has(path.resolve(resolved))) queue.push(resolved)
@@ -107,16 +113,16 @@ const report = {
   unreachableFiles: unreachable.length,
   unreachable,
   grouped,
-  unresolvedRelativeImports,
+  unresolvedLocalImports,
 }
 
 if (process.argv.includes('--json')) {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`)
 } else {
   console.log(`[runtime-import-audit] source=${report.sourceFiles} entrypoints=${report.runtimeEntrypoints.length} reachable=${report.reachableFiles} unreachable=${report.unreachableFiles}`)
-  if (unresolvedRelativeImports.length) {
-    console.log('\nUnresolved relative imports:')
-    for (const item of unresolvedRelativeImports) console.log(`  ${item.from} -> ${item.specifier}`)
+  if (unresolvedLocalImports.length) {
+    console.log('\nUnresolved local imports:')
+    for (const item of unresolvedLocalImports) console.log(`  ${item.from} -> ${item.specifier}`)
   }
   if (unreachable.length) {
     console.log('\nRuntime-unreachable source files:')
@@ -124,6 +130,6 @@ if (process.argv.includes('--json')) {
   }
 }
 
-if (process.env.RUNTIME_IMPORT_AUDIT_STRICT === '1' && (unresolvedRelativeImports.length || unreachable.length)) {
+if (process.env.RUNTIME_IMPORT_AUDIT_STRICT === '1' && (unresolvedLocalImports.length || unreachable.length)) {
   process.exitCode = 1
 }
