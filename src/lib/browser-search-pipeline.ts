@@ -25,6 +25,7 @@ export interface BrowserSearchPlan {
   apiKeysRequired: false
   maxResultsPerSearch: number
   timestamp: string
+  traceId?: string
 }
 
 export interface BrowserSerpCandidateInput {

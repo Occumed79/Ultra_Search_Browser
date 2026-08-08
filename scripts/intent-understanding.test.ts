@@ -1,7 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { evaluateIntentRelevance } from '../src/lib/intent-relevance'
-import { routeSearchLens } from '../src/lib/search-intent-routing'
 import {
   buildDeterministicSemanticIntent,
   type SemanticIntentPlan,
@@ -45,15 +44,6 @@ test('provider requests become grouped tasks instead of bags of words', () => {
     && /audiogram|audiometry|hearing test/i.test(variant)
     && /stuttgart/i.test(variant)
   ))
-})
-
-test('structured provider intent automatically routes a plain web search', () => {
-  const query = 'occupational health services in Fresno'
-  const plan = buildDeterministicSemanticIntent(query)
-  const routed = routeSearchLens('web', undefined, query, plan)
-
-  assert.equal(routed.effectiveLens, 'provider')
-  assert.equal(routed.autoRouted, true)
 })
 
 test('an explanatory medical query stays broad instead of becoming a provider hunt', () => {

@@ -1,0 +1,32 @@
+name: Runtime Import Audit
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Generate runtime import graph
+        run: |
+          node scripts/runtime-import-audit.mjs --json | tee runtime-import-audit.json
+          node scripts/runtime-import-audit.mjs
+      - name: Upload import graph
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-import-audit-${{ github.run_id }}
+          path: runtime-import-audit.json
+          if-no-files-found: error
+          retention-days: 14

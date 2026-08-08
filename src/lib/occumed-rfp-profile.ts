@@ -1,6 +1,6 @@
 import type { SemanticIntentPlan } from './semantic-intent'
 
-export const OCCUMED_PROFILE_VERSION = '2026-08-08-award-history-v1'
+export const OCCUMED_PROFILE_VERSION = '2026-08-08-award-history-v2'
 
 export const OCCUMED_OFFICIAL_SOURCES = [
   'https://www.occu-med.com/',
@@ -56,10 +56,13 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'pre placement medical', 'pre-placement medical', 'pre-placement physical exams',
       'post offer medical', 'post-offer medical', 'periodic employee exams', 'exit physical exams',
       'termination exams', 'fitness for duty', 'fit for duty', 'fitness-for-duty evaluations',
-      'return to work evaluation', 'return-to-work evaluation', 'return-to-duty reviews',
-      'medical clearance', 'medical screening services', 'employee medical examinations',
-      'medical examinations and fitness determinations', 'firefighter medical service exams',
-      'firefighter medical exams', 'public safety medical evaluations',
+      'return to work evaluation', 'return-to-work evaluation', 'return to work', 'return-to-work',
+      'return-to-duty reviews', 'job specific medical evaluation', 'job-specific medical evaluation',
+      'job specific medical evaluations', 'job-specific medical evaluations',
+      'medical clearance', 'medical screening services', 'employee medical examination',
+      'employee medical examinations', 'pre employment medical examination',
+      'pre-employment medical examination', 'medical examinations and fitness determinations',
+      'firefighter medical service exams', 'firefighter medical exams', 'public safety medical evaluations',
     ],
   },
   {
@@ -80,8 +83,8 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'medical surveillance', 'medical surveillance services', 'medical surveillance exams',
       'medical surveillance testing services', 'occupational health medical surveillance exams',
       'osha medical surveillance', 'periodic medical examination', 'periodic physical examination',
-      'respirator medical clearance', 'respirator clearance', 'respirator fit testing',
-      'hearing conservation', 'audiometric testing', 'audiogram', 'audiometry',
+      'respirator medical evaluation', 'respirator medical clearance', 'respirator clearance',
+      'respirator fit testing', 'hearing conservation', 'audiometric testing', 'audiogram', 'audiometry',
       'audiology consultation', 'audiology consultations', 'spirometry', 'spirometry testing',
       'pulmonary function test', 'pft', 'silica surveillance', 'asbestos surveillance',
       'hazwoper medical', 'hazmat medical', 'lead surveillance', 'cancer screening',
@@ -108,9 +111,9 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'record and case review', 'medical review and consultation',
       'fitness determination', 'fitness determination services', 'placement recommendation',
       'accommodation review', 'job compatibility assessment', 'job demands analysis',
-      'exam quality assurance', 'quality assurance review', 'medical records review',
-      'medical waiver support', 'provider network coordination', 'nationwide provider network',
-      'global provider network', 'nationwide medical exam locations',
+      'exam quality assurance', 'quality assurance review', 'medical records review', 'medical record review',
+      'medical waiver support', 'provider network coordination', 'provider-network coordination',
+      'nationwide provider network', 'global provider network', 'nationwide medical exam locations',
       'multi location medical exams', 'multi-location medical exams',
       'clinics throughout the state', 'occupational health program management',
       'medical surveillance program management', 'professional occupational health consulting services',
@@ -132,8 +135,11 @@ export const OCCUMED_BUYER_SEGMENTS = [
 ] as const
 
 export const OCCUMED_HARD_EXCLUSIONS = [
-  'medical equipment purchase', 'medical supplies purchase', 'pharmaceutical purchase',
-  'prescription drug purchase', 'health insurance', 'benefits administration',
+  'medical equipment purchase', 'medical supplies purchase',
+  'pharmaceutical purchase', 'pharmaceutical supply', 'pharmaceutical drugs',
+  'prescription drug purchase', 'prescription drug supply', 'medication supply',
+  'wholesale pharmaceutical', 'drug distribution',
+  'health insurance', 'benefits administration',
   'hospital construction', 'clinic construction', 'information technology system',
   'electronic health record system', 'ehr software', 'medical billing software',
   'general nursing staffing', 'hospital staffing', 'physician staffing',
@@ -162,8 +168,10 @@ export const OCCUMED_POSITIVE_EXAMPLES = [
   ...OCCUMED_VERIFIED_WIN_EXAMPLES,
   'Employee occupational-health services including physicals, surveillance, testing, and fitness evaluations.',
   'Medical readiness examinations for deployed or deployable personnel.',
+  'Firefighter NFPA medical evaluations or comparable public-safety fitness examinations.',
   'Nationwide or international employee-health screening network coordination.',
   'Medical-advisor, clinical-review, fitness-for-duty, or accommodation-review services.',
+  'Periodic OSHA medical surveillance, respirator clearance, audiograms, spirometry, laboratory testing, or immunizations.',
 ] as const
 
 export const OCCUMED_NEGATIVE_EXAMPLES = [
@@ -174,6 +182,16 @@ export const OCCUMED_NEGATIVE_EXAMPLES = [
   'A relevant occupational-health solicitation whose deadline has passed: expired and never displayable.',
   'An Occu-Med award notice or historical contract record: useful similarity evidence, but never a current bid opportunity.',
 ] as const
+
+const OCCUMED_UMBRELLA_CAPABILITY_TERMS = new Set([
+  'occupational health',
+  'occupational medicine',
+  'employee health',
+  'workforce health',
+  'medical clearance',
+  'medical readiness',
+  'medical review',
+])
 
 function normalize(value: string): string {
   return value
@@ -190,6 +208,10 @@ function matchingTerms(text: string, terms: readonly string[]): string[] {
   return terms.filter(term => normalized.includes(normalize(term)))
 }
 
+function concreteCapabilityTerms(terms: readonly string[]): string[] {
+  return terms.filter(term => !OCCUMED_UMBRELLA_CAPABILITY_TERMS.has(normalize(term)))
+}
+
 export interface OccuMedRelevanceAssessment {
   status: 'relevant' | 'uncertain' | 'irrelevant'
   score: number
@@ -200,11 +222,15 @@ export interface OccuMedRelevanceAssessment {
 }
 
 export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
-  const matchedCapabilities = OCCUMED_CAPABILITY_GROUPS
-    .filter(group => matchingTerms(text, group.terms).length > 0)
-    .map(group => group.label)
+  const capabilityEvidence = OCCUMED_CAPABILITY_GROUPS.map(group => ({
+    label: group.label,
+    terms: matchingTerms(text, group.terms),
+  })).filter(group => group.terms.length > 0)
+  const matchedCapabilities = capabilityEvidence.map(group => group.label)
   const matchedBuyerSegments = matchingTerms(text, OCCUMED_BUYER_SEGMENTS)
   const exclusions = matchingTerms(text, OCCUMED_HARD_EXCLUSIONS)
+  const strongSingleFamilyEvidence = capabilityEvidence.some(group => concreteCapabilityTerms(group.terms).length >= 2)
+  const matchedTermCount = capabilityEvidence.reduce((total, group) => total + group.terms.length, 0)
 
   if (exclusions.length > 0 && matchedCapabilities.length === 0) {
     return {
@@ -217,10 +243,14 @@ export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
     }
   }
 
-  if (matchedCapabilities.length >= 2 || (matchedCapabilities.length >= 1 && matchedBuyerSegments.length >= 1)) {
+  if (
+    matchedCapabilities.length >= 2
+    || strongSingleFamilyEvidence
+    || (matchedCapabilities.length >= 1 && matchedBuyerSegments.length >= 1)
+  ) {
     return {
       status: 'relevant',
-      score: Math.min(1, 0.62 + matchedCapabilities.length * 0.1 + matchedBuyerSegments.length * 0.04),
+      score: Math.min(1, 0.62 + matchedCapabilities.length * 0.1 + Math.min(4, matchedTermCount) * 0.035 + matchedBuyerSegments.length * 0.04),
       matchedCapabilities,
       matchedBuyerSegments,
       exclusions,

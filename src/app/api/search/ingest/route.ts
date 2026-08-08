@@ -3,6 +3,7 @@ import type {
   BrowserSearchVariant,
   BrowserSerpCandidateInput,
 } from '../../../../lib/browser-search-pipeline'
+import { createSearchTrace, finishSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
 import {
   processSearchCandidates,
   type SearchRetrievalTransport,
@@ -43,7 +44,14 @@ function retrievalModeFor(transport: SearchRetrievalTransport): string {
   return 'searxng-metasearch'
 }
 
+function traceIdFromIntent(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const traceId = (value as { __traceId?: unknown }).__traceId
+  return typeof traceId === 'string' && traceId.trim() ? traceId.trim().slice(0, 100) : undefined
+}
+
 export async function POST(request: NextRequest) {
+  let traceId: string | undefined
   try {
     const body = (await request.json()) as {
       query?: string
@@ -52,6 +60,7 @@ export async function POST(request: NextRequest) {
       searches?: BrowserSearchVariant[]
       settings?: unknown
       transport?: unknown
+      traceId?: unknown
     }
     const query = body.query?.trim() || ''
     if (!query) return NextResponse.json({ error: 'Query is required' }, { status: 400 })
@@ -59,7 +68,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Search retrieval results are required' }, { status: 400 })
     }
 
+    traceId = createSearchTrace(
+      query,
+      typeof body.traceId === 'string' ? body.traceId : traceIdFromIntent(body.intent)
+    )
     const transport = inferTransport(body.transport, body.results)
+    recordSearchFlightStage(traceId, 'ingest.start', {
+      transport,
+      rawCandidateCount: body.results.length,
+      plannedSearches: Array.isArray(body.searches) ? body.searches.length : 0,
+    })
+
+    const startedAt = Date.now()
     const payload = await processSearchCandidates({
       query,
       intent: body.intent,
@@ -71,19 +91,41 @@ export async function POST(request: NextRequest) {
       productMode: 'rfp-finder-searxng',
       rawCandidateLabel: 'rawSearchCandidates',
     })
+    const retainedCandidateCount = Array.isArray(payload.results) ? payload.results.length : 0
 
-    return NextResponse.json(payload, {
-      headers: { 'Cache-Control': 'no-store, max-age=0' },
+    recordSearchFlightStage(traceId, 'ingest.complete', {
+      runtimeMs: Date.now() - startedAt,
+      transport,
+      rawCandidateCount: body.results.length,
+      retainedCandidateCount,
+      diagnostics: payload.diagnostics,
+    })
+    if (retainedCandidateCount === 0) {
+      finishSearchTrace(traceId, 'complete', {
+        terminalStage: 'ingest',
+        rawCandidateCount: body.results.length,
+        retainedCandidateCount: 0,
+        reason: 'No candidates survived the procurement and Occu-Med candidate gates.',
+      })
+    }
+
+    return NextResponse.json({ ...payload, traceId }, {
+      headers: { 'Cache-Control': 'no-store, max-age=0', 'X-Ultra-Search-Trace': traceId },
     })
   } catch (error) {
+    finishSearchTrace(traceId, 'error', {
+      stage: 'ingest',
+      error: error instanceof Error ? error.message : String(error),
+    })
     console.error('Search candidate ingestion failed:', error)
     return NextResponse.json(
       {
         error: 'Search result filtering failed',
         detail: error instanceof Error ? error.message : String(error),
         stage: 'searxng-candidate-filter',
+        traceId,
       },
-      { status: 500 }
+      { status: 500, headers: traceId ? { 'X-Ultra-Search-Trace': traceId } : undefined }
     )
   }
 }

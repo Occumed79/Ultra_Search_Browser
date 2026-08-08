@@ -18,6 +18,7 @@ export interface BrowserBridgePlan {
   apiKeysRequired: false
   maxResultsPerSearch: number
   timestamp: string
+  traceId?: string
 }
 
 export type ServerSearchPlan = BrowserBridgePlan
@@ -42,10 +43,24 @@ export interface BrowserBridgeResult {
   attemptedSearches: number
   successfulSearches: number
   transport?: BrowserBridgeTransport
+  traceId?: string
+  sourceHealth?: Array<{
+    source: string
+    attempts: number
+    successes: number
+    failures: number
+    consecutiveFailures: number
+    averageLatencyMs: number
+    circuitOpen: boolean
+    circuitOpenUntil?: string
+    lastError?: string
+  }>
   diagnostics?: Array<{
     query?: string
     engine?: string
     resultCount?: number
+    latencyMs?: number
+    circuitOpen?: boolean
     error?: string
   }>
 }
@@ -112,6 +127,8 @@ export async function runServerSearchPlan(
       attemptedSearches: Number(payload.attemptedSearches || 0),
       successfulSearches: Number(payload.successfulSearches || 0),
       transport: payload.transport,
+      traceId: payload.traceId || plan.traceId,
+      sourceHealth: Array.isArray(payload.sourceHealth) ? payload.sourceHealth : [],
       diagnostics: Array.isArray(payload.diagnostics) ? payload.diagnostics : [],
     }
   } catch (error) {

@@ -4,6 +4,7 @@ import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { applyOccuMedDecisionGate } from '../../../../lib/occumed-result-decision'
 import { applyResultFeedbackRanking } from '../../../../lib/result-feedback-ranking'
 import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
+import { createSearchTrace, finishSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
 import { insertSearchResult } from '../../../../lib/search-storage'
 import {
   verifiedSearchConfidence,
@@ -29,6 +30,7 @@ interface ValidationRequest {
   results?: ScrapedResult[]
   maxTargets?: number
   intent?: unknown
+  traceId?: string
   testMode?: boolean
 }
 
@@ -40,6 +42,12 @@ type PersistableRfpResult = ScrapedResult & {
 
 function sseEvent(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`
+}
+
+function traceIdFromIntent(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const traceId = (value as { __traceId?: unknown }).__traceId
+  return typeof traceId === 'string' && traceId.trim() ? traceId.trim().slice(0, 100) : undefined
 }
 
 function withBudget<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -145,7 +153,13 @@ export async function POST(request: NextRequest) {
 
   if (!query) return Response.json({ error: 'Query is required' }, { status: 400 })
   if (results.length === 0) return Response.json({ error: 'At least one result is required' }, { status: 400 })
+  const traceId = createSearchTrace(query, body.traceId || traceIdFromIntent(body.intent))
   const semanticIntent = coerceSemanticIntentPlan(body.intent, query, lens)
+  recordSearchFlightStage(traceId, 'validation.start', {
+    candidateCount: results.length,
+    maxTargets,
+    testMode,
+  })
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
@@ -160,7 +174,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      write('ready', { query, lens, requestedLens, candidateCount: results.length, testMode })
+      write('ready', { query, lens, requestedLens, candidateCount: results.length, testMode, traceId })
 
       try {
         const rawOutcome = await deepValidateResults(query, lens, results, {
@@ -168,10 +182,21 @@ export async function POST(request: NextRequest) {
           semanticIntent,
           onEvent: async (event: DeepValidationEvent) => {
             if (event.type === 'complete') return
-            if (event.type === 'progress') write(event.type, event)
+            if (event.type === 'progress') write(event.type, { ...event, traceId })
           },
         })
+        recordSearchFlightStage(traceId, 'validation.evidence-complete', {
+          progress: rawOutcome.progress,
+          bucketCounts: Object.fromEntries(Object.entries(rawOutcome.buckets).map(([key, values]) => [key, values.length])),
+        })
+
         const outcome = applyOccuMedDecisionGate(rawOutcome)
+        recordSearchFlightStage(traceId, 'validation.decision-gate', {
+          progress: outcome.progress,
+          primaryResultCount: outcome.results.length,
+          bucketCounts: Object.fromEntries(Object.entries(outcome.buckets).map(([key, values]) => [key, values.length])),
+          diagnostics: outcome.diagnostics,
+        })
 
         let pursuitLearningApplied = false
         if (!testMode && outcome.results.length > 0) {
@@ -239,7 +264,7 @@ export async function POST(request: NextRequest) {
               }
             })()
 
-        write('complete', {
+        const completion = {
           ...outcome,
           results: outcome.results,
           summary: verifiedResults.length > 0
@@ -248,6 +273,7 @@ export async function POST(request: NextRequest) {
           confidence: verifiedSearchConfidence(verifiedResults),
           lens,
           requestedLens,
+          traceId,
           diagnostics: {
             ...outcome.diagnostics,
             verifiedOnly: true,
@@ -259,11 +285,29 @@ export async function POST(request: NextRequest) {
             persistentMemory: persistence.persistentMemory,
             verifiedPersistence: persistence.verifiedPersistence,
           },
+        }
+
+        recordSearchFlightStage(traceId, 'validation.complete', {
+          verifiedCount: verifiedResults.length,
+          confidence: completion.confidence,
+          persistenceTimedOut,
+          pursuitLearningApplied,
+          bucketCounts: Object.fromEntries(Object.entries(outcome.buckets).map(([key, values]) => [key, values.length])),
         })
+        finishSearchTrace(traceId, 'complete', {
+          verifiedCount: verifiedResults.length,
+          confidence: completion.confidence,
+        })
+        write('complete', completion)
       } catch (error) {
+        finishSearchTrace(traceId, 'error', {
+          stage: 'validation',
+          error: error instanceof Error ? error.message : String(error),
+        })
         write('error', {
           error: 'Deep validation failed',
           detail: error instanceof Error ? error.message : String(error),
+          traceId,
         })
       } finally {
         if (!closed) {
@@ -281,6 +325,7 @@ export async function POST(request: NextRequest) {
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
+      'X-Ultra-Search-Trace': traceId,
     },
   })
 }

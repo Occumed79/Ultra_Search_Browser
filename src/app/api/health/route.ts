@@ -1,5 +1,7 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
+import { databaseSchemaState } from '../../../lib/database-schema-lifecycle'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { headlessRecoveryCapabilities } from '../../../lib/headless-page-recovery'
 import {
   OCCUMED_HISTORICAL_PURSUIT_SEEDS,
   OCCUMED_VERIFIED_AWARD_SEEDS,
@@ -7,6 +9,8 @@ import {
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { isSearxngConfigured } from '../../../lib/searxng'
+import { searchFlightRecorderStats } from '../../../lib/search-flight-recorder'
+import { searchSourceHealthSnapshot } from '../../../lib/search-source-health'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,6 +27,8 @@ function healthPayload() {
   const providers = externalSmartFilterCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
   const searxngConfigured = isSearxngConfigured()
+  const headless = headlessRecoveryCapabilities()
+  const schema = databaseSchemaState()
   const verifiedPrimeAwardSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-prime-award').length
   const verifiedSubawardSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-subcontract-award').length
   const verifiedPerformanceSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-performance-record').length
@@ -35,6 +41,8 @@ function healthPayload() {
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
+      databaseSchema: schema,
+      databaseSchemaReady: schema.status === 'ready' || schema.status === 'disabled',
       browserFedSearch: false,
       browserCompanionRequired: false,
       downloadsRequired: false,
@@ -43,6 +51,10 @@ function healthPayload() {
       searxngSearch: true,
       searxngConfigured,
       zeroKeyDirectRescue: true,
+      retrievalCircuitBreakers: true,
+      retrievalSourceHealth: searchSourceHealthSnapshot(),
+      searchFlightRecorder: searchFlightRecorderStats(),
+      searchTraceDiagnosticsEndpoint: '/api/diagnostics/search-traces',
       coreSearchApiKeysRequired: false,
       deterministicIntentPlanning: true,
       structuredIntentPlanning: true,
@@ -82,7 +94,17 @@ function healthPayload() {
       streamingValidation: true,
       lifecycleDetection: true,
       pageValidationCache: pageValidationCacheStats(),
+      embeddedClientStateRecovery: true,
+      headlessClientRenderedRecovery: headless.enabled,
+      headlessRecoveryConfigured: headless.configured,
+      headlessRecoveryBudget: {
+        maxConcurrency: headless.maxConcurrency,
+        maxPerMinute: headless.maxPerMinute,
+        timeoutMs: headless.timeoutMs,
+      },
       ocr: process.env.ENABLE_OCR === 'true',
+      scannedPdfOcr: process.env.ENABLE_OCR === 'true',
+      pdfOcrRasterizer: process.env.PDFTOPPM_PATH?.trim() ? 'configured-path' : 'system-path',
     },
     checkedAt: new Date().toISOString(),
   }

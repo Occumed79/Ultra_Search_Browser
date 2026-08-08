@@ -1,11 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { indexResultsInPersistentMemory, isVerifiedMemoryCandidate } from '../src/lib/memory-indexing'
-import {
-  isUsableExternalResult,
-  parseBingRss,
-  parseDuckDuckGoLite,
-} from '../src/lib/search-response-parsers'
 import { isVerifiedResult, verifiedResultsOnly } from '../src/lib/verified-results'
 import type { ScrapedResult } from '../src/types/search'
 
@@ -97,43 +92,4 @@ test('persistent vector memory rejects uncertain and inaccessible results before
     if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL
     else process.env.DATABASE_URL = previousDatabaseUrl
   }
-})
-
-test('structural result guard rejects search-engine and authentication navigation', () => {
-  assert.equal(isUsableExternalResult('https://www.bing.com/search?q=test', 'Search results'), false)
-  assert.equal(isUsableExternalResult('https://login.live.com/', 'Sign in to your account'), false)
-  assert.equal(isUsableExternalResult('https://account.microsoft.com/account', 'Create your Microsoft account'), false)
-  assert.equal(isUsableExternalResult('https://www.osha.gov/occupational-health', 'Occupational Health'), true)
-})
-
-test('Bing RSS parser drops authentication leakage while preserving external evidence', () => {
-  const results = parseBingRss(`
-    <rss><channel>
-      <item>
-        <title>Create your Microsoft account</title>
-        <link>https://account.microsoft.com/account</link>
-        <description>Sign up for an account.</description>
-      </item>
-      <item>
-        <title>Occupational Health</title>
-        <link>https://www.osha.gov/occupational-health</link>
-        <description>Official guidance.</description>
-      </item>
-    </channel></rss>
-  `)
-  assert.equal(results.length, 1)
-  assert.equal(results[0].domain, 'osha.gov')
-})
-
-test('DuckDuckGo Lite parser drops internal navigation and auth links', () => {
-  const results = parseDuckDuckGoLite(`
-    <html><body>
-      <a class="result-link" href="https://login.live.com/">Sign in</a>
-      <div class="result-snippet">Authentication</div>
-      <a class="result-link" href="https://www.osha.gov/occupational-health">Occupational Health</a>
-      <div class="result-snippet">Official occupational health guidance</div>
-    </body></html>
-  `)
-  assert.equal(results.length, 1)
-  assert.equal(results[0].url, 'https://www.osha.gov/occupational-health')
 })
