@@ -474,7 +474,7 @@ export default function Home() {
               </details>
             )}
 
-            {!isLoading && !error && visibleResults.length === 0 && <div className="py-12 text-center text-sm text-white/40">No active Occu-Med-fit opportunities passed every verification gate.</div>}
+            {!isLoading && !isEnriching && !error && visibleResults.length === 0 && <div className="py-12 text-center text-sm text-white/40">No active Occu-Med-fit opportunities passed every verification gate.</div>}
           </section>
         )}
       </main>
