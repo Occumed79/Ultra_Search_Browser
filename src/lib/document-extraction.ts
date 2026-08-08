@@ -1,3 +1,8 @@
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { promisify } from 'node:util'
 import * as cheerio from 'cheerio'
 import pdfParse from 'pdf-parse'
 import Tesseract from 'tesseract.js'
@@ -5,6 +10,10 @@ import mammoth from 'mammoth'
 
 // Server-side only: this module uses binary parsers and must not be imported
 // into client components.
+
+const execFileAsync = promisify(execFile)
+const MAX_EMBEDDED_STATE_TEXT = 120_000
+const EMBEDDED_PROCUREMENT_HINT = /\b(?:rfp|rfq|rfi|solicitation|procurement|bid|tender|proposal|deadline|closing date|scope of work|statement of work|occupational health|medical surveillance)\b/i
 
 export interface ExtractedDocument {
   text: string
@@ -71,6 +80,69 @@ function textSections(text: string, paragraphMinimum = 30) {
   return { headers: unique(headers), paragraphs: unique(paragraphs), tables: [] as string[][] }
 }
 
+function collectEmbeddedStrings(value: unknown, output: string[], depth = 0): void {
+  if (depth > 8 || output.join(' ').length >= MAX_EMBEDDED_STATE_TEXT) return
+  if (typeof value === 'string') {
+    const cleaned = normalizeText(value)
+    if (cleaned.length >= 3 && cleaned.length <= 8_000) output.push(cleaned)
+    return
+  }
+  if (Array.isArray(value)) {
+    for (const item of value.slice(0, 250)) collectEmbeddedStrings(item, output, depth + 1)
+    return
+  }
+  if (!value || typeof value !== 'object') return
+  for (const [key, child] of Object.entries(value as Record<string, unknown>).slice(0, 300)) {
+    if (EMBEDDED_PROCUREMENT_HINT.test(key.replace(/[_-]+/g, ' '))) output.push(key.replace(/[_-]+/g, ' '))
+    collectEmbeddedStrings(child, output, depth + 1)
+    if (output.join(' ').length >= MAX_EMBEDDED_STATE_TEXT) break
+  }
+}
+
+/**
+ * Recover useful public evidence embedded in hydration/JSON script payloads.
+ * Many procurement portals initially return a thin HTML shell while placing the
+ * solicitation title, dates, identifiers, and scope in __NEXT_DATA__, JSON-LD,
+ * or similar application state. We inspect bounded JSON-like scripts only; we do
+ * not execute arbitrary page JavaScript.
+ */
+export function extractEmbeddedClientState(html: string): string {
+  const $ = cheerio.load(html)
+  const output: string[] = []
+
+  $('meta[name="description"], meta[property="og:title"], meta[property="og:description"], meta[name="twitter:title"], meta[name="twitter:description"]').each((_, element) => {
+    const content = normalizeText(String($(element).attr('content') || ''))
+    if (content) output.push(content)
+  })
+
+  const scripts = $('script').toArray().slice(0, 80)
+  for (const element of scripts) {
+    if (output.join(' ').length >= MAX_EMBEDDED_STATE_TEXT) break
+    const type = String($(element).attr('type') || '').toLowerCase()
+    const id = String($(element).attr('id') || '').toLowerCase()
+    const raw = String($(element).html() || '').trim()
+    if (!raw || raw.length > 1_000_000) continue
+
+    const jsonLike = type.includes('json')
+      || id === '__next_data__'
+      || id === '__nuxt_data__'
+      || id.includes('initial-state')
+      || id.includes('initial_state')
+      || /^\s*[\[{]/.test(raw)
+
+    if (!jsonLike) continue
+    try {
+      collectEmbeddedStrings(JSON.parse(raw), output)
+    } catch {
+      // Some portals embed a JavaScript assignment rather than strict JSON. We
+      // only retain bounded raw text when it contains strong procurement terms.
+      if (EMBEDDED_PROCUREMENT_HINT.test(raw)) output.push(raw.slice(0, 20_000))
+    }
+  }
+
+  return normalizeText(unique(output).join(' ')).slice(0, MAX_EMBEDDED_STATE_TEXT)
+}
+
 /** Extract common public-contact and document entities without throwing. */
 export function extractEntities(text: string) {
   const emails = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || []
@@ -95,6 +167,7 @@ export function extractEntities(text: string) {
 }
 
 export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocument {
+  const embeddedState = extractEmbeddedClientState(html)
   const $ = cheerio.load(html)
   const links = uniqueLinks(
     $('a[href]').map((_, element) => {
@@ -115,7 +188,8 @@ export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocume
 
   $('script, style, nav, header, footer, iframe, noscript').remove()
 
-  const text = normalizeText($('body').text())
+  const visibleText = normalizeText($('body').text())
+  const text = normalizeText(`${visibleText} ${embeddedState}`)
   const title = normalizeText($('title').text()) || normalizeText($('h1').first().text()) || undefined
   const headers: string[] = []
   const paragraphs: string[] = []
@@ -143,21 +217,138 @@ export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocume
   return {
     text,
     title,
-    metadata: { fileType: 'html' },
+    metadata: { fileType: embeddedState && visibleText.length < 180 ? 'html-client-state' : 'html' },
     entities,
     sections: {
       headers: unique(headers),
-      paragraphs: unique(paragraphs),
+      paragraphs: unique([...paragraphs, ...(embeddedState ? [embeddedState] : [])]),
       tables,
     },
     links,
   }
 }
 
-export async function extractFromPDFBuffer(buffer: Buffer): Promise<ExtractionResult> {
+function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timeout`)), timeout)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
+export function isOCREnabled(): boolean {
+  return process.env.ENABLE_OCR === 'true'
+}
+
+export async function extractScannedPdfWithOcr(
+  buffer: Buffer,
+  timeout = 9_000,
+  maxPages = 2
+): Promise<ExtractionResult> {
+  if (!isOCREnabled()) return { success: false, error: 'OCR is disabled. Set ENABLE_OCR=true to enable.' }
+
+  const startedAt = Date.now()
+  const safeMaxPages = Math.max(1, Math.min(maxPages, 3))
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'ultra-search-pdf-ocr-'))
+  const inputPath = path.join(tempDir, 'input.pdf')
+  const outputPrefix = path.join(tempDir, 'page')
+  let worker: Awaited<ReturnType<typeof Tesseract.createWorker>> | undefined
+
+  try {
+    await writeFile(inputPath, buffer)
+    const executable = process.env.PDFTOPPM_PATH || 'pdftoppm'
+    const renderBudget = Math.max(1_500, Math.min(4_000, timeout - 2_000))
+    await execFileAsync(executable, [
+      '-f', '1',
+      '-l', String(safeMaxPages),
+      '-png',
+      '-r', '120',
+      inputPath,
+      outputPrefix,
+    ], { timeout: renderBudget, maxBuffer: 1024 * 1024 })
+
+    const pageFiles = (await readdir(tempDir))
+      .filter(file => /^page-\d+\.png$/i.test(file))
+      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+      .slice(0, safeMaxPages)
+    if (pageFiles.length === 0) return { success: false, error: 'PDF OCR renderer produced no page images' }
+
+    worker = await Tesseract.createWorker('eng', 1)
+    const texts: string[] = []
+    const confidences: number[] = []
+    for (const file of pageFiles) {
+      const remaining = timeout - (Date.now() - startedAt)
+      if (remaining < 1_000) break
+      const image = await readFile(path.join(tempDir, file))
+      const recognized = await withTimeout(worker.recognize(image), Math.min(remaining, 5_000), 'Scanned PDF OCR')
+      const text = normalizeText(recognized.data.text)
+      if (text) texts.push(text)
+      if (Number.isFinite(recognized.data.confidence)) confidences.push(recognized.data.confidence)
+    }
+
+    const text = normalizeText(texts.join(' '))
+    if (text.length < 10) return { success: false, error: 'Scanned PDF OCR returned insufficient text' }
+    const confidence = confidences.length
+      ? confidences.reduce((sum, value) => sum + value, 0) / confidences.length
+      : undefined
+
+    return {
+      success: true,
+      document: {
+        text,
+        title: texts[0]?.slice(0, 180),
+        metadata: { fileType: 'pdf-ocr', pageCount: pageFiles.length, ocrConfidence: confidence },
+        entities: extractEntities(text),
+        sections: textSections(text, 30),
+      },
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { success: false, error: `Scanned PDF OCR unavailable: ${message}` }
+  } finally {
+    await worker?.terminate().catch(() => undefined)
+    await rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+export async function extractFromPDFBuffer(
+  buffer: Buffer,
+  options: { ocrTimeoutMs?: number; ocrMaxPages?: number } = {}
+): Promise<ExtractionResult> {
   try {
     const data = await pdfParse(buffer)
     const text = normalizeText(data.text)
+    if (text.length < 180 && isOCREnabled()) {
+      const ocr = await extractScannedPdfWithOcr(
+        buffer,
+        options.ocrTimeoutMs ?? 9_000,
+        Math.min(options.ocrMaxPages ?? 2, data.numpages || 2)
+      )
+      if (ocr.success && ocr.document && ocr.document.text.length > text.length) {
+        return {
+          success: true,
+          document: {
+            ...ocr.document,
+            metadata: {
+              ...ocr.document.metadata,
+              pageCount: data.numpages,
+              author: data.info?.Author,
+              createdDate: data.info?.CreationDate,
+              modifiedDate: data.info?.ModDate,
+            },
+          },
+        }
+      }
+    }
+
     const title = data.text.split(/\r?\n/).map(line => line.trim()).find(Boolean)
     return {
       success: true,
@@ -198,22 +389,6 @@ export function extractFromPDFText(pdfText: string, metadata?: any): ExtractedDo
   }
 }
 
-function withTimeout<T>(promise: Promise<T>, timeout: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timeout`)), timeout)
-    promise.then(
-      value => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      error => {
-        clearTimeout(timer)
-        reject(error)
-      }
-    )
-  })
-}
-
 export async function extractFromDOCXBuffer(buffer: Buffer, timeout = 10_000): Promise<ExtractionResult> {
   try {
     const result = await withTimeout(mammoth.extractRawText({ buffer }), timeout, 'DOCX parsing')
@@ -244,10 +419,6 @@ export function extractFromDOCXText(docxContent: string): ExtractedDocument {
     entities: extractEntities(text),
     sections: textSections(docxContent),
   }
-}
-
-export function isOCREnabled(): boolean {
-  return process.env.ENABLE_OCR === 'true'
 }
 
 export async function extractFromImage(imageBuffer: Buffer, timeout = 30_000): Promise<ExtractionResult> {
@@ -308,7 +479,7 @@ export async function fetchAndExtractFromURL(
 
     const contentType = response.headers.get('content-type') || ''
     if (contentType.includes('application/pdf') || url.toLowerCase().endsWith('.pdf')) {
-      const result = await extractFromPDFBuffer(Buffer.from(await response.arrayBuffer()))
+      const result = await extractFromPDFBuffer(Buffer.from(await response.arrayBuffer()), { ocrTimeoutMs: Math.min(timeout, 9_000) })
       return { ...result, source: url }
     }
     if (contentType.includes('wordprocessingml.document') || url.toLowerCase().endsWith('.docx')) {
