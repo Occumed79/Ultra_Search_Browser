@@ -58,7 +58,8 @@ export const OCCUMED_CAPABILITY_GROUPS = [
       'termination exams', 'fitness for duty', 'fit for duty', 'fitness-for-duty evaluations',
       'return to work evaluation', 'return-to-work evaluation', 'return-to-duty reviews',
       'medical clearance', 'medical screening services', 'employee medical examinations',
-      'medical examinations and fitness determinations',
+      'medical examinations and fitness determinations', 'firefighter medical service exams',
+      'firefighter medical exams', 'public safety medical evaluations',
     ],
   },
   {
