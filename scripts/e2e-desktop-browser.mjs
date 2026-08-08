@@ -199,6 +199,17 @@ function filterSelect(page, labelText) {
   return page.locator('label').filter({ has: page.locator('select'), hasText: new RegExp(`^${labelText}`) }).locator('select')
 }
 
+async function waitForVisibleCardCount(locator, expected, label, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  let lastCount = -1
+  while (Date.now() < deadline) {
+    lastCount = await locator.count()
+    if (lastCount === expected) return lastCount
+    await new Promise(resolve => setTimeout(resolve, 75))
+  }
+  throw new Error(`${label}: expected ${expected} visible cards, saw ${lastCount}`)
+}
+
 async function runViewport(browser, width, height) {
   const context = await browser.newContext({ viewport: { width, height }, acceptDownloads: true })
   const page = await context.newPage()
@@ -240,25 +251,20 @@ async function runViewport(browser, width, height) {
   assert(page.url().includes('q=employee+medical+examinations') || page.url().includes('q=employee%20medical%20examinations'), `shareable URL did not track final search: ${page.url()}`)
 
   const visibleCards = page.locator('.result-card:visible')
-  const unfilteredCount = await visibleCards.count()
-  assert(unfilteredCount === 49, `expected 49 visible approved cards before filtering, saw ${unfilteredCount}`)
+  await waitForVisibleCardCount(visibleCards, 49, 'unfiltered result set')
 
   await page.getByRole('button', { name: 'Filters' }).click()
   await filterSelect(page, 'Fit').selectOption('strong')
-  const strongCount = await visibleCards.count()
-  assert(strongCount > 0 && strongCount < unfilteredCount, `strong-fit filter did not reduce visible cards: ${unfilteredCount} -> ${strongCount}`)
+  await waitForVisibleCardCount(visibleCards, 17, 'strong-fit filter')
 
   await filterSelect(page, 'Due').selectOption('30')
-  const dueCount = await visibleCards.count()
-  assert(dueCount > 0 && dueCount < strongCount, `30-day due filter did not further reduce visible cards: ${strongCount} -> ${dueCount}`)
+  await waitForVisibleCardCount(visibleCards, 4, '30-day due filter')
 
   await filterSelect(page, 'Source').selectOption('SearXNG · brave')
-  const sourceCount = await visibleCards.count()
-  assert(sourceCount > 0 && sourceCount < dueCount, `source filter did not further reduce visible cards: ${dueCount} -> ${sourceCount}`)
+  await waitForVisibleCardCount(visibleCards, 2, 'source filter')
 
   await page.getByRole('button', { name: 'Clear' }).click()
-  const restoredCount = await visibleCards.count()
-  assert(restoredCount === unfilteredCount, `Clear did not restore the full visible result set: ${restoredCount} vs ${unfilteredCount}`)
+  await waitForVisibleCardCount(visibleCards, 49, 'filter reset')
 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K')
   assert(await input.evaluate(element => element === document.activeElement), 'keyboard shortcut did not focus the search input')
@@ -284,6 +290,7 @@ try {
   await runViewport(browser, 1280, 720)
   await runViewport(browser, 1440, 900)
   await runViewport(browser, 1920, 1080)
-  console.log('[e2e] desktop Chromium orchestration, cancellation, 50-card rendering, filter effects/reset, navigation, focus, and overflow checks passed')
+  console.log('[e2e] desktop Chromium orchestration, cancellation, 50-card rendering, stable filter effects/reset, navigation, focus, and overflow checks passed')
 } finally {
   await browser.close()
+}
