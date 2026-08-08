@@ -1,0 +1,67 @@
+name: Desktop Browser E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install application dependencies
+        run: npm ci --silent
+
+      - name: Build production application
+        run: npm run build
+
+      - name: Install ephemeral Playwright browser harness
+        run: |
+          npm install --no-save --no-package-lock playwright@latest
+          npx playwright install --with-deps chromium
+
+      - name: Start production server
+        run: |
+          npm start > e2e-app.log 2>&1 &
+          echo $! > e2e-app.pid
+          for attempt in {1..40}; do
+            if curl --fail --silent http://127.0.0.1:3000/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat e2e-app.log
+          exit 1
+
+      - name: Run real desktop Chromium checks
+        env:
+          E2E_APP_URL: http://127.0.0.1:3000
+        run: node scripts/e2e-desktop-browser.mjs
+
+      - name: Upload browser/server diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-e2e-${{ github.run_id }}
+          path: e2e-app.log
+          if-no-files-found: warn
+          retention-days: 14
