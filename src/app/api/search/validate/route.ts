@@ -20,6 +20,8 @@ const VALID_LENSES = new Set<SearchLens>([
   'technical', 'news', 'legal', 'medical', 'academic', 'financial',
 ])
 const PRODUCTION_SMOKE_QUERY = 'Occupational Health Services RFP production validation'
+const VERIFIED_FEEDBACK_BUDGET_MS = 2_000
+const VERIFIED_PERSISTENCE_BUDGET_MS = 3_500
 
 interface ValidationRequest {
   query?: string
@@ -40,8 +42,25 @@ function sseEvent(event: string, value: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(value)}\n\n`
 }
 
+function withBudget<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} exceeded ${timeoutMs}ms budget`)), timeoutMs)
+    promise.then(
+      value => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
 async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens) {
-  const persisted = await Promise.allSettled(results.slice(0, 30).map(rawResult => {
+  const selected = results.slice(0, 30)
+  const persisted = await Promise.allSettled(selected.map(rawResult => {
     const result = rawResult as PersistableRfpResult
     return insertSearchResult({
       url: result.url,
@@ -73,10 +92,11 @@ async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens
     })
   }))
 
+  const persistedCount = persisted.filter(item => item.status === 'fulfilled' && item.value).length
   return {
-    attempted: results.length,
-    persisted: persisted.filter(item => item.status === 'fulfilled' && item.value).length,
-    failed: persisted.filter(item => item.status === 'rejected').length,
+    attempted: selected.length,
+    persisted: persistedCount,
+    failed: selected.length - persistedCount,
   }
 }
 
@@ -148,17 +168,29 @@ export async function POST(request: NextRequest) {
           semanticIntent,
           onEvent: async (event: DeepValidationEvent) => {
             if (event.type === 'complete') return
-            // Progress is streamed, but individual candidate cards are not
-            // promoted before the mandatory Occu-Med decision gate completes.
             if (event.type === 'progress') write(event.type, event)
           },
         })
         const outcome = applyOccuMedDecisionGate(rawOutcome)
-        const learnedResults = await applyResultFeedbackRanking(outcome.results)
-        outcome.results = learnedResults
-        outcome.buckets.valid = applyLearnedOrder(outcome.buckets.valid, learnedResults)
+
+        let pursuitLearningApplied = false
+        if (!testMode && outcome.results.length > 0) {
+          try {
+            const learnedResults = await withBudget(
+              applyResultFeedbackRanking(outcome.results),
+              VERIFIED_FEEDBACK_BUDGET_MS,
+              'Verified feedback reranking'
+            )
+            outcome.results = learnedResults
+            outcome.buckets.valid = applyLearnedOrder(outcome.buckets.valid, learnedResults)
+            pursuitLearningApplied = true
+          } catch (error) {
+            console.warn('Verified feedback reranking failed or timed out; preserving evidence rank:', error)
+          }
+        }
 
         const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
+        let persistenceTimedOut = false
         const persistence = testMode
           ? {
               persistentMemory: {
@@ -173,16 +205,38 @@ export async function POST(request: NextRequest) {
               },
             }
           : await (async () => {
-              const [persistentMemory, verifiedPersistence] = await Promise.all([
-                indexResultsInPersistentMemory(
-                  verifiedResults,
-                  lens,
-                  Math.min(20, verifiedResults.length),
-                  4_000
-                ),
-                persistVerifiedResults(verifiedResults, lens),
-              ])
-              return { persistentMemory, verifiedPersistence }
+              try {
+                const [persistentMemory, verifiedPersistence] = await withBudget(
+                  Promise.all([
+                    indexResultsInPersistentMemory(
+                      verifiedResults,
+                      lens,
+                      Math.min(20, verifiedResults.length),
+                      3_000
+                    ),
+                    persistVerifiedResults(verifiedResults, lens),
+                  ]),
+                  VERIFIED_PERSISTENCE_BUDGET_MS,
+                  'Verified persistence'
+                )
+                return { persistentMemory, verifiedPersistence }
+              } catch (error) {
+                persistenceTimedOut = /exceeded .* budget/i.test(error instanceof Error ? error.message : String(error))
+                console.warn('Verified persistence failed or timed out; completing evidence response:', error)
+                return {
+                  persistentMemory: {
+                    skipped: true,
+                    reason: persistenceTimedOut ? 'persistence-budget-exceeded' : 'persistence-failed',
+                  },
+                  verifiedPersistence: {
+                    attempted: Math.min(30, verifiedResults.length),
+                    persisted: 0,
+                    failed: Math.min(30, verifiedResults.length),
+                    skipped: true,
+                    timedOut: persistenceTimedOut,
+                  },
+                }
+              }
             })()
 
         write('complete', {
@@ -198,8 +252,10 @@ export async function POST(request: NextRequest) {
             ...outcome.diagnostics,
             verifiedOnly: true,
             verifiedCount: verifiedResults.length,
-            pursuitLearningApplied: !testMode,
+            pursuitLearningApplied,
+            pursuitLearningSkipped: testMode,
             productionValidationMode: testMode,
+            persistenceTimedOut,
             persistentMemory: persistence.persistentMemory,
             verifiedPersistence: persistence.verifiedPersistence,
           },
