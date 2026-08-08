@@ -404,11 +404,7 @@ export default function Home() {
           <img src="/brand/logo.png" alt="Occu-Med" className="h-auto w-[230px] object-contain sm:w-[285px]" />
         </Link>
 
-        <div className="mb-3 flex items-start justify-between gap-4">
-          <div className="text-center">
-            <h1 className="text-lg font-medium text-white/85">Occu-Med RFP Finder</h1>
-            <p className="mt-1 text-xs text-white/35">Search the public web for active opportunities that Occu-Med can perform or coordinate.</p>
-          </div>
+        <div className="mb-3 flex justify-end">
           <BuyerTermsDropdown query={query} onTermSelect={(term) => setQuery(term)} />
         </div>
 
