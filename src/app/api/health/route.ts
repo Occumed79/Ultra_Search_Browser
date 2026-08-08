@@ -1,5 +1,6 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
+import { headlessRecoveryCapabilities } from '../../../lib/headless-page-recovery'
 import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historical-pursuits'
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
@@ -20,6 +21,7 @@ function healthPayload() {
   const providers = externalSmartFilterCapabilities()
   const cloudflare = cloudflareRerankCapabilities()
   const searxngConfigured = isSearxngConfigured()
+  const headless = headlessRecoveryCapabilities()
 
   return {
     status: 'ok',
@@ -71,7 +73,17 @@ function healthPayload() {
       streamingValidation: true,
       lifecycleDetection: true,
       pageValidationCache: pageValidationCacheStats(),
+      embeddedClientStateRecovery: true,
+      headlessClientRenderedRecovery: headless.enabled,
+      headlessRecoveryConfigured: headless.configured,
+      headlessRecoveryBudget: {
+        maxConcurrency: headless.maxConcurrency,
+        maxPerMinute: headless.maxPerMinute,
+        timeoutMs: headless.timeoutMs,
+      },
       ocr: process.env.ENABLE_OCR === 'true',
+      scannedPdfOcr: process.env.ENABLE_OCR === 'true',
+      pdfOcrRasterizer: process.env.PDFTOPPM_PATH?.trim() ? 'configured-path' : 'system-path',
     },
     checkedAt: new Date().toISOString(),
   }
