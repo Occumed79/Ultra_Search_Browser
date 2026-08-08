@@ -1,0 +1,143 @@
+{
+  "generatedAt": "2026-08-08T06:11:37.029Z",
+  "sourceFiles": 109,
+  "runtimeEntrypoints": [
+    "src/app/api/bookmarks/route.ts",
+    "src/app/api/capabilities/route.ts",
+    "src/app/api/diagnostics/search-traces/route.ts",
+    "src/app/api/domain-preferences/route.ts",
+    "src/app/api/feedback/route.ts",
+    "src/app/api/health/route.ts",
+    "src/app/api/history/route.ts",
+    "src/app/api/index/bootstrap/route.ts",
+    "src/app/api/search/enrich/route.ts",
+    "src/app/api/search/ingest/route.ts",
+    "src/app/api/search/plan/route.ts",
+    "src/app/api/search/route.ts",
+    "src/app/api/search/validate/route.ts",
+    "src/app/api/suggestions/route.ts",
+    "src/app/bookmarks/page.tsx",
+    "src/app/findings/page.tsx",
+    "src/app/history/page.tsx",
+    "src/app/layout.tsx",
+    "src/app/page.tsx",
+    "src/app/settings/page.tsx",
+    "src/instrumentation.ts"
+  ],
+  "reachableFiles": 93,
+  "unreachableFiles": 16,
+  "unreachable": [
+    "src/lib/automatic-browser-fallback.ts",
+    "src/lib/brave-search-api.ts",
+    "src/lib/feature-capabilities.ts",
+    "src/lib/gemini-grounded-search.ts",
+    "src/lib/managed-search.ts",
+    "src/lib/occumed-supplemental-search.ts",
+    "src/lib/procurement-api-sources.ts",
+    "src/lib/procurement-browser-rescue-tasks.ts",
+    "src/lib/procurement-rescue.ts",
+    "src/lib/public-search-fallbacks.ts",
+    "src/lib/resilient-search.ts",
+    "src/lib/sam-gov-opportunities.ts",
+    "src/lib/search-intent-routing.ts",
+    "src/lib/search-orchestrator.ts",
+    "src/lib/search-response-parsers.ts",
+    "src/lib/tavily-search.ts"
+  ],
+  "grouped": {
+    "lib": [
+      "src/lib/automatic-browser-fallback.ts",
+      "src/lib/brave-search-api.ts",
+      "src/lib/feature-capabilities.ts",
+      "src/lib/gemini-grounded-search.ts",
+      "src/lib/managed-search.ts",
+      "src/lib/occumed-supplemental-search.ts",
+      "src/lib/procurement-api-sources.ts",
+      "src/lib/procurement-browser-rescue-tasks.ts",
+      "src/lib/procurement-rescue.ts",
+      "src/lib/public-search-fallbacks.ts",
+      "src/lib/resilient-search.ts",
+      "src/lib/sam-gov-opportunities.ts",
+      "src/lib/search-intent-routing.ts",
+      "src/lib/search-orchestrator.ts",
+      "src/lib/search-response-parsers.ts",
+      "src/lib/tavily-search.ts"
+    ],
+    "hooks": [],
+    "components": [],
+    "app": []
+  },
+  "unresolvedLocalImports": [],
+  "testReferences": [
+    {
+      "test": "scripts/automatic-browser-fallback.test.ts",
+      "module": "src/lib/automatic-browser-fallback.ts",
+      "specifier": "../src/lib/automatic-browser-fallback"
+    },
+    {
+      "test": "scripts/brave-search-api.test.ts",
+      "module": "src/lib/brave-search-api.ts",
+      "specifier": "../src/lib/brave-search-api"
+    },
+    {
+      "test": "scripts/gemini-grounded-search.test.ts",
+      "module": "src/lib/gemini-grounded-search.ts",
+      "specifier": "../src/lib/gemini-grounded-search"
+    },
+    {
+      "test": "scripts/managed-search.test.ts",
+      "module": "src/lib/managed-search.ts",
+      "specifier": "../src/lib/managed-search"
+    },
+    {
+      "test": "scripts/supplemental-rfp-search.test.ts",
+      "module": "src/lib/occumed-supplemental-search.ts",
+      "specifier": "../src/lib/occumed-supplemental-search"
+    },
+    {
+      "test": "scripts/buyer-language-family-regression.test.ts",
+      "module": "src/lib/procurement-browser-rescue-tasks.ts",
+      "specifier": "../src/lib/procurement-browser-rescue-tasks"
+    },
+    {
+      "test": "scripts/procurement-browser-rescue.test.ts",
+      "module": "src/lib/procurement-browser-rescue-tasks.ts",
+      "specifier": "../src/lib/procurement-browser-rescue-tasks"
+    },
+    {
+      "test": "scripts/public-search-fallbacks.test.ts",
+      "module": "src/lib/public-search-fallbacks.ts",
+      "specifier": "../src/lib/public-search-fallbacks"
+    },
+    {
+      "test": "scripts/sam-gov-opportunities.test.ts",
+      "module": "src/lib/sam-gov-opportunities.ts",
+      "specifier": "../src/lib/sam-gov-opportunities"
+    },
+    {
+      "test": "scripts/intent-understanding.test.ts",
+      "module": "src/lib/search-intent-routing.ts",
+      "specifier": "../src/lib/search-intent-routing"
+    },
+    {
+      "test": "scripts/search-intent-quality.test.ts",
+      "module": "src/lib/search-intent-routing.ts",
+      "specifier": "../src/lib/search-intent-routing"
+    },
+    {
+      "test": "scripts/resilient-search.test.ts",
+      "module": "src/lib/search-response-parsers.ts",
+      "specifier": "../src/lib/search-response-parsers"
+    },
+    {
+      "test": "scripts/verified-memory-integrity.test.ts",
+      "module": "src/lib/search-response-parsers.ts",
+      "specifier": "../src/lib/search-response-parsers"
+    },
+    {
+      "test": "scripts/tavily-search.test.ts",
+      "module": "src/lib/tavily-search.ts",
+      "specifier": "../src/lib/tavily-search"
+    }
+  ]
+}
