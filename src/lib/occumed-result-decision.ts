@@ -51,7 +51,8 @@ type RfpDecisionCandidate = ScrapedResult & {
   rfpIntelligence?: RfpOpportunityIntelligence
 }
 
-const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|invitation for bids?|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice of intent)\b/i
+const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|invitation for bids?|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice of intent)\b/gi
+const PROCUREMENT_DESTINATION = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|\/(?:procurement|purchasing|bids?|bid-opportunities|solicitations?|opportunities|contract-opportunities|vendor-opportunities|rfps?|rfqs?|ifbs?)(?:\/|$|[-_])|\.(?:pdf|docx?)(?:$|[?#]))/i
 const FINAL_LIFECYCLE = new Set(['expired', 'closed', 'cancelled', 'awarded', 'stale', 'dead', 'junk'])
 const ACTIVE_LIFECYCLE = new Set(['open', 'active'])
 const HARD_REJECT_AVAILABILITY = new Set(['dead', 'generic', 'search-page', 'thin'])
@@ -69,6 +70,36 @@ function resultEvidenceText(result: RfpDecisionCandidate): string {
     result.pageValidation?.lifecycle.reason,
     result.pageValidation?.lifecycle.dates.map(date => date.context).join(' '),
   ].filter(Boolean).join(' ')
+}
+
+function evidenceClauseBefore(text: string, index: number): string {
+  return text
+    .slice(Math.max(0, index - 180), index)
+    .split(/[.!?;\n]/)
+    .at(-1)
+    ?.toLowerCase() || ''
+}
+
+/**
+ * Procurement words in negated prose are not procurement evidence. This keeps
+ * pages such as "we are a clinic, not an RFP" or "contains no bid notice" from
+ * becoming opportunities merely because they contain the vocabulary Ultra
+ * Search is looking for.
+ */
+export function hasAffirmativeProcurementEvidence(text: string): boolean {
+  for (const match of text.matchAll(new RegExp(PROCUREMENT_EVIDENCE.source, PROCUREMENT_EVIDENCE.flags))) {
+    const index = match.index || 0
+    const clause = evidenceClauseBefore(text, index)
+    const negated = /\b(?:contains?|includes?|has)\s+no\b/.test(clause)
+      || /\bdoes\s+not\s+(?:contain|include|represent|constitute|provide)\b/.test(clause)
+      || /\b(?:is|are|was|were)\s+not\s+(?:an?\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
+      || /\bnot\s+(?:an?\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
+      || /\bwithout\s+(?:an?\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
+      || /\bno\s+(?:current\s+|active\s+)?(?:rfp|rfq|rfi|bid|solicitation|tender|procurement|contract opportunity)\b/.test(clause)
+
+    if (!negated) return true
+  }
+  return false
 }
 
 function decisionReasonKey(decision: OccuMedResultDecision): string {
@@ -115,7 +146,9 @@ export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDe
   const lifecycleStatus = page?.lifecycle.status || intelligence?.status || 'unknown'
   const procurementConfirmed = Boolean(
     (intelligence && intelligence.opportunityType !== 'unknown')
-    || PROCUREMENT_EVIDENCE.test(text)
+    || hasAffirmativeProcurementEvidence(text)
+    || PROCUREMENT_DESTINATION.test(result.url)
+    || (page?.finalUrl ? PROCUREMENT_DESTINATION.test(page.finalUrl) : false)
   )
   const activeConfirmed = ACTIVE_LIFECYCLE.has(lifecycleStatus)
   const structuredCapabilityFit = Boolean(
@@ -157,14 +190,15 @@ export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDe
   if (!procurementConfirmed) {
     return {
       decision: 'REJECT',
-      reason: 'The destination and linked documents do not provide evidence of a real RFP, RFQ, solicitation, bid, tender, or comparable procurement notice.',
+      reason: 'The destination and linked documents do not provide affirmative evidence of a real RFP, RFQ, solicitation, bid, tender, or comparable procurement notice.',
       ...common,
     }
   }
 
   // Hard exclusions are decisive even when a page incidentally contains medical
-  // or occupational-health words. An EHR/software procurement is not an Occu-Med
-  // opportunity merely because its inherited package text mentions examinations.
+  // or occupational-health words. An EHR/software or pharmaceutical-product
+  // procurement is not an Occu-Med opportunity merely because its package text
+  // mentions examinations, clinics, vaccines, or other medical vocabulary.
   if (!noHardDisqualifier) {
     return {
       decision: 'REJECT',
