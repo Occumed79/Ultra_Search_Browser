@@ -209,9 +209,9 @@ async function runViewport(browser, width, height) {
   assert(page.url().includes('q=employee+medical+examinations') || page.url().includes('q=employee%20medical%20examinations'), `shareable URL did not track final search: ${page.url()}`)
 
   await page.getByRole('button', { name: 'Filters' }).click()
-  await page.getByLabel('Fit').selectOption('strong')
-  await page.getByLabel('Due').selectOption('90')
-  await page.getByLabel('Source').selectOption('SearXNG · brave')
+  await page.getByLabel('Fit', { exact: true }).selectOption('strong')
+  await page.getByLabel('Due', { exact: true }).selectOption('90')
+  await page.getByLabel('Source', { exact: true }).selectOption('SearXNG · brave')
   await page.getByRole('button', { name: 'Clear' }).click()
 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K')
