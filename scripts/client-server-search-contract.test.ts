@@ -31,7 +31,7 @@ test('client validation progress uses the same 48-target ceiling as deep validat
 
 test('server bridge supports timeout and external cancellation while keeping legacy wrappers isolated', () => {
   assert.match(bridgeSource, /export async function runServerSearchPlan/)
-  assert.match(bridgeSource, /externalSignal\?\.addEventListener\('abort'/)
+  assert.match(bridgeSource, /externalSignal\.addEventListener\('abort'/)
   assert.match(bridgeSource, /Search retrieval timed out after/)
   assert.match(bridgeSource, /@deprecated The app no longer requires a browser companion/)
 })
