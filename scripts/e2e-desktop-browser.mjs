@@ -3,6 +3,12 @@ import { chromium } from 'playwright'
 const baseUrl = process.env.E2E_APP_URL || 'http://127.0.0.1:3000'
 const longTitle = `City of Example — Occupational Health, Medical Surveillance, Audiometry, Respirator Clearance, Drug Testing, Deployment Readiness, and Employee Medical Examination Services ${'scope '.repeat(24)}`.trim()
 
+function isoDateInDays(days) {
+  const date = new Date()
+  date.setUTCDate(date.getUTCDate() + days)
+  return date.toISOString().slice(0, 10)
+}
+
 function candidate(index, query) {
   const id = String(index + 1).padStart(3, '0')
   return {
@@ -21,6 +27,8 @@ function validated(result, index) {
   const approved = index !== 1
   const decision = approved ? 'SHOW' : 'REVIEW'
   const bucket = approved ? 'valid' : 'uncertain'
+  const strongFit = index % 3 === 0
+  const dueSoon = index % 5 === 0
   return {
     ...result,
     bucket,
@@ -40,9 +48,9 @@ function validated(result, index) {
       contentType: 'text/html',
       availability: approved ? 'reachable' : 'unsupported',
       reason: approved ? 'Substantive procurement package verified.' : 'Client-rendered procurement portal requires review.',
-      evidence: approved ? ['Scope of work includes occupational health services and employee medical examinations.', 'Proposals are due September 30, 2026.'] : [],
-      extractedText: approved ? 'Request for proposals occupational health services proposals due September 30 2026.' : '',
-      extractedTextLength: approved ? 86 : 0,
+      evidence: approved ? ['Scope of work includes occupational health services and employee medical examinations.', 'The proposal deadline is confirmed and still open.'] : [],
+      extractedText: approved ? 'Request for proposals occupational health services with an active future proposal deadline.' : '',
+      extractedTextLength: approved ? 88 : 0,
       cached: false,
       lifecycle: {
         status: approved ? 'active' : 'unknown',
@@ -57,11 +65,11 @@ function validated(result, index) {
       organization: 'City of Example',
       solicitationNumber: `RFP-2026-${String(index + 1).padStart(3, '0')}`,
       opportunityType: 'RFP',
-      dueDate: '2026-09-30',
+      dueDate: dueSoon ? isoDateInDays(14) : isoDateInDays(75),
       placeOfPerformance: 'United States',
       serviceSummary: ['Occupational health services', 'Employee medical examinations', 'Audiometry'],
-      fitScore: 94,
-      fitBand: 'strong',
+      fitScore: strongFit ? 94 : 76,
+      fitBand: strongFit ? 'strong' : 'good',
       matchedCapabilities: ['occupational health', 'audiometry'],
       concerns: [],
       deliveryModel: 'provider-network',
@@ -231,11 +239,26 @@ async function runViewport(browser, width, height) {
   assert((await input.inputValue()) === 'employee medical examinations', 'newer search did not remain authoritative')
   assert(page.url().includes('q=employee+medical+examinations') || page.url().includes('q=employee%20medical%20examinations'), `shareable URL did not track final search: ${page.url()}`)
 
+  const visibleCards = page.locator('.result-card:visible')
+  const unfilteredCount = await visibleCards.count()
+  assert(unfilteredCount === 49, `expected 49 visible approved cards before filtering, saw ${unfilteredCount}`)
+
   await page.getByRole('button', { name: 'Filters' }).click()
   await filterSelect(page, 'Fit').selectOption('strong')
-  await filterSelect(page, 'Due').selectOption('90')
+  const strongCount = await visibleCards.count()
+  assert(strongCount > 0 && strongCount < unfilteredCount, `strong-fit filter did not reduce visible cards: ${unfilteredCount} -> ${strongCount}`)
+
+  await filterSelect(page, 'Due').selectOption('30')
+  const dueCount = await visibleCards.count()
+  assert(dueCount > 0 && dueCount < strongCount, `30-day due filter did not further reduce visible cards: ${strongCount} -> ${dueCount}`)
+
   await filterSelect(page, 'Source').selectOption('SearXNG · brave')
+  const sourceCount = await visibleCards.count()
+  assert(sourceCount > 0 && sourceCount < dueCount, `source filter did not further reduce visible cards: ${dueCount} -> ${sourceCount}`)
+
   await page.getByRole('button', { name: 'Clear' }).click()
+  const restoredCount = await visibleCards.count()
+  assert(restoredCount === unfilteredCount, `Clear did not restore the full visible result set: ${restoredCount} vs ${unfilteredCount}`)
 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K')
   assert(await input.evaluate(element => element === document.activeElement), 'keyboard shortcut did not focus the search input')
@@ -261,7 +284,7 @@ try {
   await runViewport(browser, 1280, 720)
   await runViewport(browser, 1440, 900)
   await runViewport(browser, 1920, 1080)
-  console.log('[e2e] desktop Chromium orchestration, cancellation, 50-card rendering, filters, navigation, focus, and overflow checks passed')
+  console.log('[e2e] desktop Chromium orchestration, cancellation, 50-card rendering, filter effects/reset, navigation, focus, and overflow checks passed')
 } finally {
   await browser.close()
 }
