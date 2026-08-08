@@ -12,10 +12,10 @@ export interface IntentGateDiagnostics {
 
 const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|request for tenders?|rft|invitation to bid|ifb|sources sought|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity|competitive sealed proposal|notice inviting bids)\b/i
 const PROCUREMENT_PORTALS = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com)/i
+const PROCUREMENT_DESTINATION_HINTS = /(?:^|[\/_-])(?:procurement|purchasing|bids?|rfps?|rfqs?|rfis?|solicitations?|tenders?|vendor|contract-opportunit(?:y|ies)|business-opportunit(?:y|ies)|opportunities|documentcenter|documents?|downloads?|attachments?)(?:[\/_?.#=-]|$)/i
 const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory|therapy)\b/i
 const BROAD_OCCUMED_SERVICE_QUERY = /\b(?:employment|employee|occupational|workforce|pre employment|medical|fitness for duty|fit for duty)\b.*\b(?:evaluation|evaluations|exam|exams|examination|examinations|physical|physicals|screening|screenings|health|medicine|clearance)\b/i
 const NON_MEDICAL_EMPLOYMENT_QUERY = /\b(?:performance|appraisal|employee review|human resources|hr evaluation|training evaluation)\b/i
-const PROCUREMENT_TARGETED_PURPOSES = new Set(['ai-intent', 'official', 'document', 'freshness', 'portal'])
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'by', 'for', 'from', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with',
   'find', 'search', 'show', 'request', 'requests', 'proposal', 'proposals', 'quotation', 'quotations', 'tender', 'tenders',
@@ -89,20 +89,37 @@ function subjectMatches(
 }
 
 /**
- * SearXNG and ordinary search engines frequently return sparse snippets that
- * omit words such as RFP/solicitation even when the result came from an
- * explicitly procurement-targeted query. Preserve that provenance so the
- * destination-page validator, not the SERP snippet, makes the final decision.
+ * Search engines sometimes omit procurement words from a sparse snippet even
+ * when the query itself explicitly asked for an RFP/solicitation. Provenance is
+ * useful, but it must not turn an ordinary clinic/service page into a
+ * procurement candidate merely because a search engine ignored part of the
+ * query. Require both a procurement-targeted retrieval query and a destination
+ * that structurally resembles a procurement notice/document.
  */
 function retrievalSignalsProcurementIntent(result: ScrapedResult): boolean {
-  const purposes = result.retrieval?.purposes || []
-  if (purposes.some(purpose => PROCUREMENT_TARGETED_PURPOSES.has(purpose))) return true
-
   const queries = result.retrieval?.queries || []
   return queries.some(retrievalQuery =>
     PROCUREMENT_TERMS.test(retrievalQuery)
     || PROCUREMENT_PORTALS.test(retrievalQuery)
   )
+}
+
+function destinationSignalsProcurement(result: ScrapedResult): boolean {
+  if (PROCUREMENT_PORTALS.test(result.url)) return true
+
+  try {
+    const url = new URL(result.url)
+    const pathAndQuery = `${url.pathname}${url.search}`
+    if (PROCUREMENT_DESTINATION_HINTS.test(pathAndQuery)) return true
+    if (/\.(?:pdf|docx?)(?:$|[?#])/i.test(pathAndQuery)) return true
+
+    const host = url.hostname.toLowerCase()
+    if (/\b(?:procurement|purchasing|bids?|vendor)\b/i.test(host.replace(/[.-]+/g, ' '))) return true
+  } catch {
+    return false
+  }
+
+  return false
 }
 
 function rejectReason(
@@ -119,15 +136,20 @@ function rejectReason(
   const hasDirectProcurementEvidence = PROCUREMENT_TERMS.test(originalText)
     || PROCUREMENT_PORTALS.test(result.url)
   const hasProcurementRetrievalContext = retrievalSignalsProcurementIntent(result)
-  if (!hasDirectProcurementEvidence && !hasProcurementRetrievalContext) {
+  const hasProcurementDestination = destinationSignalsProcurement(result)
+  if (
+    !hasDirectProcurementEvidence
+    && !(hasProcurementRetrievalContext && hasProcurementDestination)
+  ) {
     return 'missing-procurement-evidence'
   }
 
   if (!subjectMatches(query, text, semanticIntent)) return 'missing-query-subject'
 
-  // At snippet stage, reject only explicit out-of-scope evidence. Sparse snippets
-  // reached through procurement-targeted searches are intentionally allowed to
-  // continue so destination-page review can confirm or reject the opportunity.
+  // At snippet stage, reject only explicit out-of-scope evidence. A sparse
+  // result may continue without literal RFP wording only when its retrieval
+  // query and destination structure both signal procurement; the destination
+  // page/package validator still makes the final decision.
   const occuMed = assessOccuMedRfpText(originalText)
   if (occuMed.status === 'irrelevant' && occuMed.exclusions.length > 0) {
     return 'outside-occumed-service-model'
