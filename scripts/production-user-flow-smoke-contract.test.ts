@@ -15,10 +15,15 @@ test('production canary exercises the broad query plus the major Occu-Med capabi
     'employee medical examinations',
     'drug and alcohol testing services',
     'deployment medical readiness examinations',
+    'fitness for duty occupational medicine services',
     'OCONUS occupational health services',
   ]) {
     assert.match(canary, new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))
   }
+  const canaryArrayMatch = canary.match(/const CANARY_QUERIES = \[([\s\S]*?)\]/)
+  assert.ok(canaryArrayMatch, 'could not parse production canary query matrix')
+  const configuredQueries = [...canaryArrayMatch[1].matchAll(/['"]([^'"]+)['"]/g)].map(match => match[1])
+  assert.equal(configuredQueries.length, 9, `production canary matrix must stay at nine capability paths, saw ${configuredQueries.length}`)
   assert.match(canary, /for \(const query of CANARY_QUERIES\)/)
   assert.match(canary, /fetch\(`\$\{APP_URL\}\/api\/search\/plan`,/)
   assert.match(canary, /fetch\(`\$\{APP_URL\}\/api\/search`,/)
