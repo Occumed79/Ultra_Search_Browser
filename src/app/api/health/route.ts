@@ -1,4 +1,5 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
+import { databaseSchemaState } from '../../../lib/database-schema-lifecycle'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { headlessRecoveryCapabilities } from '../../../lib/headless-page-recovery'
 import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historical-pursuits'
@@ -24,6 +25,7 @@ function healthPayload() {
   const cloudflare = cloudflareRerankCapabilities()
   const searxngConfigured = isSearxngConfigured()
   const headless = headlessRecoveryCapabilities()
+  const schema = databaseSchemaState()
 
   return {
     status: 'ok',
@@ -33,6 +35,8 @@ function healthPayload() {
     commit: deployedCommit(),
     capabilities: {
       database: Boolean(process.env.DATABASE_URL),
+      databaseSchema: schema,
+      databaseSchemaReady: schema.status === 'ready' || schema.status === 'disabled',
       browserFedSearch: false,
       browserCompanionRequired: false,
       downloadsRequired: false,
