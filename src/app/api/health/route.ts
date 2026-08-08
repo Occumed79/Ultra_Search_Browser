@@ -5,6 +5,8 @@ import { OCCUMED_HISTORICAL_PURSUIT_SEEDS } from '../../../lib/occumed-historica
 import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import { isSearxngConfigured } from '../../../lib/searxng'
+import { searchFlightRecorderStats } from '../../../lib/search-flight-recorder'
+import { searchSourceHealthSnapshot } from '../../../lib/search-source-health'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +41,10 @@ function healthPayload() {
       searxngSearch: true,
       searxngConfigured,
       zeroKeyDirectRescue: true,
+      retrievalCircuitBreakers: true,
+      retrievalSourceHealth: searchSourceHealthSnapshot(),
+      searchFlightRecorder: searchFlightRecorderStats(),
+      searchTraceDiagnosticsEndpoint: '/api/diagnostics/search-traces',
       coreSearchApiKeysRequired: false,
       deterministicIntentPlanning: true,
       structuredIntentPlanning: true,
