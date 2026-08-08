@@ -55,9 +55,9 @@ test('thin procurement landing pages inspect linked solicitation evidence before
   assert.equal(assessment.lifecycle.status, 'open')
 })
 
-test('thin pages without solicitation links remain thin', async () => {
+test('thin procurement shells without visible solicitation links are withheld for review', async () => {
   const fetchImpl = (async () => new Response(
-    '<html><head><title>Occupational Health Clinic</title></head><body>Clinic services.</body></html>',
+    '<html><head><title>Occupational Health Opportunity</title></head><body>Loading opportunity.</body></html>',
     { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
   )) as typeof fetch
 
@@ -68,6 +68,7 @@ test('thin pages without solicitation links remain thin', async () => {
     { fetchImpl, bypassCache: true, inspectPackage: true }
   )
 
-  assert.equal(assessment.availability, 'thin')
+  assert.equal(assessment.availability, 'unsupported')
   assert.equal(assessment.packageAnalysis, undefined)
+  assert.match(assessment.reason, /client-rendered|manual review/i)
 })
