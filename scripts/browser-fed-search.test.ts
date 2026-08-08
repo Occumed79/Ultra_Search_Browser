@@ -43,6 +43,43 @@ test('SearXNG base URL preserves a deployment path prefix', () => {
   }
 })
 
+test('SearXNG default request lets the private instance choose enabled engines', async () => {
+  const originalUrl = process.env.SEARXNG_URL
+  const originalFetch = globalThis.fetch
+  let requestedUrl = ''
+  try {
+    process.env.SEARXNG_URL = 'https://search.example.test'
+    globalThis.fetch = async input => {
+      requestedUrl = String(input)
+      return new Response(JSON.stringify({
+        results: [
+          {
+            title: 'Occupational Health Procurement',
+            url: 'https://county.example.test/opportunity',
+            content: 'Employee medical examination opportunity.',
+            engine: 'google cse',
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const response = await searchSearXNG('occupational health RFP')
+    const requested = new URL(requestedUrl)
+
+    assert.equal(requested.searchParams.has('engines'), false)
+    assert.equal(requested.searchParams.get('categories'), 'general')
+    assert.deepEqual(response.engines, ['google cse'])
+    assert.equal(response.results.length, 1)
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalUrl === undefined) delete process.env.SEARXNG_URL
+    else process.env.SEARXNG_URL = originalUrl
+  }
+})
+
 test('SearXNG drops unsafe/invalid URLs before applying maxResults', async () => {
   const originalUrl = process.env.SEARXNG_URL
   const originalFetch = globalThis.fetch
