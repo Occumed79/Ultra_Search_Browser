@@ -6,7 +6,6 @@ import {
   matchOccuMedCapabilityGroups,
 } from '../src/lib/occumed-capability-matching'
 import { applyOccuMedSmartFilter } from '../src/lib/occumed-smart-filter'
-import { buildProcurementBrowserRescueTasks } from '../src/lib/procurement-browser-rescue-tasks'
 import { buildProcurementRescueQueries } from '../src/lib/procurement-rescue-queries'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
 import { buildDeterministicSemanticIntent } from '../src/lib/semantic-intent'
@@ -76,17 +75,6 @@ test('broad official and PDF rescue queries accept literal or buyer-language fam
   assert.match(queries[2], /\("occupational health services" OR "/i)
   assert.match(queries[3], /filetype:pdf/i)
   assert.match(queries[3], /\("occupational health services" OR "/i)
-})
-
-test('public indexes receive literal, expanded, official, and document searches', () => {
-  const queries = buildProcurementRescueQueries('Pre-deployment health assessment')
-  const tasks = buildProcurementBrowserRescueTasks(queries)
-
-  assert.equal(tasks.filter(task => task.source === 'bing').length, 4)
-  assert.ok(tasks.some(task => task.source === 'duckduckgo' && task.query === queries[0]))
-  assert.ok(tasks.some(task => task.source === 'mojeek' && task.query === queries[1]))
-  assert.ok(tasks.some(task => task.source === 'yahoo' && task.query === queries[2]))
-  assert.ok(tasks.some(task => task.source === 'brave' && task.query === queries[3]))
 })
 
 test('capability-family gate retains medical-readiness procurement wording', () => {

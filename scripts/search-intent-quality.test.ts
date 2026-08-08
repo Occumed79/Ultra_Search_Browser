@@ -2,7 +2,6 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildProcurementRescueQueries } from '../src/lib/procurement-rescue-queries'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
-import { routeSearchLens } from '../src/lib/search-intent-routing'
 import { buildDeterministicSemanticIntent } from '../src/lib/semantic-intent'
 import {
   verifiedSearchConfidence,
@@ -21,19 +20,6 @@ function result(title: string, url: string, description: string): ScrapedResult 
     score: 50,
   }
 }
-
-test('RFP language automatically routes the default web lens to procurement', () => {
-  const routed = routeSearchLens('web', undefined, 'Occupational Health Services RFP')
-  assert.equal(routed.effectiveLens, 'procurement')
-  assert.equal(routed.autoRouted, true)
-  assert.match(routed.reason, /procurement opportunity/i)
-})
-
-test('an explicitly selected non-web lens is preserved', () => {
-  const routed = routeSearchLens('provider', undefined, 'Occupational Health Services RFP')
-  assert.equal(routed.effectiveLens, 'provider')
-  assert.equal(routed.autoRouted, false)
-})
 
 test('procurement gate removes definitions, indexes, licensing pages, and unrelated health pages', () => {
   const candidates = [

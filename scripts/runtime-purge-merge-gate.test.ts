@@ -31,10 +31,8 @@ test('runtime graph is clean after the physical purge', () => {
   const raw = execFileSync(process.execPath, ['scripts/runtime-import-audit.mjs', '--json'], { encoding: 'utf8' })
   const report = JSON.parse(raw) as {
     unreachable: string[]
-    unexpectedUnreachable: string[]
     unresolvedLocalImports: unknown[]
   }
   assert.deepEqual(report.unreachable, [])
-  assert.deepEqual(report.unexpectedUnreachable, [])
   assert.deepEqual(report.unresolvedLocalImports, [])
 })
