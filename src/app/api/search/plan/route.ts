@@ -9,7 +9,15 @@ export async function POST(request: NextRequest) {
     if (!query) return NextResponse.json({ error: 'Query is required' }, { status: 400 })
 
     const traceId = createSearchTrace(query, body.traceId)
-    const plan = { ...buildBrowserSearchPlan(query, body.maxSearches), traceId }
+    const basePlan = buildBrowserSearchPlan(query, body.maxSearches)
+    const plan = {
+      ...basePlan,
+      traceId,
+      // The existing client already forwards `intent` through ingest and deep
+      // validation, so a private trace marker keeps one ID across the whole
+      // pipeline without introducing another client-side critical dependency.
+      intent: { ...basePlan.intent, __traceId: traceId },
+    }
     recordSearchFlightStage(traceId, 'plan.complete', {
       query: plan.query,
       searchCount: plan.searches.length,
