@@ -1,0 +1,34 @@
+name: Runtime Import Strict Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  strict-runtime-graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Fail on new dead runtime modules or unresolved local imports
+        env:
+          RUNTIME_IMPORT_AUDIT_STRICT: '1'
+        run: node scripts/runtime-import-audit.mjs --json | tee runtime-import-audit-strict.json
+      - name: Upload strict runtime graph
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-import-strict-${{ github.run_id }}
+          path: runtime-import-audit-strict.json
+          if-no-files-found: error
+          retention-days: 14
