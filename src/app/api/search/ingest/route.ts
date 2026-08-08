@@ -44,6 +44,12 @@ function retrievalModeFor(transport: SearchRetrievalTransport): string {
   return 'searxng-metasearch'
 }
 
+function traceIdFromIntent(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const traceId = (value as { __traceId?: unknown }).__traceId
+  return typeof traceId === 'string' && traceId.trim() ? traceId.trim().slice(0, 100) : undefined
+}
+
 export async function POST(request: NextRequest) {
   let traceId: string | undefined
   try {
@@ -62,7 +68,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Search retrieval results are required' }, { status: 400 })
     }
 
-    traceId = createSearchTrace(query, typeof body.traceId === 'string' ? body.traceId : undefined)
+    traceId = createSearchTrace(
+      query,
+      typeof body.traceId === 'string' ? body.traceId : traceIdFromIntent(body.intent)
+    )
     const transport = inferTransport(body.transport, body.results)
     recordSearchFlightStage(traceId, 'ingest.start', {
       transport,
