@@ -5,6 +5,7 @@ import {
   extractFromPDFBuffer,
   type ExtractedDocument,
 } from './document-extraction'
+import { recoverClientRenderedDocument } from './headless-page-recovery'
 import { classifyResultStatus, type ResultStatusAssessment } from './result-status'
 import {
   extractRfpOpportunityIntelligence,
@@ -246,7 +247,7 @@ async function extractResponse(
   if (bytes.byteLength > MAX_RESPONSE_BYTES) throw new Error(`Response exceeded ${MAX_RESPONSE_BYTES} bytes`)
   const buffer = Buffer.from(bytes)
   const extraction = type === 'pdf'
-    ? await extractFromPDFBuffer(buffer)
+    ? await extractFromPDFBuffer(buffer, { ocrTimeoutMs: 8_500, ocrMaxPages: 2 })
     : await extractFromDOCXBuffer(buffer, PAGE_TIMEOUT_MS)
   if (!extraction.success || !extraction.document) throw new Error(extraction.error || `${type.toUpperCase()} extraction failed`)
   return extraction.document
@@ -309,6 +310,12 @@ function failureResult(
   }
 }
 
+function unavailableLifecycleStatus(availability: PageAvailability): ResultStatusAssessment['status'] {
+  if (availability === 'dead') return 'dead'
+  if (['generic', 'search-page', 'thin'].includes(availability)) return 'junk'
+  return 'unknown'
+}
+
 export async function validateCandidatePage(
   result: ScrapedResult,
   lens: SearchLens,
@@ -331,6 +338,7 @@ export async function validateCandidatePage(
 
   const controller = new AbortController()
   const timeoutMs = options.timeoutMs ?? PAGE_TIMEOUT_MS
+  const startedAt = Date.now()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const fetchImpl = options.fetchImpl ?? fetch
 
@@ -343,7 +351,7 @@ export async function validateCandidatePage(
       return failureResult(result, 'dead', `The destination returned HTTP ${response.status}.`, 'dead', response.status, finalUrl, contentType)
     }
     if (response.status === 401) {
-      return failureResult(result, 'login', 'The destination requires authentication (HTTP 401).', 'junk', response.status, finalUrl, contentType)
+      return failureResult(result, 'login', 'The destination requires authentication (HTTP 401).', 'unknown', response.status, finalUrl, contentType)
     }
     if (response.status === 403) {
       return failureResult(result, 'error', 'The destination denied automated access (HTTP 403), so it could not be verified.', 'unknown', response.status, finalUrl, contentType)
@@ -357,9 +365,29 @@ export async function validateCandidatePage(
       return failureResult(result, 'unsupported', `Unsupported content type: ${contentType || 'unknown'}.`, 'unknown', response.status, finalUrl, contentType)
     }
 
-    const document = await extractResponse(response, type, finalUrl)
-    const primaryText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
-    const initialSignal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
+    let document = await extractResponse(response, type, finalUrl)
+    let primaryText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
+    let initialSignal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
+    let headlessRecovered = false
+
+    if (
+      type === 'html'
+      && lens === 'procurement'
+      && initialSignal.availability === 'thin'
+      && isProcurementDestination(finalUrl, result.url)
+    ) {
+      const remaining = timeoutMs - (Date.now() - startedAt) - 750
+      if (remaining >= 2_000) {
+        const recovery = await recoverClientRenderedDocument(finalUrl, Math.min(6_500, remaining))
+        if (recovery.success && recovery.document) {
+          document = recovery.document
+          primaryText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
+          initialSignal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
+          headlessRecovered = initialSignal.availability === 'reachable'
+        }
+      }
+    }
+
     const hasSolicitationPackageLink = (document.links || []).some(link =>
       /\b(?:rfp|rfq|rfi|ifb|solicitation|bid|tender|procurement|request for proposals?|request for quotations?|attachment|amendment|addendum|scope of work|statement of work|specifications?)\b|\.(?:pdf|docx?)(?:$|[?#])/i
         .test(`${link.text} ${link.url}`)
@@ -395,15 +423,15 @@ export async function validateCandidatePage(
       && isProcurementDestination(finalUrl, result.url)
       ? {
           availability: 'unsupported',
-          reason: 'The procurement destination is reachable, but it returned too little server-rendered text to verify after package inspection. It may be a client-rendered procurement portal and requires manual review.',
+          reason: 'The procurement destination is reachable, but it returned too little readable evidence after embedded-state, linked-package, and optional bounded headless recovery. It requires manual review.',
         }
       : packageSignal
     const lifecycle = signal.availability === 'reachable'
       ? (packageAnalysis?.lifecycle || classifyResultStatus(`${document.title || ''} ${extractedText}`, lens))
       : {
-          status: signal.availability === 'dead' ? 'dead' as const : 'junk' as const,
+          status: unavailableLifecycleStatus(signal.availability),
           reason: signal.reason,
-          confidence: 0.94,
+          confidence: signal.availability === 'dead' ? 0.98 : 0.72,
           dates: [],
         }
     const rfpIntelligence = lens === 'procurement' && signal.availability === 'reachable'
@@ -416,6 +444,7 @@ export async function validateCandidatePage(
         })
       : undefined
 
+    const recoveryNote = headlessRecovered ? ' Recovered client-rendered evidence with bounded headless Chromium.' : ''
     const value: PageValidationResult = {
       checkedAt: new Date().toISOString(),
       requestedUrl: result.url,
@@ -423,9 +452,9 @@ export async function validateCandidatePage(
       httpStatus: response.status,
       contentType,
       availability: signal.availability,
-      reason: packageAnalysis && packageAnalysis.inspectedCount > 0
+      reason: `${packageAnalysis && packageAnalysis.inspectedCount > 0
         ? `${signal.reason} Inspected ${packageAnalysis.inspectedCount} linked solicitation document${packageAnalysis.inspectedCount === 1 ? '' : 's'}.`
-        : signal.reason,
+        : signal.reason}${recoveryNote}`.trim(),
       evidence: evidenceExcerpts(extractedText, query, lifecycle),
       extractedText,
       extractedTextLength: extractedText.length,
