@@ -92,7 +92,7 @@ test('procurement-targeted retrieval provenance keeps sparse Occu-Med candidates
   const targeted: ScrapedResult = {
     ...result(
       'Employee Medical Examinations',
-      'https://county.example.gov/hr/employee-medical-examinations',
+      'https://county.example.gov/procurement/opportunities/employee-medical-examinations',
       'Occupational health examinations, fitness-for-duty evaluations, and employee medical screening services.'
     ),
     source: 'SearXNG · google cse',
