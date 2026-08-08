@@ -2,7 +2,6 @@
 // Private/self-hosted metasearch transport for Ultra Search.
 
 import type { ScrapedResult } from '../types/search'
-import { SEARXNG_WEB_ENGINES } from './searxng-engines'
 
 export { SEARXNG_WEB_ENGINES } from './searxng-engines'
 
@@ -97,8 +96,9 @@ function normalizeResult(result: SearXNGResult, index: number): ScrapedResult | 
 
 /**
  * Query a private SearXNG instance through its JSON Search API.
- * Search API keys are not required. The instance itself fans out to the
- * configured upstream engines.
+ * Search API keys are not required. By default Ultra Search lets the private
+ * SearXNG deployment choose its own enabled general engines. Callers can still
+ * provide an explicit engine list when a targeted diagnostic/search needs it.
  */
 export async function searchSearXNG(
   query: string,
@@ -117,7 +117,7 @@ export async function searchSearXNG(
   }
 
   const requestedEngines = Array.from(new Set(
-    (options.engines?.length ? options.engines : [...SEARXNG_WEB_ENGINES])
+    (options.engines || [])
       .map(value => value.trim().toLowerCase())
       .filter(Boolean)
   ))
@@ -127,7 +127,9 @@ export async function searchSearXNG(
     url.searchParams.set('q', query.slice(0, 500))
     url.searchParams.set('format', 'json')
     url.searchParams.set('categories', 'general')
-    url.searchParams.set('engines', requestedEngines.join(','))
+    if (requestedEngines.length > 0) {
+      url.searchParams.set('engines', requestedEngines.join(','))
+    }
     url.searchParams.set('safesearch', options.safeSearch === false ? '0' : '2')
     if (options.preferredLanguage) url.searchParams.set('language', options.preferredLanguage)
 
