@@ -68,8 +68,12 @@ export function buildProcurementRescueQueries(
     ? `(${discoveryTerms.slice(0, 6).map(quotedPhrase).join(' OR ')})`
     : ''
   const bestAlias = discoveryTerms[0] ? quotedPhrase(discoveryTerms[0]) : ''
-  const subjectAndAlias = bestAlias
-    ? `${quotedSubject} ${bestAlias}`
+  // Official buyers frequently use either the user's phrase OR a buyer-language
+  // synonym, not both. Requiring both made otherwise excellent .gov/PDF hits
+  // invisible. Keep them as alternatives while the later evidence gate restores
+  // precision from the actual destination/package.
+  const subjectFamily = bestAlias
+    ? `(${quotedSubject} OR ${bestAlias})`
     : quotedSubject
 
   const individualAliasQueries = buyerAliases.map(alias =>
@@ -79,29 +83,26 @@ export function buildProcurementRescueQueries(
   const militaryKeywords = ['deployment', 'military', 'defense', 'dod', 'overseas', 'clearance', 'readiness']
   const isMilitaryQuery = militaryKeywords.some(keyword => query.toLowerCase().includes(keyword))
   const militaryQueries = isMilitaryQuery ? [
-    `site:acquisition.gov ${subjectAndAlias} procurement`,
-    `site:defense.gov ${subjectAndAlias} procurement`,
-    `site:dla.mil ${subjectAndAlias} procurement`,
-    `${subjectAndAlias} "defense logistics agency" solicitation`,
-    `${subjectAndAlias} "department of defense" solicitation`,
-    `${subjectAndAlias} "military medical" contract`,
+    `site:acquisition.gov ${subjectFamily} procurement`,
+    `site:defense.gov ${subjectFamily} procurement`,
+    `site:dla.mil ${subjectFamily} procurement`,
+    `${subjectFamily} "defense logistics agency" solicitation`,
+    `${subjectFamily} "department of defense" solicitation`,
+    `${subjectFamily} "military medical" contract`,
   ] : []
 
-  // The first four queries deliberately represent four different retrieval
-  // strategies. Browser rescue consumes these slots directly, so do not let
-  // one operator-heavy strategy crowd out literal or buyer-language recall.
   const diversifiedFront = [
     `${quotedSubject} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`,
     familyClause
       ? `${familyClause} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
       : `${quotedSubject} "contract opportunities" ${currentYear}`,
-    `site:.gov ${subjectAndAlias} (RFP OR solicitation OR "sources sought") ${currentYear}`,
-    `filetype:pdf ${subjectAndAlias} ("request for proposal" OR solicitation) ${currentYear}`,
+    `site:.gov ${subjectFamily} (RFP OR solicitation OR "sources sought") ${currentYear}`,
+    `filetype:pdf ${subjectFamily} ("request for proposal" OR solicitation) ${currentYear}`,
   ]
 
   const officialAndPortalQueries = [
-    `site:sam.gov ${subjectAndAlias} opportunities`,
-    `site:sam.gov ${subjectAndAlias} solicitation`,
+    `site:sam.gov ${subjectFamily} opportunities`,
+    `site:sam.gov ${subjectFamily} solicitation`,
     `site:.gov ${quotedSubject} "contract opportunities"`,
     `site:.gov ${quotedSubject} "vendor opportunities"`,
     `site:.gov ${quotedSubject} "bid opportunities"`,

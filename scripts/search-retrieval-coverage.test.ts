@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   canonicalRetrievalUrl,
   distinctRetrievalCoverage,
+  selectDirectRescueVariants,
   shouldRunDirectRescue,
 } from '../src/lib/search-retrieval-coverage'
 
@@ -40,4 +41,26 @@ test('many results from only one search variant still trigger diversity rescue',
     successfulSearches: 1,
     attemptedSearches: 8,
   }), true)
+})
+
+test('direct rescue spends its limited slots on complementary procurement strategies', () => {
+  const variants = [
+    { query: 'occupational health services', purpose: 'broad' },
+    { query: '"occupational health services"', purpose: 'intent-core' },
+    { query: 'buyer aliases rfp', purpose: 'ai-intent' },
+    { query: 'site:.gov buyer aliases rfp', purpose: 'official' },
+    { query: 'filetype:pdf buyer aliases rfp', purpose: 'document' },
+    { query: 'buyer aliases 2026 active', purpose: 'freshness' },
+    { query: 'site:bonfirehub.com buyer aliases', purpose: 'portal' },
+  ]
+
+  const selected = selectDirectRescueVariants(variants, 5)
+  assert.deepEqual(selected.map(item => item.purpose), [
+    'official',
+    'document',
+    'portal',
+    'ai-intent',
+    'freshness',
+  ])
+  assert.equal(selected.some(item => item.purpose === 'broad'), false)
 })

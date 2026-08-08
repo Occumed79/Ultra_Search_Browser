@@ -65,6 +65,19 @@ test('first four rescue queries preserve four complementary retrieval strategies
   assert.match(firstFour[3], /filetype:pdf/i)
 })
 
+test('broad official and PDF rescue queries accept literal or buyer-language family wording', () => {
+  const query = 'occupational health services'
+  const queries = buildProcurementRescueQueries(
+    query,
+    buildDeterministicSemanticIntent(query, 'procurement')
+  )
+
+  assert.match(queries[2], /site:\.gov/i)
+  assert.match(queries[2], /\("occupational health services" OR "/i)
+  assert.match(queries[3], /filetype:pdf/i)
+  assert.match(queries[3], /\("occupational health services" OR "/i)
+})
+
 test('public indexes receive literal, expanded, official, and document searches', () => {
   const queries = buildProcurementRescueQueries('Pre-deployment health assessment')
   const tasks = buildProcurementBrowserRescueTasks(queries)
