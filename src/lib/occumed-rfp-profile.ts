@@ -151,6 +151,16 @@ export const OCCUMED_NEGATIVE_EXAMPLES = [
   'A relevant occupational-health solicitation whose deadline has passed: expired and never displayable.',
 ] as const
 
+const OCCUMED_UMBRELLA_CAPABILITY_TERMS = new Set([
+  'occupational health',
+  'occupational medicine',
+  'employee health',
+  'workforce health',
+  'medical clearance',
+  'medical readiness',
+  'medical review',
+])
+
 function normalize(value: string): string {
   return value
     .toLowerCase()
@@ -164,6 +174,10 @@ function normalize(value: string): string {
 function matchingTerms(text: string, terms: readonly string[]): string[] {
   const normalized = normalize(text)
   return terms.filter(term => normalized.includes(normalize(term)))
+}
+
+function concreteCapabilityTerms(terms: readonly string[]): string[] {
+  return terms.filter(term => !OCCUMED_UMBRELLA_CAPABILITY_TERMS.has(normalize(term)))
 }
 
 export interface OccuMedRelevanceAssessment {
@@ -183,7 +197,7 @@ export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
   const matchedCapabilities = capabilityEvidence.map(group => group.label)
   const matchedBuyerSegments = matchingTerms(text, OCCUMED_BUYER_SEGMENTS)
   const exclusions = matchingTerms(text, OCCUMED_HARD_EXCLUSIONS)
-  const strongSingleFamilyEvidence = capabilityEvidence.some(group => group.terms.length >= 2)
+  const strongSingleFamilyEvidence = capabilityEvidence.some(group => concreteCapabilityTerms(group.terms).length >= 2)
   const matchedTermCount = capabilityEvidence.reduce((total, group) => total + group.terms.length, 0)
 
   if (exclusions.length > 0 && matchedCapabilities.length === 0) {
@@ -200,7 +214,9 @@ export function assessOccuMedRfpText(text: string): OccuMedRelevanceAssessment {
   // A buyer does not need to request two unrelated capability families to be a
   // legitimate Occu-Med opportunity. A focused audiometry, respirator-clearance,
   // drug-testing, or fitness-for-duty solicitation can be a strong fit when its
-  // scope contains multiple concrete terms from one supported family.
+  // scope contains multiple concrete terms from one supported family. Broad
+  // umbrella phrases alone remain REVIEW-level evidence unless buyer/use-case
+  // context or another supported family independently corroborates the fit.
   if (
     matchedCapabilities.length >= 2
     || strongSingleFamilyEvidence
