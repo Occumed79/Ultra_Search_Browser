@@ -21,7 +21,8 @@ test('zero-key search plan is deterministic, procurement-focused, and server tra
   assert.ok(plan.searches.some(search => /filetype:pdf/i.test(search.query)))
 })
 
-test('SearXNG ensemble contains broad independent web engines', () => {
+test('SearXNG ensemble contains broad independent web engines including the live Google CSE default', () => {
+  assert.ok(SEARXNG_WEB_ENGINES.includes('google cse'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('brave'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('duckduckgo'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('startpage'))
