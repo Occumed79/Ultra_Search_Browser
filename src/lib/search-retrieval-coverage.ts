@@ -6,9 +6,25 @@ export interface RetrievalCoverageInput {
   minimumSuccessfulSearches?: number
 }
 
+export interface RescueSearchVariant {
+  query: string
+  purpose: string
+}
+
 const TRACKING_PARAMS = new Set([
   'fbclid', 'gclid', 'mc_cid', 'mc_eid', 'ref', 'referrer', 'source',
 ])
+
+const RESCUE_PURPOSE_ORDER = [
+  'official',
+  'document',
+  'portal',
+  'ai-intent',
+  'freshness',
+  'intent-core',
+  'broad',
+  'semantic',
+]
 
 export function canonicalRetrievalUrl(value: string): string | undefined {
   try {
@@ -48,4 +64,38 @@ export function shouldRunDirectRescue(input: RetrievalCoverageInput): boolean {
 
   return input.uniqueCandidateCount < minimumUniqueCandidates
     || input.successfulSearches < targetSuccessfulSearches
+}
+
+/**
+ * Direct public-engine rescue is expensive enough that its slots should be
+ * complementary, not simply the first N planner variants. Prefer official,
+ * direct-document, portal, buyer-language, and freshness strategies before a
+ * generic broad query that tends to rediscover provider websites.
+ */
+export function selectDirectRescueVariants<T extends RescueSearchVariant>(
+  variants: T[],
+  maxVariants = 5
+): T[] {
+  const limit = Math.max(1, Math.min(8, maxVariants))
+  const selected: T[] = []
+  const usedQueries = new Set<string>()
+
+  const add = (variant: T | undefined) => {
+    if (!variant || selected.length >= limit) return
+    const key = variant.query.trim().toLowerCase()
+    if (!key || usedQueries.has(key)) return
+    usedQueries.add(key)
+    selected.push(variant)
+  }
+
+  for (const purpose of RESCUE_PURPOSE_ORDER) {
+    add(variants.find(variant => variant.purpose === purpose))
+    if (selected.length >= limit) return selected
+  }
+
+  for (const variant of variants) {
+    add(variant)
+    if (selected.length >= limit) break
+  }
+  return selected
 }
