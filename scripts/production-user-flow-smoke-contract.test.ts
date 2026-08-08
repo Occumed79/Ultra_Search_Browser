@@ -7,9 +7,9 @@ const workflow = readFileSync(new URL('../.github/workflows/production-smoke.yml
 
 test('production canary exercises the exact broad query that exposed provider leakage', () => {
   assert.match(canary, /const QUERY = 'occupational health services'/)
-  assert.match(canary, /\/api\/search\/plan/)
-  assert.match(canary, /\/api\/search'/)
-  assert.match(canary, /\/api\/search\/ingest/)
+  assert.match(canary, /fetch\(`\$\{APP_URL\}\/api\/search\/plan`,/)
+  assert.match(canary, /fetch\(`\$\{APP_URL\}\/api\/search`,/)
+  assert.match(canary, /fetch\(`\$\{APP_URL\}\/api\/search\/ingest`,/)
 })
 
 test('live canary rejects retained pages without procurement evidence or destination structure', () => {
