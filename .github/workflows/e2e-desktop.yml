@@ -34,10 +34,19 @@ jobs:
       - name: Build production application
         run: npm run build
 
-      - name: Install ephemeral Playwright browser harness
+      - name: Install isolated Playwright browser harness
         run: |
-          npm install --no-save --no-package-lock playwright@latest
+          HARNESS_DIR="${RUNNER_TEMP}/ultra-search-playwright"
+          mkdir -p "${HARNESS_DIR}"
+          cp scripts/e2e-desktop-browser.mjs "${HARNESS_DIR}/e2e-desktop-browser.mjs"
+          cd "${HARNESS_DIR}"
+          npm init -y >/dev/null 2>&1
+          npm install --no-package-lock --no-save playwright@latest
           npx playwright install --with-deps chromium
+          echo "HARNESS_DIR=${HARNESS_DIR}" >> "${GITHUB_ENV}"
+
+      - name: Verify application dependency tree was not mutated
+        run: npm ci --dry-run --ignore-scripts >/dev/null
 
       - name: Start production server
         run: |
@@ -55,7 +64,7 @@ jobs:
       - name: Run real desktop Chromium checks
         env:
           E2E_APP_URL: http://127.0.0.1:3000
-        run: node scripts/e2e-desktop-browser.mjs
+        run: cd "${HARNESS_DIR}" && node e2e-desktop-browser.mjs
 
       - name: Upload browser/server diagnostics
         if: always()
