@@ -1,0 +1,101 @@
+name: Nuclear Hardening Final Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: nuclear-hardening-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --silent
+      - name: Type-check
+        run: npm run typecheck
+      - name: Full search/settings regression suite
+        run: npm run test:search
+      - name: Production build
+        run: npm run build
+      - name: Strict runtime import graph
+        env:
+          RUNTIME_IMPORT_AUDIT_STRICT: '1'
+        run: node scripts/runtime-import-audit.mjs
+      - name: Require physical legacy purge
+        run: |
+          for file in \
+            src/lib/automatic-browser-fallback.ts \
+            src/lib/brave-search-api.ts \
+            src/lib/feature-capabilities.ts \
+            src/lib/gemini-grounded-search.ts \
+            src/lib/managed-search.ts \
+            src/lib/occumed-supplemental-search.ts \
+            src/lib/procurement-api-sources.ts \
+            src/lib/procurement-browser-rescue-tasks.ts \
+            src/lib/procurement-rescue.ts \
+            src/lib/public-search-fallbacks.ts \
+            src/lib/resilient-search.ts \
+            src/lib/sam-gov-opportunities.ts \
+            src/lib/search-intent-routing.ts \
+            src/lib/search-orchestrator.ts \
+            src/lib/search-response-parsers.ts \
+            src/lib/tavily-search.ts; do
+            test ! -e "$file" || { echo "Legacy runtime module survived purge: $file"; exit 1; }
+          done
+      - name: Wait for exact Render commit and verify positive production path
+        if: github.event_name == 'push'
+        env:
+          APP_URL: https://ultra-search-browser.onrender.com
+          EXPECTED_COMMIT: ${{ github.sha }}
+          MAX_WAIT_MS: 720000
+          POLL_INTERVAL_MS: 15000
+        run: node scripts/production-smoke.mjs
+      - name: Run nine live Occu-Med capability canaries
+        if: github.event_name == 'push'
+        env:
+          APP_URL: https://ultra-search-browser.onrender.com
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: node scripts/production-user-flow-smoke.mjs
+      - name: Publish nuclear hardening success status
+        if: github.event_name == 'push' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "{\"state\":\"success\",\"context\":\"nuclear-hardening-final\",\"description\":\"All hardening, build, purge, Render, and nine-canary gates passed\",\"target_url\":\"${TARGET_URL}\"}"
+      - name: Publish nuclear hardening failure status
+        if: github.event_name == 'push' && failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            --data "{\"state\":\"failure\",\"context\":\"nuclear-hardening-final\",\"description\":\"A nuclear hardening gate failed\",\"target_url\":\"${TARGET_URL}\"}"
