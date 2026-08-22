@@ -14,6 +14,7 @@ import {
 import { searchBingHTML, searchDuckDuckGo, searchGoogleScrape } from '../../../lib/search'
 import { searchSearXNG } from '../../../lib/searxng'
 import { isKeenableConfigured, searchKeenable } from '../../../lib/keenable'
+import { isAlgoliaSearchConfigured, searchAlgoliaMemory } from '../../../lib/algolia'
 import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
 import {
   distinctRetrievalCoverage,
@@ -25,8 +26,10 @@ import type { ScrapedResult } from '../../../types/search'
 const SEARCH_BUDGET_MS = 50_000
 const SEARX_VARIANT_TIMEOUT_MS = 10_000
 const KEENABLE_VARIANT_TIMEOUT_MS = 12_000
+const ALGOLIA_MEMORY_TIMEOUT_MS = 6_000
 const MAX_DIRECT_RESCUE_VARIANTS = 5
 const MAX_KEENABLE_VARIANTS = Math.max(1, Math.min(8, Number(process.env.KEENABLE_MAX_VARIANTS) || 4))
+const MAX_ALGOLIA_MEMORY_RESULTS = Math.max(1, Math.min(30, Number(process.env.ALGOLIA_MAX_RESULTS) || 15))
 
 interface RetrievalCandidate {
   title: string
@@ -72,6 +75,19 @@ function toCandidates(results: ScrapedResult[], variant: BrowserSearchVariant, s
     score: Number.isFinite(result.score) && result.score > 0 ? result.score : Math.max(10, 100 - index * 2),
     query: variant.query,
     purpose: variant.purpose,
+  }))
+}
+
+function toMemoryCandidates(results: ScrapedResult[], query: string): RetrievalCandidate[] {
+  return results.map((result, index) => ({
+    title: result.title,
+    url: result.url,
+    description: result.description || '',
+    source: result.source || 'Algolia memory',
+    rank: result.rank || index + 1,
+    score: Number.isFinite(result.score) && result.score > 0 ? result.score : Math.max(10, 100 - index * 2),
+    query,
+    purpose: 'verified-memory',
   }))
 }
 
@@ -191,6 +207,61 @@ async function runKeenableVariant(variant: BrowserSearchVariant, maxResults: num
   }
 }
 
+async function runAlgoliaMemory(query: string, maxResults: number) {
+  const source = 'Algolia memory'
+  if (!canAttemptSearchSource(source)) {
+    return {
+      candidates: [] as RetrievalCandidate[],
+      diagnostic: {
+        query,
+        engine: source,
+        resultCount: 0,
+        circuitOpen: true,
+        error: 'Circuit open after repeated Algolia memory failures.',
+      } satisfies RetrievalDiagnostic,
+      ok: false,
+      configured: true,
+    }
+  }
+
+  const startedAt = Date.now()
+  try {
+    const response = await searchAlgoliaMemory(query, {
+      maxResults,
+      timeoutMs: ALGOLIA_MEMORY_TIMEOUT_MS,
+    })
+    const latencyMs = Date.now() - startedAt
+
+    if (response.configured) {
+      if (response.ok) recordSearchSourceSuccess(source, latencyMs)
+      else recordSearchSourceFailure(source, latencyMs, response.error || 'Algolia memory search failed')
+    }
+
+    return {
+      candidates: toMemoryCandidates(response.results, query),
+      diagnostic: {
+        query,
+        engine: source,
+        resultCount: response.results.length,
+        latencyMs,
+        ...(response.error ? { error: response.error } : {}),
+      } satisfies RetrievalDiagnostic,
+      ok: response.ok && response.results.length > 0,
+      configured: response.configured,
+    }
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt
+    const message = error instanceof Error ? error.message : String(error)
+    recordSearchSourceFailure(source, latencyMs, message)
+    return {
+      candidates: [] as RetrievalCandidate[],
+      diagnostic: { query, engine: source, resultCount: 0, latencyMs, error: message } satisfies RetrievalDiagnostic,
+      ok: false,
+      configured: true,
+    }
+  }
+}
+
 async function runDirectRescue(variant: BrowserSearchVariant) {
   const jobs = [
     { name: 'Google', run: () => searchGoogleScrape(variant.query, { safeSearch: true, preferredLanguage: 'en', region: 'us' }) },
@@ -266,8 +337,9 @@ function transportFor(
  *
  * Private SearXNG remains the broad metasearch layer. When KEENABLE_API_KEY is
  * configured, Keenable runs in parallel on a bounded set of the highest-priority
- * query variants as an independent discovery source. If primary coverage is still
- * sparse, the bounded Google/DuckDuckGo/Bing HTML rescue remains available.
+ * query variants as an independent discovery source. Verified Algolia memory is
+ * queried once per user search and never suppresses live-web rescue. If primary
+ * coverage is still sparse, bounded Google/DuckDuckGo/Bing rescue remains available.
  */
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
@@ -296,8 +368,10 @@ export async function POST(request: NextRequest) {
     let keenableSuccessfulSearches = 0
     let searxConfigured = true
     const keenableConfigured = isKeenableConfigured()
+    const algoliaConfigured = isAlgoliaSearchConfigured()
     let searxCandidateCount = 0
     let keenableCandidateCount = 0
+    let algoliaMemoryCandidateCount = 0
     let rescueCandidateCount = 0
     let rescueVariants: BrowserSearchVariant[] = []
 
@@ -307,6 +381,9 @@ export async function POST(request: NextRequest) {
     const keenablePromise = Promise.all(
       keenableVariants.map(variant => runKeenableVariant(variant, plan.maxResultsPerSearch))
     )
+    const algoliaPromise = algoliaConfigured
+      ? runAlgoliaMemory(query, MAX_ALGOLIA_MEMORY_RESULTS)
+      : Promise.resolve(null)
 
     for (let start = 0; start < variants.length; start += 3) {
       if (Date.now() - startedAt >= SEARCH_BUDGET_MS - 10_000) {
@@ -362,6 +439,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const algoliaResult = await algoliaPromise
+    if (algoliaResult) {
+      diagnostics.push(algoliaResult.diagnostic)
+      if (algoliaResult.candidates.length > 0) engines.add('Algolia memory')
+      algoliaMemoryCandidateCount = algoliaResult.candidates.length
+      allCandidates.push(...algoliaResult.candidates)
+    }
+
     const transport = transportFor(searxCandidateCount, keenableCandidateCount, rescueCandidateCount)
     const runtimeMs = Date.now() - startedAt
     const totalUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
@@ -378,6 +463,7 @@ export async function POST(request: NextRequest) {
         searxng: searxCandidateCount,
         searxngUnique: searxUniqueCandidateCount,
         keenable: keenableCandidateCount,
+        algoliaMemory: algoliaMemoryCandidateCount,
         primaryUnique: primaryUniqueCandidateCount,
         directRescue: rescueCandidateCount,
         totalUnique: totalUniqueCandidateCount,
@@ -392,6 +478,7 @@ export async function POST(request: NextRequest) {
       searxngConfigured: searxConfigured,
       keenableConfigured,
       keenableAttemptedSearches: keenableVariants.length,
+      algoliaConfigured,
       apiKeysRequired: false,
       attemptedSearches: variants.length,
       successfulSearches,
@@ -404,6 +491,7 @@ export async function POST(request: NextRequest) {
         searxng: searxCandidateCount,
         searxngUnique: searxUniqueCandidateCount,
         keenable: keenableCandidateCount,
+        algoliaMemory: algoliaMemoryCandidateCount,
         primaryUnique: primaryUniqueCandidateCount,
         directRescue: rescueCandidateCount,
         totalUnique: totalUniqueCandidateCount,
@@ -412,13 +500,13 @@ export async function POST(request: NextRequest) {
 
     if (allCandidates.length === 0) {
       finishSearchTrace(traceId, 'error', { stage: 'retrieval', reason: 'no-candidates', transport })
-      const primaryConfigured = searxConfigured || keenableConfigured
+      const primaryConfigured = searxConfigured || keenableConfigured || algoliaConfigured
       return NextResponse.json({
         error: 'Search retrieval returned no candidates',
         code: primaryConfigured ? 'SEARCH_SOURCES_EMPTY' : 'SEARXNG_UNAVAILABLE',
         detail: primaryConfigured
-          ? 'SearXNG, Keenable, and the bounded direct-engine rescue returned no usable search results.'
-          : 'Private SearXNG and Keenable are not configured, and the zero-key direct-engine rescue was unable to return results.',
+          ? 'SearXNG, Keenable, Algolia memory, and the bounded direct-engine rescue returned no usable search results.'
+          : 'Private SearXNG, Keenable, and Algolia memory are not configured, and the zero-key direct-engine rescue was unable to return results.',
         ...common,
       }, { status: 502, headers: { 'X-Ultra-Search-Trace': traceId } })
     }
