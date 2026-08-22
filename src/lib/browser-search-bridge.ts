@@ -34,7 +34,14 @@ export interface BrowserBridgeCandidate {
   purpose?: string
 }
 
-export type BrowserBridgeTransport = 'searxng' | 'zero-key-direct-rescue' | 'searxng+direct-rescue'
+export type BrowserBridgeTransport =
+  | 'searxng'
+  | 'keenable'
+  | 'zero-key-direct-rescue'
+  | 'searxng+direct-rescue'
+  | 'searxng+keenable'
+  | 'keenable+direct-rescue'
+  | 'searxng+keenable+direct-rescue'
 export type ServerSearchTransport = BrowserBridgeTransport
 
 export interface BrowserBridgeResult {

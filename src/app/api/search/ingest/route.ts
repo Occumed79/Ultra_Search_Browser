@@ -11,8 +11,12 @@ import {
 
 const VALID_TRANSPORTS = new Set<SearchRetrievalTransport>([
   'searxng',
+  'keenable',
   'zero-key-direct-rescue',
   'searxng+direct-rescue',
+  'searxng+keenable',
+  'keenable+direct-rescue',
+  'searxng+keenable+direct-rescue',
   'fixture',
 ])
 
@@ -25,14 +29,20 @@ function inferTransport(
   }
 
   let hasSearxng = false
+  let hasKeenable = false
   let hasRescue = false
   for (const result of results) {
     const source = typeof result.source === 'string' ? result.source.toLowerCase() : ''
     if (source.includes('searxng')) hasSearxng = true
+    if (source.includes('keenable')) hasKeenable = true
     if (source.includes('direct rescue')) hasRescue = true
   }
 
+  if (hasSearxng && hasKeenable && hasRescue) return 'searxng+keenable+direct-rescue'
+  if (hasSearxng && hasKeenable) return 'searxng+keenable'
   if (hasSearxng && hasRescue) return 'searxng+direct-rescue'
+  if (hasKeenable && hasRescue) return 'keenable+direct-rescue'
+  if (hasKeenable) return 'keenable'
   if (hasRescue) return 'zero-key-direct-rescue'
   return 'searxng'
 }
@@ -40,6 +50,10 @@ function inferTransport(
 function retrievalModeFor(transport: SearchRetrievalTransport): string {
   if (transport === 'zero-key-direct-rescue') return 'zero-key-direct-rescue'
   if (transport === 'searxng+direct-rescue') return 'searxng-metasearch+direct-rescue'
+  if (transport === 'keenable') return 'keenable-search'
+  if (transport === 'searxng+keenable') return 'searxng-metasearch+keenable'
+  if (transport === 'keenable+direct-rescue') return 'keenable+direct-rescue'
+  if (transport === 'searxng+keenable+direct-rescue') return 'searxng-metasearch+keenable+direct-rescue'
   if (transport === 'fixture') return 'fixture'
   return 'searxng-metasearch'
 }
@@ -88,7 +102,7 @@ export async function POST(request: NextRequest) {
       settings: body.settings,
       transport,
       retrievalMode: retrievalModeFor(transport),
-      productMode: 'rfp-finder-searxng',
+      productMode: 'rfp-finder-multi-source',
       rawCandidateLabel: 'rawSearchCandidates',
     })
     const retainedCandidateCount = Array.isArray(payload.results) ? payload.results.length : 0
@@ -122,7 +136,7 @@ export async function POST(request: NextRequest) {
       {
         error: 'Search result filtering failed',
         detail: error instanceof Error ? error.message : String(error),
-        stage: 'searxng-candidate-filter',
+        stage: 'multi-source-candidate-filter',
         traceId,
       },
       { status: 500, headers: traceId ? { 'X-Ultra-Search-Trace': traceId } : undefined }

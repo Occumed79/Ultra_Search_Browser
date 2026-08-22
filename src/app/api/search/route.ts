@@ -13,6 +13,7 @@ import {
 } from '../../../lib/search-source-health'
 import { searchBingHTML, searchDuckDuckGo, searchGoogleScrape } from '../../../lib/search'
 import { searchSearXNG } from '../../../lib/searxng'
+import { isKeenableConfigured, searchKeenable } from '../../../lib/keenable'
 import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
 import {
   distinctRetrievalCoverage,
@@ -23,7 +24,9 @@ import type { ScrapedResult } from '../../../types/search'
 
 const SEARCH_BUDGET_MS = 50_000
 const SEARX_VARIANT_TIMEOUT_MS = 10_000
+const KEENABLE_VARIANT_TIMEOUT_MS = 12_000
 const MAX_DIRECT_RESCUE_VARIANTS = 5
+const MAX_KEENABLE_VARIANTS = Math.max(1, Math.min(8, Number(process.env.KEENABLE_MAX_VARIANTS) || 4))
 
 interface RetrievalCandidate {
   title: string
@@ -129,6 +132,65 @@ async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number
   }
 }
 
+async function runKeenableVariant(variant: BrowserSearchVariant, maxResults: number) {
+  const source = 'Keenable'
+  if (!canAttemptSearchSource(source)) {
+    return {
+      candidates: [] as RetrievalCandidate[],
+      engines: [] as string[],
+      diagnostic: {
+        query: variant.query,
+        engine: source,
+        resultCount: 0,
+        circuitOpen: true,
+        error: 'Circuit open after repeated Keenable failures.',
+      } satisfies RetrievalDiagnostic,
+      ok: false,
+      configured: true,
+    }
+  }
+
+  const startedAt = Date.now()
+  try {
+    const response = await searchKeenable(variant.query, {
+      maxResults,
+      timeoutMs: KEENABLE_VARIANT_TIMEOUT_MS,
+      mode: process.env.KEENABLE_SEARCH_MODE || 'pro',
+    })
+    const latencyMs = Date.now() - startedAt
+
+    if (response.configured) {
+      if (response.ok) recordSearchSourceSuccess(source, latencyMs)
+      else recordSearchSourceFailure(source, latencyMs, response.error || 'Keenable request failed')
+    }
+
+    return {
+      candidates: toCandidates(response.results, variant),
+      engines: response.results.length > 0 ? [source] : [],
+      diagnostic: {
+        query: variant.query,
+        engine: source,
+        resultCount: response.results.length,
+        latencyMs,
+        ...(response.error ? { error: response.error } : {}),
+      } satisfies RetrievalDiagnostic,
+      ok: response.ok && response.results.length > 0,
+      configured: response.configured,
+    }
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt
+    const message = error instanceof Error ? error.message : String(error)
+    recordSearchSourceFailure(source, latencyMs, message)
+    return {
+      candidates: [] as RetrievalCandidate[],
+      engines: [] as string[],
+      diagnostic: { query: variant.query, engine: source, resultCount: 0, latencyMs, error: message } satisfies RetrievalDiagnostic,
+      ok: false,
+      configured: true,
+    }
+  }
+}
+
 async function runDirectRescue(variant: BrowserSearchVariant) {
   const jobs = [
     { name: 'Google', run: () => searchGoogleScrape(variant.query, { safeSearch: true, preferredLanguage: 'en', region: 'us' }) },
@@ -185,18 +247,27 @@ async function runDirectRescue(variant: BrowserSearchVariant) {
   return { candidates, diagnostics, engines }
 }
 
-function transportFor(searxCandidates: number, rescueCandidates: number): SearchRetrievalTransport {
+function transportFor(
+  searxCandidates: number,
+  keenableCandidates: number,
+  rescueCandidates: number
+): SearchRetrievalTransport {
+  if (searxCandidates > 0 && keenableCandidates > 0 && rescueCandidates > 0) return 'searxng+keenable+direct-rescue'
+  if (searxCandidates > 0 && keenableCandidates > 0) return 'searxng+keenable'
   if (searxCandidates > 0 && rescueCandidates > 0) return 'searxng+direct-rescue'
+  if (keenableCandidates > 0 && rescueCandidates > 0) return 'keenable+direct-rescue'
+  if (keenableCandidates > 0) return 'keenable'
   if (rescueCandidates > 0) return 'zero-key-direct-rescue'
   return 'searxng'
 }
 
 /**
- * Zero-install, zero-search-key retrieval endpoint.
+ * Server-side procurement retrieval endpoint.
  *
- * Private SearXNG is the preferred metasearch layer. If it is not configured,
- * unreachable, effectively sparse, or temporarily circuit-broken, a bounded
- * Google/DuckDuckGo/Bing HTML rescue keeps this single-user internal app usable.
+ * Private SearXNG remains the broad metasearch layer. When KEENABLE_API_KEY is
+ * configured, Keenable runs in parallel on a bounded set of the highest-priority
+ * query variants as an independent discovery source. If primary coverage is still
+ * sparse, the bounded Google/DuckDuckGo/Bing HTML rescue remains available.
  */
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
@@ -222,10 +293,20 @@ export async function POST(request: NextRequest) {
     const engines = new Set<string>()
     let successfulSearches = 0
     let searxSuccessfulSearches = 0
+    let keenableSuccessfulSearches = 0
     let searxConfigured = true
+    const keenableConfigured = isKeenableConfigured()
     let searxCandidateCount = 0
+    let keenableCandidateCount = 0
     let rescueCandidateCount = 0
     let rescueVariants: BrowserSearchVariant[] = []
+
+    const keenableVariants = keenableConfigured
+      ? variants.slice(0, MAX_KEENABLE_VARIANTS)
+      : []
+    const keenablePromise = Promise.all(
+      keenableVariants.map(variant => runKeenableVariant(variant, plan.maxResultsPerSearch))
+    )
 
     for (let start = 0; start < variants.length; start += 3) {
       if (Date.now() - startedAt >= SEARCH_BUDGET_MS - 10_000) {
@@ -249,9 +330,23 @@ export async function POST(request: NextRequest) {
     }
 
     const searxUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
+
+    const keenableResults = await keenablePromise
+    for (const result of keenableResults) {
+      diagnostics.push(result.diagnostic)
+      result.engines.forEach(engine => engines.add(engine))
+      allCandidates.push(...result.candidates)
+      keenableCandidateCount += result.candidates.length
+      if (result.ok) {
+        successfulSearches += 1
+        keenableSuccessfulSearches += 1
+      }
+    }
+
+    const primaryUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
     const rescueNeeded = shouldRunDirectRescue({
-      uniqueCandidateCount: searxUniqueCandidateCount,
-      successfulSearches: searxSuccessfulSearches,
+      uniqueCandidateCount: primaryUniqueCandidateCount,
+      successfulSearches: Math.max(searxSuccessfulSearches, keenableSuccessfulSearches),
       attemptedSearches: variants.length,
     })
 
@@ -267,7 +362,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const transport = transportFor(searxCandidateCount, rescueCandidateCount)
+    const transport = transportFor(searxCandidateCount, keenableCandidateCount, rescueCandidateCount)
     const runtimeMs = Date.now() - startedAt
     const totalUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
     const rescueStrategy = rescueVariants.map(variant => ({ purpose: variant.purpose, query: variant.query }))
@@ -282,6 +377,8 @@ export async function POST(request: NextRequest) {
       candidateCounts: {
         searxng: searxCandidateCount,
         searxngUnique: searxUniqueCandidateCount,
+        keenable: keenableCandidateCount,
+        primaryUnique: primaryUniqueCandidateCount,
         directRescue: rescueCandidateCount,
         totalUnique: totalUniqueCandidateCount,
       },
@@ -293,6 +390,8 @@ export async function POST(request: NextRequest) {
       traceId,
       transport,
       searxngConfigured: searxConfigured,
+      keenableConfigured,
+      keenableAttemptedSearches: keenableVariants.length,
       apiKeysRequired: false,
       attemptedSearches: variants.length,
       successfulSearches,
@@ -304,6 +403,8 @@ export async function POST(request: NextRequest) {
       candidateCounts: {
         searxng: searxCandidateCount,
         searxngUnique: searxUniqueCandidateCount,
+        keenable: keenableCandidateCount,
+        primaryUnique: primaryUniqueCandidateCount,
         directRescue: rescueCandidateCount,
         totalUnique: totalUniqueCandidateCount,
       },
@@ -311,12 +412,13 @@ export async function POST(request: NextRequest) {
 
     if (allCandidates.length === 0) {
       finishSearchTrace(traceId, 'error', { stage: 'retrieval', reason: 'no-candidates', transport })
+      const primaryConfigured = searxConfigured || keenableConfigured
       return NextResponse.json({
         error: 'Search retrieval returned no candidates',
-        code: searxConfigured ? 'SEARCH_SOURCES_EMPTY' : 'SEARXNG_UNAVAILABLE',
-        detail: searxConfigured
-          ? 'SearXNG and the bounded direct-engine rescue returned no usable search results.'
-          : 'Private SearXNG is not configured, and the zero-key direct-engine rescue was unable to return results.',
+        code: primaryConfigured ? 'SEARCH_SOURCES_EMPTY' : 'SEARXNG_UNAVAILABLE',
+        detail: primaryConfigured
+          ? 'SearXNG, Keenable, and the bounded direct-engine rescue returned no usable search results.'
+          : 'Private SearXNG and Keenable are not configured, and the zero-key direct-engine rescue was unable to return results.',
         ...common,
       }, { status: 502, headers: { 'X-Ultra-Search-Trace': traceId } })
     }
