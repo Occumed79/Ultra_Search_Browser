@@ -10,7 +10,15 @@ import { applyIntentCandidateGate } from './search-intent-gate'
 import { buildSearchPlan } from './search-settings'
 import { insertSearchResult, insertSearchRun } from './search-storage'
 
-export type SearchRetrievalTransport = 'searxng' | 'zero-key-direct-rescue' | 'searxng+direct-rescue' | 'fixture'
+export type SearchRetrievalTransport =
+  | 'searxng'
+  | 'keenable'
+  | 'zero-key-direct-rescue'
+  | 'searxng+direct-rescue'
+  | 'searxng+keenable'
+  | 'keenable+direct-rescue'
+  | 'searxng+keenable+direct-rescue'
+  | 'fixture'
 
 export interface ProcessSearchCandidatesInput {
   query: string
