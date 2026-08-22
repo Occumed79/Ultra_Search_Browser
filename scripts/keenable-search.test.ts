@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test, { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { isKeenableConfigured, searchKeenable } from '../src/lib/keenable'
 
@@ -17,7 +17,7 @@ function restoreEnvironment() {
   else process.env.KEENABLE_SEARCH_MODE = originalMode
 }
 
-test.afterEach(restoreEnvironment)
+afterEach(restoreEnvironment)
 
 test('Keenable is optional when no API key is configured', async () => {
   delete process.env.KEENABLE_API_KEY
