@@ -13,7 +13,7 @@ Deterministic Occu-Med intent + buyer-language planner
     ↓
 Parallel live retrieval
     ├─ Private SearXNG primary metasearch
-    │    └─ Google CSE / Bing / DuckDuckGo / Brave /
+    │    └─ Google / Google CSE / Bing / DuckDuckGo / Brave /
     │       Startpage / Qwant / Mojeek / Yahoo
     ├─ Keenable
     ├─ TinyFish Search
@@ -37,7 +37,7 @@ SHOW / REVIEW / REJECT
 Neon/PostgreSQL persistence, bookmarks, feedback, pursuit learning
 ```
 
-**Google, Bing, and DuckDuckGo are not rescue-only sources.** Ultra Search explicitly requests them as part of its normal SearXNG engine ensemble. The separate direct Google/DuckDuckGo/Bing rescue pass is an additional fallback transport used only when aggregate primary coverage is unexpectedly sparse.
+**Google, Google CSE, Bing, and DuckDuckGo are not rescue-only sources.** Ultra Search explicitly requests them as part of its normal SearXNG engine ensemble. The separate direct Google/DuckDuckGo/Bing rescue pass is an additional fallback transport used only when aggregate primary coverage is unexpectedly sparse.
 
 ## Live discovery sources
 
@@ -45,6 +45,7 @@ Neon/PostgreSQL persistence, bookmarks, feedback, pursuit learning
 
 SearXNG is the primary private metasearch transport. By default Ultra Search explicitly requests:
 
+- Google
 - Google CSE
 - Brave
 - DuckDuckGo
@@ -58,7 +59,7 @@ SearXNG is the primary private metasearch transport. By default Ultra Search exp
 
 ### Keenable
 
-Keenable is a first-class live-web discovery source. `KEENABLE_API_KEY`, `_2`, and `_3` form a rotating pool. The starting key rotates between requests and all configured keys remain available for same-request authentication/quota failover.
+Keenable is a first-class live-web discovery source. `KEENABLE_API_KEY`, `_2`, `_3`, and `_4` form a rotating four-key pool. The starting key rotates between requests and all configured keys remain available for same-request authentication/quota failover.
 
 ### TinyFish
 
@@ -72,7 +73,7 @@ Tavily runs in the normal search fan-out when configured. `TAVILY_API_KEY` throu
 
 Exa adds semantic/live-web retrieval. Ultra Search requests dynamic highlights so Exa candidates reach the Occu-Med relevance gate with useful evidence instead of title/URL-only records. Exa calls are capped at 10 results to conserve recurring free credit.
 
-`EXA_SEARCH_API_KEY`, `_2`, and `_3` form one rotating pool with full same-request failover.
+`EXA_SEARCH_API_KEY`, `_2`, `_3`, and `_4` form one rotating four-key pool with full same-request failover.
 
 ### LangSearch
 
@@ -102,11 +103,9 @@ LangSearch provides another independent web-search path and feeds its snippets i
 
 ### 2. Retrieve
 
-`POST /api/search` runs the plan server-side. SearXNG, Keenable, TinyFish, Tavily, Exa, and LangSearch participate when configured. A failure in one source does not establish a zero-result conclusion and does not stop the other sources.
+The website calls `POST /api/search`. The server executes the plan across SearXNG plus every configured live discovery provider. If aggregate primary coverage is sparse, Ultra Search can invoke a bounded direct Google/DuckDuckGo/Bing fallback.
 
-When aggregate primary coverage is insufficient, Ultra Search can run the separate bounded direct Google/DuckDuckGo/Bing rescue pass. Rescue favors official, direct-document, portal, buyer-language, and freshness strategies rather than spending its limited slots on generic searches.
-
-The retrieval response exposes source configuration, key-pool counts, per-source diagnostics, circuit-breaker health, candidate counts, and transport provenance.
+Search-provider API keys are optional accelerators, not a requirement for the application to function.
 
 ### 3. Ingest and filter
 
@@ -127,37 +126,22 @@ Candidate confidence intentionally remains `0` until destination evidence is ver
 
 Only `SHOW` results are promoted as verified matches. `REVIEW`, expired, dead, rejected, and duplicate results remain in evidence buckets without being presented as confirmed opportunities.
 
-When `ENABLE_EXTERNAL_SMART_FILTER=true`, deep validation can use the Cerebras key pool followed by Groq fallback/review. Initial candidate retrieval/filtering stays local so reviewer credits are not spent on every raw search result.
-
-## Persistence
-
-Neon/PostgreSQL remains the persistence layer for:
-
-- bookmarks
-- search history
-- feedback
-- pursuit learning
-- verified vector/search memory
-
-The live discovery APIs are **not** being used as a replacement bookmark database.
+When `ENABLE_EXTERNAL_SMART_FILTER=true`, Cerebras/Groq may assist with post-validation semantic evidence review. They are not required for retrieval and fail open to the local evidence path.
 
 ## Runtime contract
 
-Production health reports the `rfp-finder-v7-multisource` pipeline and exposes, among other fields:
+Production health reports the `rfp-finder-v7-multisource` pipeline and exposes:
 
 - `browserCompanionRequired: false`
 - `downloadsRequired: false`
 - `extensionsRequired: false`
 - `serverSideSearchRetrieval: true`
-- `searxngSearch: true`
 - `liveMultiSourceSearch: true`
-- `liveSearchSources`
-- `searxngRequestedEngines`
+- `searxngSearch: true`
 - `coreSearchApiKeysRequired: false`
 - `zeroKeyDirectRescue: true`
-- Cerebras key count and external-review enabled state
 
-`coreSearchApiKeysRequired: false` means the application retains a zero-key fallback architecture; it does **not** mean configured Keenable/TinyFish/Tavily/Exa/LangSearch keys are ignored.
+Health also exposes the live source configuration and key-pool counts without exposing credential values.
 
 ## Local setup
 
@@ -170,43 +154,22 @@ Open `http://localhost:3000`. No browser extension is required.
 
 ## Environment variables
 
-### Primary metasearch
-
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `SEARXNG_URL` | Recommended | Private SearXNG service URL |
-| `SEARXNG_ENGINES` | No | Explicit SearXNG primary engine ensemble; defaults to Google CSE, Brave, DuckDuckGo, Startpage, Bing, Qwant, Mojeek, Yahoo |
-
-### Live search APIs
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `KEENABLE_API_KEY` through `_3` | No | Keenable rotating live-search key pool |
-| `KEENABLE_SEARCH_MODE` | No | Keenable search mode; defaults to `pro` |
-| `KEENABLE_MAX_VARIANTS` | No | Keenable query-variant budget |
-| `KEENABLE_TIMEOUT_MS` | No | Keenable request timeout |
-| `TINYFISH_API_KEY` | No | TinyFish Search |
-| `TINYFISH_MAX_VARIANTS` | No | TinyFish query-variant budget |
-| `TAVILY_API_KEY` through `_4` | No | Tavily rotating key pool |
-| `TAVILY_MAX_VARIANTS` | No | Tavily query-variant budget |
-| `EXA_SEARCH_API_KEY` through `_3` | No | Exa rotating key pool |
-| `EXA_MAX_VARIANTS` | No | Exa query-variant budget |
-| `LANGSEARCH_API_KEY` | No | LangSearch live web search |
-| `LANGSEARCH_MAX_VARIANTS` | No | LangSearch query-variant budget |
-
-### Evidence review and persistence
-
-| Variable | Required | Purpose |
-| --- | --- | --- |
+| `SEARXNG_URL` | Recommended | URL of the private SearXNG service |
+| `SEARXNG_ENGINES` | No | Override the primary SearXNG engine ensemble |
+| `KEENABLE_API_KEY` … `_4` | No | Keenable renewable live-search pool |
+| `TINYFISH_API_KEY` | No | TinyFish Search live web retrieval |
+| `TAVILY_API_KEY` … `_4` | No | Tavily renewable live-search pool |
+| `EXA_SEARCH_API_KEY` … `_4` | No | Exa renewable live-search pool |
+| `LANGSEARCH_API_KEY` | No | LangSearch live web retrieval |
 | `DATABASE_URL` | No | Persistent bookmarks, feedback, pursuit learning, history, and search memory |
-| `CEREBRAS_API_KEY` + `_2` | No | Rotating post-validation semantic reviewer pool |
-| `GROQ_API_KEY` | No | Fallback/reviewer after Cerebras |
-| `ENABLE_EXTERNAL_SMART_FILTER=true` | No | Enables Cerebras/Groq during deep validation; off by default |
-| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | No | Optional semantic reranking experiment |
 | `ENABLE_LOCAL_EMBEDDINGS=true` | No | Enables the local MiniLM embedding model |
 | `ENABLE_OCR=true` | No | Enables OCR for images and scanned documents |
-
-See `.env.example` for all tuning variables.
+| `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_API_TOKEN` | No | Optional semantic reranking experiment |
+| `CEREBRAS_API_KEY` + `_2` | No | Optional post-validation semantic reviewer pool |
+| `GROQ_API_KEY` | No | Optional semantic review fallback |
+| `ENABLE_EXTERNAL_SMART_FILTER=true` | No | Enables Cerebras/Groq after deep evidence validation |
 
 ## SearXNG requirements
 
@@ -219,7 +182,7 @@ search:
     - json
 ```
 
-Ultra Search calls `/search` with `format=json`, `categories=general`, Safe Search, and an explicit `engines=` ensemble. The SearXNG deployment still controls which upstream engines are actually functional.
+Ultra Search calls the SearXNG `/search` endpoint with `format=json`, `categories=general`, Safe Search, and its explicit engine ensemble unless `SEARXNG_ENGINES` overrides it.
 
 ## Verification
 
@@ -235,7 +198,7 @@ Or:
 npm run verify
 ```
 
-The production smoke contract verifies the exact deployed commit, the multi-source health contract, explicit SearXNG Google/Bing/DuckDuckGo primary ensemble, valid live transport provenance, Occu-Med candidate filtering, deep SHOW validation, and non-persistence of synthetic validation evidence. The live `occupational health services` plan → retrieval → ingest canary also checks that provider-page leakage does not survive the procurement gate.
+The production smoke contract verifies the exact deployed commit, deterministic planning, live multi-source retrieval, Occu-Med candidate filtering, deep SHOW validation, non-persistence of synthetic validation evidence, and nine live capability-family plan → retrieval → ingest canaries.
 
 ## Render deployment
 
@@ -246,7 +209,7 @@ Main app:
 - **Node version:** 22
 - **Health endpoint:** `/api/health`
 
-Set `SEARXNG_URL` plus whichever renewable search-provider keys you want active. `/api/health` reports which sources are actually configured and how many keys each pool sees without exposing key values.
+Set `SEARXNG_URL` for the private SearXNG deployment and configure whichever renewable search providers you want active. The website remains functional without an extension or local software.
 
 ## Stack
 
@@ -259,7 +222,6 @@ Set `SEARXNG_URL` plus whichever renewable search-provider keys you want active.
 - Tavily
 - Exa
 - LangSearch
-- Cerebras / Groq optional evidence review
 - Cheerio
 - pdf-parse
 - Mammoth
