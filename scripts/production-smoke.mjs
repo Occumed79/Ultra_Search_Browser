@@ -2,8 +2,18 @@ const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.c
 const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
 const MAX_WAIT_MS = Number(process.env.MAX_WAIT_MS || 12 * 60 * 1000)
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15_000)
-const EXPECTED_PIPELINE = 'rfp-finder-v6-searxng-zero-key'
-const VALID_RETRIEVAL_TRANSPORTS = new Set(['searxng', 'zero-key-direct-rescue', 'searxng+direct-rescue'])
+const EXPECTED_PIPELINE = 'rfp-finder-v7-multisource'
+const VALID_RETRIEVAL_TRANSPORTS = new Set([
+  'searxng',
+  'keenable',
+  'multi-source',
+  'zero-key-direct-rescue',
+  'searxng+direct-rescue',
+  'searxng+keenable',
+  'keenable+direct-rescue',
+  'searxng+keenable+direct-rescue',
+  'multi-source+direct-rescue',
+])
 const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILABLE'])
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
@@ -161,7 +171,7 @@ async function assertServerRetrievalActive(plan) {
     throw new Error(`Browser-extension dependency is still active: HTTP ${response.status} ${JSON.stringify(data).slice(0, 1_500)}`)
   }
   if (data.apiKeysRequired !== false) {
-    throw new Error(`Server retrieval no longer reports zero-key operation: ${JSON.stringify(data).slice(0, 1_500)}`)
+    throw new Error(`Server retrieval incorrectly requires search API keys: ${JSON.stringify(data).slice(0, 1_500)}`)
   }
   if (response.ok) {
     if (!Array.isArray(data.results)) throw new Error('Successful server retrieval did not return a candidate array.')
@@ -170,14 +180,14 @@ async function assertServerRetrievalActive(plan) {
     return
   }
 
-  // Upstream engines can block a Render IP. Accept only the explicit upstream
-  // exhaustion contract — unrelated 502/503 responses must fail production smoke.
+  // Upstream sources can block a Render IP or return an empty pool. Accept only
+  // the explicit source-exhaustion contract; unrelated 502/503 responses fail.
   const expectedEmptyFailure = [502, 503].includes(response.status)
     && EXPECTED_EMPTY_CODES.has(data.code)
     && VALID_RETRIEVAL_TRANSPORTS.has(data.transport)
     && Array.isArray(data.diagnostics)
   if (!expectedEmptyFailure) {
-    throw new Error(`Server retrieval failed outside the expected zero-key contract: HTTP ${response.status} ${JSON.stringify(data).slice(0, 2_000)}`)
+    throw new Error(`Server retrieval failed outside the expected source contract: HTTP ${response.status} ${JSON.stringify(data).slice(0, 2_000)}`)
   }
   console.log(`[retrieval] server contract active but upstream pool empty; code=${data.code}; transport=${data.transport}; diagnostics=${data.diagnostics.length}`)
 }
@@ -255,10 +265,16 @@ async function main() {
   if (health.capabilities?.coreSearchApiKeysRequired !== false) throw new Error('Health contract says core search requires API keys.')
   if (health.capabilities?.serverSideSearchRetrieval !== true) throw new Error('Health contract does not expose server-side retrieval.')
   if (health.capabilities?.searxngSearch !== true) throw new Error('Health contract does not expose SearXNG search.')
+  if (health.capabilities?.liveMultiSourceSearch !== true) throw new Error('Health contract does not expose multi-source live search.')
+  if (!health.capabilities?.liveSearchSources) throw new Error('Health contract does not expose live source configuration.')
   if (health.capabilities?.zeroKeyDirectRescue !== true) throw new Error('Health contract does not expose zero-key direct rescue.')
   if (health.capabilities?.browserCompanionRequired !== false) throw new Error('Health contract still requires a browser companion.')
   if (health.capabilities?.extensionsRequired !== false || health.capabilities?.downloadsRequired !== false) {
     throw new Error('Health contract still requires local installation.')
+  }
+  const requestedEngines = health.capabilities?.searxngRequestedEngines || []
+  for (const requiredEngine of ['google cse', 'bing', 'duckduckgo']) {
+    if (!requestedEngines.includes(requiredEngine)) throw new Error(`SearXNG primary ensemble is missing ${requiredEngine}.`)
   }
 
   const plan = await runPlan()
