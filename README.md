@@ -198,7 +198,7 @@ Or:
 npm run verify
 ```
 
-The production smoke contract verifies the exact deployed commit, deterministic planning, live multi-source retrieval, Occu-Med candidate filtering, deep SHOW validation, non-persistence of synthetic validation evidence, and nine live capability-family plan → retrieval → ingest canaries.
+The production smoke contract verifies the exact deployed commit, deterministic planning, live multi-source retrieval, Occu-Med candidate filtering, deep SHOW validation, non-persistence of synthetic validation evidence, and nine live capability-family plan → retrieval → ingest canaries. It also preserves the live `occupational health services` plan → retrieval → ingest canary as the baseline end-to-end search check.
 
 ## Render deployment
 
