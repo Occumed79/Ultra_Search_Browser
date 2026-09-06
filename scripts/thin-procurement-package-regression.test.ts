@@ -33,7 +33,7 @@ test('thin procurement landing pages inspect linked solicitation evidence before
 
     if (url.endsWith('/procurement/documents/26-104')) {
       return new Response(
-        '<html><head><title>RFP 26-104 Occupational Health Services</title></head><body><h1>Request for Proposals 26-104</h1><p>The County requests proposals for occupational health services including pre-employment examinations, medical surveillance, audiometry, spirometry, respirator medical clearance, drug testing, and vaccinations for employees.</p><p>Proposals are due September 30, 2026. The contract opportunity remains open and active until the submission deadline.</p></body></html>',
+        '<html><head><title>RFP 26-104 Occupational Health Services</title></head><body><h1>Request for Proposals 26-104</h1><p>The County requests proposals for occupational health services including pre-employment examinations, medical surveillance, audiometry, spirometry, respirator medical clearance, drug testing, and vaccinations for employees.</p><p>Proposals are due September 30, 2099. The contract opportunity remains open and active until the submission deadline.</p></body></html>',
         { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
       )
     }
