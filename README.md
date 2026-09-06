@@ -59,7 +59,7 @@ SearXNG is the primary private metasearch transport. By default Ultra Search exp
 
 ### Keenable
 
-Keenable is a first-class live-web discovery source. `KEENABLE_API_KEY`, `_2`, `_3`, and `_4` form a rotating four-key pool. The starting key rotates between requests and all configured keys remain available for same-request authentication/quota failover.
+Keenable is a first-class live-web discovery source. `KEENABLE_API_KEY`, `KEENABLE_API_KEY_2`, `KEENABLE_API_KEY_3`, and `KEENABLE_API_KEY_4` form a rotating four-key pool. The starting key rotates between requests and all configured keys remain available for same-request authentication/quota failover.
 
 ### TinyFish
 
@@ -67,13 +67,13 @@ TinyFish Search supplies fresh ranked web results with titles, snippets, and URL
 
 ### Tavily
 
-Tavily runs in the normal search fan-out when configured. `TAVILY_API_KEY` through `_4` form one rotating pool with full same-request failover.
+Tavily runs in the normal search fan-out when configured. `TAVILY_API_KEY` through `TAVILY_API_KEY_4` form one rotating pool with full same-request failover.
 
 ### Exa
 
 Exa adds semantic/live-web retrieval. Ultra Search requests dynamic highlights so Exa candidates reach the Occu-Med relevance gate with useful evidence instead of title/URL-only records. Exa calls are capped at 10 results to conserve recurring free credit.
 
-`EXA_SEARCH_API_KEY`, `_2`, `_3`, and `_4` form one rotating four-key pool with full same-request failover.
+`EXA_SEARCH_API_KEY`, `EXA_SEARCH_API_KEY_2`, `EXA_SEARCH_API_KEY_3`, and `EXA_SEARCH_API_KEY_4` form one rotating four-key pool with full same-request failover.
 
 ### LangSearch
 
