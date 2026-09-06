@@ -17,7 +17,7 @@ import {
 const originalFetch = globalThis.fetch
 const ENV_NAMES = [
   'TAVILY_API_KEY', 'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3', 'TAVILY_API_KEY_4',
-  'EXA_SEARCH_API_KEY', 'EXA_SEARCH_API_KEY_2', 'EXA_SEARCH_API_KEY_3',
+  'EXA_SEARCH_API_KEY', 'EXA_SEARCH_API_KEY_2', 'EXA_SEARCH_API_KEY_3', 'EXA_SEARCH_API_KEY_4',
   'LANGSEARCH_API_KEY', 'TINYFISH_API_KEY',
 ]
 const originalEnv = Object.fromEntries(ENV_NAMES.map(name => [name, process.env[name]]))
@@ -96,6 +96,39 @@ test('Tavily can fail through the whole four-key pool before succeeding', async 
     'Bearer tavily-three',
     'Bearer tavily-four',
   ])
+})
+
+test('Exa can fail through the whole four-key pool before succeeding', async () => {
+  clearProviderEnv()
+  resetProviderKeyPoolForTests()
+  process.env.EXA_SEARCH_API_KEY = 'exa-one'
+  process.env.EXA_SEARCH_API_KEY_2 = 'exa-two'
+  process.env.EXA_SEARCH_API_KEY_3 = 'exa-three'
+  process.env.EXA_SEARCH_API_KEY_4 = 'exa-four'
+
+  const keysSeen: string[] = []
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const key = new Headers(init?.headers).get('x-api-key') || ''
+    keysSeen.push(key)
+    if (key !== 'exa-four') {
+      return new Response(JSON.stringify({ message: 'quota reached' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({
+      results: [{
+        title: 'Fourth Exa key result',
+        url: 'https://exa.example.gov/rfp/4',
+        highlights: ['Open occupational health RFP.'],
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+
+  const response = await searchExa('occupational health RFP')
+  assert.equal(response.ok, true)
+  assert.equal(response.keyCount, 4)
+  assert.deepEqual(keysSeen, ['exa-one', 'exa-two', 'exa-three', 'exa-four'])
 })
 
 test('Exa, LangSearch, and TinyFish use their live web search APIs and normalize results', async () => {
@@ -179,10 +212,10 @@ test('Ultra Search live retrieval fan-out includes every renewable discovery sou
 
   for (const variable of [
     'SEARXNG_URL', 'SEARXNG_ENGINES',
-    'KEENABLE_API_KEY_2', 'KEENABLE_API_KEY_3',
+    'KEENABLE_API_KEY_2', 'KEENABLE_API_KEY_3', 'KEENABLE_API_KEY_4',
     'TINYFISH_API_KEY',
     'TAVILY_API_KEY_2', 'TAVILY_API_KEY_3', 'TAVILY_API_KEY_4',
-    'EXA_SEARCH_API_KEY_2', 'EXA_SEARCH_API_KEY_3',
+    'EXA_SEARCH_API_KEY_2', 'EXA_SEARCH_API_KEY_3', 'EXA_SEARCH_API_KEY_4',
     'LANGSEARCH_API_KEY',
   ]) {
     assert.match(env, new RegExp(`^${variable}=`, 'm'))
