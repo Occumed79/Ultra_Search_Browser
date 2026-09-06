@@ -104,7 +104,7 @@ export async function searchKeenable(
   query: string,
   options: KeenableSearchOptions = {}
 ): Promise<KeenableSearchResponse> {
-  const keys = rotatingProviderKeys('keenable', KEENABLE_KEYS, 2)
+  const keys = rotatingProviderKeys('keenable', KEENABLE_KEYS, KEENABLE_KEYS.length)
   const keyCount = keenableKeyCount()
   if (keys.length === 0) {
     return {
