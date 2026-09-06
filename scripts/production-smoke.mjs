@@ -20,7 +20,7 @@ const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
     title: 'Synthetic Occupational Health Services RFP — Production Validation',
     url: `${APP_URL}/search-validation-evidence.txt`,
-    description: 'Open synthetic Request for Proposals for employer-directed occupational health examinations, medical surveillance, audiometry, spirometry, drug testing, and related program support. Responses due September 30, 2026.',
+    description: 'Open synthetic Request for Proposals for employer-directed occupational health examinations, medical surveillance, audiometry, spirometry, drug testing, and related program support. Responses due September 30, 2099.',
     domain: new URL(APP_URL).hostname,
     source: 'production-smoke',
     rank: 1,
@@ -32,7 +32,7 @@ const METASEARCH_FIXTURE = [
   {
     title: 'Occupational Health Services Request for Proposals',
     url: 'https://procurement.example.gov/bids/occupational-health-services?utm_source=brave',
-    description: 'Request for proposals from qualified vendors for employee occupational health services including pre-employment physical examinations, medical surveillance, audiograms, spirometry, drug testing, and related employer medical services. Responses due September 30, 2026.',
+    description: 'Request for proposals from qualified vendors for employee occupational health services including pre-employment physical examinations, medical surveillance, audiograms, spirometry, drug testing, and related employer medical services. Responses due September 30, 2099.',
     source: 'SearXNG · brave',
     rank: 1,
     score: 100,
@@ -83,7 +83,7 @@ async function waitForDeployment() {
       if (
         response.ok
         && health.status === 'ok'
-        && health.productMode === 'rfp-finder-searxng'
+        && health.productMode === 'rfp-finder-multi-source'
         && health.searchPipeline === EXPECTED_PIPELINE
         && (!EXPECTED_COMMIT || commitMatches(health.commit, EXPECTED_COMMIT))
       ) return health
