@@ -30,8 +30,9 @@ test('concurrent result-card preference reads collapse into a short-lived server
   assert.match(route, /invalidatePreferenceCache\(userId\)/)
 })
 
-test('README matches hardened zero-key rescue and explicit external reviewer opt-in', () => {
+test('README matches multi-source discovery, direct fallback, and explicit external reviewer opt-in', () => {
   assert.match(readme, /Google\/DuckDuckGo\/Bing rescue pass/)
+  assert.match(readme, /SearXNG, Keenable, TinyFish, Tavily, Exa, and LangSearch participate/i)
   assert.match(readme, /ENABLE_EXTERNAL_SMART_FILTER=true/)
   assert.match(readme, /live `occupational health services` plan → retrieval → ingest canary/)
 })
