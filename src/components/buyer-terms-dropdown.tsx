@@ -22,7 +22,6 @@ export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onT
 
     return () => {
       host.remove()
-      setPortalHost(null)
     }
   }, [])
 
