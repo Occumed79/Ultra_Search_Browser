@@ -13,11 +13,13 @@ import { insertSearchResult, insertSearchRun } from './search-storage'
 export type SearchRetrievalTransport =
   | 'searxng'
   | 'keenable'
+  | 'multi-source'
   | 'zero-key-direct-rescue'
   | 'searxng+direct-rescue'
   | 'searxng+keenable'
   | 'keenable+direct-rescue'
   | 'searxng+keenable+direct-rescue'
+  | 'multi-source+direct-rescue'
   | 'fixture'
 
 export interface ProcessSearchCandidatesInput {

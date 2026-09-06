@@ -13,8 +13,22 @@ import {
 } from '../../../lib/search-source-health'
 import { searchBingHTML, searchDuckDuckGo, searchGoogleScrape } from '../../../lib/search'
 import { searchSearXNG } from '../../../lib/searxng'
-import { isKeenableConfigured, searchKeenable } from '../../../lib/keenable'
-import { isAlgoliaSearchConfigured, searchAlgoliaMemory } from '../../../lib/algolia'
+import { isKeenableConfigured, keenableKeyCount, searchKeenable } from '../../../lib/keenable'
+import {
+  exaKeyCount,
+  isExaConfigured,
+  isLangSearchConfigured,
+  isTavilyConfigured,
+  isTinyFishConfigured,
+  langSearchKeyCount,
+  searchExa,
+  searchLangSearch,
+  searchTavily,
+  searchTinyFish,
+  tavilyKeyCount,
+  tinyFishKeyCount,
+  type RenewableSearchResponse,
+} from '../../../lib/renewable-search-providers'
 import type { SearchRetrievalTransport } from '../../../lib/search-candidate-processing'
 import {
   distinctRetrievalCoverage,
@@ -26,10 +40,13 @@ import type { ScrapedResult } from '../../../types/search'
 const SEARCH_BUDGET_MS = 50_000
 const SEARX_VARIANT_TIMEOUT_MS = 10_000
 const KEENABLE_VARIANT_TIMEOUT_MS = 12_000
-const ALGOLIA_MEMORY_TIMEOUT_MS = 6_000
+const EXTERNAL_VARIANT_TIMEOUT_MS = 10_000
 const MAX_DIRECT_RESCUE_VARIANTS = 5
-const MAX_KEENABLE_VARIANTS = Math.max(1, Math.min(8, Number(process.env.KEENABLE_MAX_VARIANTS) || 4))
-const MAX_ALGOLIA_MEMORY_RESULTS = Math.max(1, Math.min(30, Number(process.env.ALGOLIA_MAX_RESULTS) || 15))
+const MAX_KEENABLE_VARIANTS = boundedEnv('KEENABLE_MAX_VARIANTS', 4, 1, 8)
+const MAX_TINYFISH_VARIANTS = boundedEnv('TINYFISH_MAX_VARIANTS', 4, 1, 8)
+const MAX_TAVILY_VARIANTS = boundedEnv('TAVILY_MAX_VARIANTS', 3, 1, 8)
+const MAX_EXA_VARIANTS = boundedEnv('EXA_MAX_VARIANTS', 2, 1, 8)
+const MAX_LANGSEARCH_VARIANTS = boundedEnv('LANGSEARCH_MAX_VARIANTS', 2, 1, 8)
 
 interface RetrievalCandidate {
   title: string
@@ -49,6 +66,27 @@ interface RetrievalDiagnostic {
   latencyMs?: number
   circuitOpen?: boolean
   error?: string
+}
+
+interface VariantResult {
+  candidates: RetrievalCandidate[]
+  engines: string[]
+  diagnostic: RetrievalDiagnostic
+  ok: boolean
+  configured: boolean
+}
+
+interface ProviderDefinition {
+  name: string
+  configured: boolean
+  maxVariants: number
+  run: (variant: BrowserSearchVariant, maxResults: number) => Promise<RenewableSearchResponse>
+}
+
+function boundedEnv(name: string, fallback: number, min: number, max: number): number {
+  const parsed = Number(process.env[name])
+  if (!Number.isInteger(parsed)) return fallback
+  return Math.max(min, Math.min(max, parsed))
 }
 
 function coercePlan(value: unknown): BrowserSearchPlan | null {
@@ -78,32 +116,19 @@ function toCandidates(results: ScrapedResult[], variant: BrowserSearchVariant, s
   }))
 }
 
-function toMemoryCandidates(results: ScrapedResult[], query: string): RetrievalCandidate[] {
-  return results.map((result, index) => ({
-    title: result.title,
-    url: result.url,
-    description: result.description || '',
-    source: result.source || 'Algolia memory',
-    rank: result.rank || index + 1,
-    score: Number.isFinite(result.score) && result.score > 0 ? result.score : Math.max(10, 100 - index * 2),
-    query,
-    purpose: 'verified-memory',
-  }))
-}
-
-async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number) {
+async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number): Promise<VariantResult> {
   const source = 'SearXNG'
   if (!canAttemptSearchSource(source)) {
     return {
-      candidates: [] as RetrievalCandidate[],
-      engines: [] as string[],
+      candidates: [],
+      engines: [],
       diagnostic: {
         query: variant.query,
         engine: source,
         resultCount: 0,
         circuitOpen: true,
         error: 'Circuit open after repeated SearXNG failures.',
-      } satisfies RetrievalDiagnostic,
+      },
       ok: false,
       configured: true,
     }
@@ -130,7 +155,7 @@ async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number
         resultCount: response.results.length,
         latencyMs,
         ...(response.error ? { error: response.error } : {}),
-      } satisfies RetrievalDiagnostic,
+      },
       ok: response.ok && response.results.length > 0,
       configured: response.configured,
     }
@@ -139,28 +164,28 @@ async function runSearxVariant(variant: BrowserSearchVariant, maxResults: number
     const message = error instanceof Error ? error.message : String(error)
     recordSearchSourceFailure(source, latencyMs, message)
     return {
-      candidates: [] as RetrievalCandidate[],
-      engines: [] as string[],
-      diagnostic: { query: variant.query, engine: source, resultCount: 0, latencyMs, error: message } satisfies RetrievalDiagnostic,
+      candidates: [],
+      engines: [],
+      diagnostic: { query: variant.query, engine: source, resultCount: 0, latencyMs, error: message },
       ok: false,
       configured: true,
     }
   }
 }
 
-async function runKeenableVariant(variant: BrowserSearchVariant, maxResults: number) {
+async function runKeenableVariant(variant: BrowserSearchVariant, maxResults: number): Promise<VariantResult> {
   const source = 'Keenable'
   if (!canAttemptSearchSource(source)) {
     return {
-      candidates: [] as RetrievalCandidate[],
-      engines: [] as string[],
+      candidates: [],
+      engines: [],
       diagnostic: {
         query: variant.query,
         engine: source,
         resultCount: 0,
         circuitOpen: true,
         error: 'Circuit open after repeated Keenable failures.',
-      } satisfies RetrievalDiagnostic,
+      },
       ok: false,
       configured: true,
     }
@@ -189,7 +214,7 @@ async function runKeenableVariant(variant: BrowserSearchVariant, maxResults: num
         resultCount: response.results.length,
         latencyMs,
         ...(response.error ? { error: response.error } : {}),
-      } satisfies RetrievalDiagnostic,
+      },
       ok: response.ok && response.results.length > 0,
       configured: response.configured,
     }
@@ -198,27 +223,32 @@ async function runKeenableVariant(variant: BrowserSearchVariant, maxResults: num
     const message = error instanceof Error ? error.message : String(error)
     recordSearchSourceFailure(source, latencyMs, message)
     return {
-      candidates: [] as RetrievalCandidate[],
-      engines: [] as string[],
-      diagnostic: { query: variant.query, engine: source, resultCount: 0, latencyMs, error: message } satisfies RetrievalDiagnostic,
+      candidates: [],
+      engines: [],
+      diagnostic: { query: variant.query, engine: source, resultCount: 0, latencyMs, error: message },
       ok: false,
       configured: true,
     }
   }
 }
 
-async function runAlgoliaMemory(query: string, maxResults: number) {
-  const source = 'Algolia memory'
+async function runRenewableVariant(
+  provider: ProviderDefinition,
+  variant: BrowserSearchVariant,
+  maxResults: number
+): Promise<VariantResult> {
+  const source = provider.name
   if (!canAttemptSearchSource(source)) {
     return {
-      candidates: [] as RetrievalCandidate[],
+      candidates: [],
+      engines: [],
       diagnostic: {
-        query,
+        query: variant.query,
         engine: source,
         resultCount: 0,
         circuitOpen: true,
-        error: 'Circuit open after repeated Algolia memory failures.',
-      } satisfies RetrievalDiagnostic,
+        error: `Circuit open after repeated ${source} failures.`,
+      },
       ok: false,
       configured: true,
     }
@@ -226,26 +256,24 @@ async function runAlgoliaMemory(query: string, maxResults: number) {
 
   const startedAt = Date.now()
   try {
-    const response = await searchAlgoliaMemory(query, {
-      maxResults,
-      timeoutMs: ALGOLIA_MEMORY_TIMEOUT_MS,
-    })
+    const response = await provider.run(variant, maxResults)
     const latencyMs = Date.now() - startedAt
 
     if (response.configured) {
       if (response.ok) recordSearchSourceSuccess(source, latencyMs)
-      else recordSearchSourceFailure(source, latencyMs, response.error || 'Algolia memory search failed')
+      else recordSearchSourceFailure(source, latencyMs, response.error || `${source} request failed`)
     }
 
     return {
-      candidates: toMemoryCandidates(response.results, query),
+      candidates: toCandidates(response.results, variant),
+      engines: response.results.length > 0 ? [source] : [],
       diagnostic: {
-        query,
+        query: variant.query,
         engine: source,
         resultCount: response.results.length,
         latencyMs,
         ...(response.error ? { error: response.error } : {}),
-      } satisfies RetrievalDiagnostic,
+      },
       ok: response.ok && response.results.length > 0,
       configured: response.configured,
     }
@@ -254,8 +282,9 @@ async function runAlgoliaMemory(query: string, maxResults: number) {
     const message = error instanceof Error ? error.message : String(error)
     recordSearchSourceFailure(source, latencyMs, message)
     return {
-      candidates: [] as RetrievalCandidate[],
-      diagnostic: { query, engine: source, resultCount: 0, latencyMs, error: message } satisfies RetrievalDiagnostic,
+      candidates: [],
+      engines: [],
+      diagnostic: { query: variant.query, engine: source, resultCount: 0, latencyMs, error: message },
       ok: false,
       configured: true,
     }
@@ -294,9 +323,9 @@ async function runDirectRescue(variant: BrowserSearchVariant) {
       throw Object.assign(new Error(message), { sourceName: job.name, latencyMs })
     }
   }))
+
   const candidates: RetrievalCandidate[] = []
   const engines: string[] = []
-
   for (const item of settled) {
     if (item.status === 'fulfilled') {
       const { job, data, latencyMs } = item.value
@@ -321,8 +350,12 @@ async function runDirectRescue(variant: BrowserSearchVariant) {
 function transportFor(
   searxCandidates: number,
   keenableCandidates: number,
+  renewableCandidates: number,
   rescueCandidates: number
 ): SearchRetrievalTransport {
+  if (renewableCandidates > 0) {
+    return rescueCandidates > 0 ? 'multi-source+direct-rescue' : 'multi-source'
+  }
   if (searxCandidates > 0 && keenableCandidates > 0 && rescueCandidates > 0) return 'searxng+keenable+direct-rescue'
   if (searxCandidates > 0 && keenableCandidates > 0) return 'searxng+keenable'
   if (searxCandidates > 0 && rescueCandidates > 0) return 'searxng+direct-rescue'
@@ -332,14 +365,56 @@ function transportFor(
   return 'searxng'
 }
 
+function providerDefinitions(): ProviderDefinition[] {
+  const purpose = 'Find current, real procurement opportunities relevant to Occu-Med occupational health, medical readiness, employee examinations, surveillance, testing, vaccination, and related services.'
+  return [
+    {
+      name: 'TinyFish',
+      configured: isTinyFishConfigured(),
+      maxVariants: MAX_TINYFISH_VARIANTS,
+      run: (variant, maxResults) => searchTinyFish(variant.query, {
+        maxResults,
+        timeoutMs: EXTERNAL_VARIANT_TIMEOUT_MS,
+        purpose,
+      }),
+    },
+    {
+      name: 'Tavily',
+      configured: isTavilyConfigured(),
+      maxVariants: MAX_TAVILY_VARIANTS,
+      run: (variant, maxResults) => searchTavily(variant.query, {
+        maxResults,
+        timeoutMs: EXTERNAL_VARIANT_TIMEOUT_MS,
+      }),
+    },
+    {
+      name: 'Exa',
+      configured: isExaConfigured(),
+      maxVariants: MAX_EXA_VARIANTS,
+      run: (variant, maxResults) => searchExa(variant.query, {
+        maxResults,
+        timeoutMs: EXTERNAL_VARIANT_TIMEOUT_MS,
+      }),
+    },
+    {
+      name: 'LangSearch',
+      configured: isLangSearchConfigured(),
+      maxVariants: MAX_LANGSEARCH_VARIANTS,
+      run: (variant, maxResults) => searchLangSearch(variant.query, {
+        maxResults,
+        timeoutMs: EXTERNAL_VARIANT_TIMEOUT_MS,
+      }),
+    },
+  ]
+}
+
 /**
  * Server-side procurement retrieval endpoint.
  *
- * Private SearXNG remains the broad metasearch layer. When KEENABLE_API_KEY is
- * configured, Keenable runs in parallel on a bounded set of the highest-priority
- * query variants as an independent discovery source. Verified Algolia memory is
- * queried once per user search and never suppresses live-web rescue. If primary
- * coverage is still sparse, bounded Google/DuckDuckGo/Bing rescue remains available.
+ * Ultra Search deliberately fans the same Occu-Med procurement plan across
+ * independent live-web indexes. SearXNG provides broad metasearch; Keenable,
+ * TinyFish, Tavily, Exa, and LangSearch add independent discovery. Google,
+ * DuckDuckGo, and Bing remain bounded rescue paths when live coverage is sparse.
  */
 export async function POST(request: NextRequest) {
   const startedAt = Date.now()
@@ -365,29 +440,42 @@ export async function POST(request: NextRequest) {
     const engines = new Set<string>()
     let successfulSearches = 0
     let searxSuccessfulSearches = 0
-    let keenableSuccessfulSearches = 0
+    let externalSuccessfulSearches = 0
     let searxConfigured = true
     const keenableConfigured = isKeenableConfigured()
-    const algoliaConfigured = isAlgoliaSearchConfigured()
-    let searxCandidateCount = 0
-    let keenableCandidateCount = 0
-    let algoliaMemoryCandidateCount = 0
-    let rescueCandidateCount = 0
-    let rescueVariants: BrowserSearchVariant[] = []
+    const providers = providerDefinitions()
 
-    const keenableVariants = keenableConfigured
-      ? variants.slice(0, MAX_KEENABLE_VARIANTS)
-      : []
+    const counts = {
+      searxng: 0,
+      keenable: 0,
+      tinyfish: 0,
+      tavily: 0,
+      exa: 0,
+      langsearch: 0,
+      directRescue: 0,
+    }
+
+    const keenableVariants = keenableConfigured ? variants.slice(0, MAX_KEENABLE_VARIANTS) : []
     const keenablePromise = Promise.all(
       keenableVariants.map(variant => runKeenableVariant(variant, plan.maxResultsPerSearch))
     )
-    const algoliaPromise = algoliaConfigured
-      ? runAlgoliaMemory(query, MAX_ALGOLIA_MEMORY_RESULTS)
-      : Promise.resolve(null)
+
+    const providerPromises = providers.map(provider => ({
+      provider,
+      variants: provider.configured ? variants.slice(0, provider.maxVariants) : [],
+      promise: provider.configured
+        ? Promise.all(variants.slice(0, provider.maxVariants).map(variant => runRenewableVariant(provider, variant, plan.maxResultsPerSearch)))
+        : Promise.resolve([] as VariantResult[]),
+    }))
 
     for (let start = 0; start < variants.length; start += 3) {
       if (Date.now() - startedAt >= SEARCH_BUDGET_MS - 10_000) {
-        diagnostics.push({ query, engine: 'SearXNG', resultCount: 0, error: 'Search request budget reached before all SearXNG waves completed.' })
+        diagnostics.push({
+          query,
+          engine: 'SearXNG',
+          resultCount: 0,
+          error: 'Search request budget reached before all SearXNG waves completed.',
+        })
         break
       }
 
@@ -397,7 +485,7 @@ export async function POST(request: NextRequest) {
         diagnostics.push(result.diagnostic)
         result.engines.forEach(engine => engines.add(engine))
         allCandidates.push(...result.candidates)
-        searxCandidateCount += result.candidates.length
+        counts.searxng += result.candidates.length
         if (result.ok) {
           successfulSearches += 1
           searxSuccessfulSearches += 1
@@ -413,20 +501,38 @@ export async function POST(request: NextRequest) {
       diagnostics.push(result.diagnostic)
       result.engines.forEach(engine => engines.add(engine))
       allCandidates.push(...result.candidates)
-      keenableCandidateCount += result.candidates.length
+      counts.keenable += result.candidates.length
       if (result.ok) {
         successfulSearches += 1
-        keenableSuccessfulSearches += 1
+        externalSuccessfulSearches += 1
+      }
+    }
+
+    for (const entry of providerPromises) {
+      const results = await entry.promise
+      for (const result of results) {
+        diagnostics.push(result.diagnostic)
+        result.engines.forEach(engine => engines.add(engine))
+        allCandidates.push(...result.candidates)
+        const key = entry.provider.name.toLowerCase() as 'tinyfish' | 'tavily' | 'exa' | 'langsearch'
+        counts[key] += result.candidates.length
+        if (result.ok) {
+          successfulSearches += 1
+          externalSuccessfulSearches += 1
+        }
       }
     }
 
     const primaryUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
+    const attemptedExternalSearches = keenableVariants.length
+      + providerPromises.reduce((sum, entry) => sum + entry.variants.length, 0)
     const rescueNeeded = shouldRunDirectRescue({
       uniqueCandidateCount: primaryUniqueCandidateCount,
-      successfulSearches: Math.max(searxSuccessfulSearches, keenableSuccessfulSearches),
-      attemptedSearches: variants.length,
+      successfulSearches: searxSuccessfulSearches + externalSuccessfulSearches,
+      attemptedSearches: Math.max(variants.length, attemptedExternalSearches),
     })
 
+    let rescueVariants: BrowserSearchVariant[] = []
     if (rescueNeeded && Date.now() - startedAt < SEARCH_BUDGET_MS - 5_000) {
       rescueVariants = selectDirectRescueVariants(variants, MAX_DIRECT_RESCUE_VARIANTS)
       const rescues = await Promise.all(rescueVariants.map(variant => runDirectRescue(variant)))
@@ -434,20 +540,13 @@ export async function POST(request: NextRequest) {
         diagnostics.push(...rescue.diagnostics)
         rescue.engines.forEach(engine => engines.add(engine))
         if (rescue.candidates.length > 0) successfulSearches += 1
-        rescueCandidateCount += rescue.candidates.length
+        counts.directRescue += rescue.candidates.length
         allCandidates.push(...rescue.candidates)
       }
     }
 
-    const algoliaResult = await algoliaPromise
-    if (algoliaResult) {
-      diagnostics.push(algoliaResult.diagnostic)
-      if (algoliaResult.candidates.length > 0) engines.add('Algolia memory')
-      algoliaMemoryCandidateCount = algoliaResult.candidates.length
-      allCandidates.push(...algoliaResult.candidates)
-    }
-
-    const transport = transportFor(searxCandidateCount, keenableCandidateCount, rescueCandidateCount)
+    const renewableCandidateCount = counts.tinyfish + counts.tavily + counts.exa + counts.langsearch
+    const transport = transportFor(counts.searxng, counts.keenable, renewableCandidateCount, counts.directRescue)
     const runtimeMs = Date.now() - startedAt
     const totalUniqueCandidateCount = distinctRetrievalCoverage(allCandidates)
     const rescueStrategy = rescueVariants.map(variant => ({ purpose: variant.purpose, query: variant.query }))
@@ -457,28 +556,49 @@ export async function POST(request: NextRequest) {
       runtimeMs,
       transport,
       attemptedSearches: variants.length,
+      attemptedExternalSearches,
       successfulSearches,
       rescueTriggered: rescueNeeded,
       candidateCounts: {
-        searxng: searxCandidateCount,
+        ...counts,
         searxngUnique: searxUniqueCandidateCount,
-        keenable: keenableCandidateCount,
-        algoliaMemory: algoliaMemoryCandidateCount,
         primaryUnique: primaryUniqueCandidateCount,
-        directRescue: rescueCandidateCount,
         totalUnique: totalUniqueCandidateCount,
       },
       diagnostics,
       sourceHealth,
     })
 
+    const configuredSources = {
+      searxng: searxConfigured,
+      keenable: keenableConfigured,
+      tinyfish: isTinyFishConfigured(),
+      tavily: isTavilyConfigured(),
+      exa: isExaConfigured(),
+      langsearch: isLangSearchConfigured(),
+    }
+
+    const keyPools = {
+      keenable: keenableKeyCount(),
+      tinyfish: tinyFishKeyCount(),
+      tavily: tavilyKeyCount(),
+      exa: exaKeyCount(),
+      langsearch: langSearchKeyCount(),
+    }
+
     const common = {
       traceId,
       transport,
       searxngConfigured: searxConfigured,
       keenableConfigured,
+      tinyfishConfigured: configuredSources.tinyfish,
+      tavilyConfigured: configuredSources.tavily,
+      exaConfigured: configuredSources.exa,
+      langsearchConfigured: configuredSources.langsearch,
+      configuredSources,
+      keyPools,
       keenableAttemptedSearches: keenableVariants.length,
-      algoliaConfigured,
+      attemptedExternalSearches,
       apiKeysRequired: false,
       attemptedSearches: variants.length,
       successfulSearches,
@@ -488,25 +608,22 @@ export async function POST(request: NextRequest) {
       rescueTriggered: rescueNeeded,
       rescueStrategy,
       candidateCounts: {
-        searxng: searxCandidateCount,
+        ...counts,
         searxngUnique: searxUniqueCandidateCount,
-        keenable: keenableCandidateCount,
-        algoliaMemory: algoliaMemoryCandidateCount,
         primaryUnique: primaryUniqueCandidateCount,
-        directRescue: rescueCandidateCount,
         totalUnique: totalUniqueCandidateCount,
       },
     }
 
     if (allCandidates.length === 0) {
       finishSearchTrace(traceId, 'error', { stage: 'retrieval', reason: 'no-candidates', transport })
-      const primaryConfigured = searxConfigured || keenableConfigured || algoliaConfigured
+      const primaryConfigured = Object.values(configuredSources).some(Boolean)
       return NextResponse.json({
         error: 'Search retrieval returned no candidates',
         code: primaryConfigured ? 'SEARCH_SOURCES_EMPTY' : 'SEARXNG_UNAVAILABLE',
         detail: primaryConfigured
-          ? 'SearXNG, Keenable, Algolia memory, and the bounded direct-engine rescue returned no usable search results.'
-          : 'Private SearXNG, Keenable, and Algolia memory are not configured, and the zero-key direct-engine rescue was unable to return results.',
+          ? 'All configured live-web discovery sources and the bounded direct-engine rescue returned no usable search results.'
+          : 'No keyed live-web source is configured, private SearXNG was unavailable, and the zero-key direct-engine rescue returned no usable results.',
         ...common,
       }, { status: 502, headers: { 'X-Ultra-Search-Trace': traceId } })
     }
@@ -515,7 +632,10 @@ export async function POST(request: NextRequest) {
       headers: { 'Cache-Control': 'no-store, max-age=0', 'X-Ultra-Search-Trace': traceId },
     })
   } catch (error) {
-    finishSearchTrace(traceId, 'error', { stage: 'retrieval', error: error instanceof Error ? error.message : String(error) })
+    finishSearchTrace(traceId, 'error', {
+      stage: 'retrieval',
+      error: error instanceof Error ? error.message : String(error),
+    })
     return NextResponse.json({
       error: 'Search retrieval failed',
       detail: error instanceof Error ? error.message : String(error),

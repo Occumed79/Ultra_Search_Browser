@@ -12,11 +12,13 @@ import {
 const VALID_TRANSPORTS = new Set<SearchRetrievalTransport>([
   'searxng',
   'keenable',
+  'multi-source',
   'zero-key-direct-rescue',
   'searxng+direct-rescue',
   'searxng+keenable',
   'keenable+direct-rescue',
   'searxng+keenable+direct-rescue',
+  'multi-source+direct-rescue',
   'fixture',
 ])
 
@@ -30,14 +32,17 @@ function inferTransport(
 
   let hasSearxng = false
   let hasKeenable = false
+  let hasRenewableProvider = false
   let hasRescue = false
   for (const result of results) {
     const source = typeof result.source === 'string' ? result.source.toLowerCase() : ''
     if (source.includes('searxng')) hasSearxng = true
     if (source.includes('keenable')) hasKeenable = true
+    if (['tinyfish', 'tavily', 'exa', 'langsearch'].some(name => source.includes(name))) hasRenewableProvider = true
     if (source.includes('direct rescue')) hasRescue = true
   }
 
+  if (hasRenewableProvider) return hasRescue ? 'multi-source+direct-rescue' : 'multi-source'
   if (hasSearxng && hasKeenable && hasRescue) return 'searxng+keenable+direct-rescue'
   if (hasSearxng && hasKeenable) return 'searxng+keenable'
   if (hasSearxng && hasRescue) return 'searxng+direct-rescue'
@@ -48,6 +53,8 @@ function inferTransport(
 }
 
 function retrievalModeFor(transport: SearchRetrievalTransport): string {
+  if (transport === 'multi-source') return 'renewable-live-multi-source'
+  if (transport === 'multi-source+direct-rescue') return 'renewable-live-multi-source+direct-rescue'
   if (transport === 'zero-key-direct-rescue') return 'zero-key-direct-rescue'
   if (transport === 'searxng+direct-rescue') return 'searxng-metasearch+direct-rescue'
   if (transport === 'keenable') return 'keenable-search'

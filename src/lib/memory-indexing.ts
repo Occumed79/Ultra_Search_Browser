@@ -1,11 +1,9 @@
-import { indexVerifiedResultsInAlgolia, type AlgoliaIndexResponse } from './algolia'
 import { generateEmbedding } from './embeddings'
 import { createVectorStoreAdapter, type SearchDocument, type VectorStoreAdapter } from './vector-store'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
 const DEFAULT_INDEX_LIMIT = 12
 const DEFAULT_INDEX_TIMEOUT_MS = 4_000
-const ALGOLIA_INDEX_TIMEOUT_MS = 2_500
 let adapterPromise: Promise<VectorStoreAdapter | null> | null = null
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number, label: string): Promise<T> {
@@ -71,7 +69,6 @@ export interface MemoryIndexingDiagnostics {
   indexed: number
   rejectedUnverified?: number
   error?: string
-  algolia?: AlgoliaIndexResponse
 }
 
 export async function indexResultsInPersistentMemory(
@@ -84,30 +81,12 @@ export async function indexResultsInPersistentMemory(
     .filter(isVerifiedMemoryCandidate)
     .slice(0, Math.max(0, limit))
   const rejectedUnverified = Math.max(0, results.length - candidates.length)
-  const algoliaPromise = indexVerifiedResultsInAlgolia(
-    candidates,
-    lens,
-    Math.min(30, Math.max(0, limit)),
-    Math.min(ALGOLIA_INDEX_TIMEOUT_MS, timeoutMs)
-  )
 
   if (!process.env.DATABASE_URL) {
-    return {
-      enabled: false,
-      attempted: candidates.length,
-      indexed: 0,
-      rejectedUnverified,
-      algolia: await algoliaPromise,
-    }
+    return { enabled: false, attempted: candidates.length, indexed: 0, rejectedUnverified }
   }
   if (candidates.length === 0) {
-    return {
-      enabled: true,
-      attempted: 0,
-      indexed: 0,
-      rejectedUnverified,
-      algolia: await algoliaPromise,
-    }
+    return { enabled: true, attempted: 0, indexed: 0, rejectedUnverified }
   }
 
   const adapter = await getAdapter()
@@ -118,7 +97,6 @@ export async function indexResultsInPersistentMemory(
       indexed: 0,
       rejectedUnverified,
       error: 'pgvector adapter unavailable',
-      algolia: await algoliaPromise,
     }
   }
 
@@ -156,7 +134,6 @@ export async function indexResultsInPersistentMemory(
       attempted: candidates.length,
       indexed: documents.length,
       rejectedUnverified,
-      algolia: await algoliaPromise,
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -167,7 +144,6 @@ export async function indexResultsInPersistentMemory(
       indexed: 0,
       rejectedUnverified,
       error: message,
-      algolia: await algoliaPromise,
     }
   }
 }

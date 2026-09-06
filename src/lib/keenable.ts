@@ -1,7 +1,13 @@
 import type { ScrapedResult } from '../types/search'
+import { providerKeyCount, rotatingProviderKeys } from './provider-key-pool'
 
 const DEFAULT_ENDPOINT = 'https://api.keenable.ai/v1/search'
 const DEFAULT_TIMEOUT_MS = 12_000
+const KEENABLE_KEYS = [
+  'KEENABLE_API_KEY',
+  'KEENABLE_API_KEY_2',
+  'KEENABLE_API_KEY_3',
+]
 
 interface KeenableApiResult {
   title?: unknown
@@ -29,6 +35,7 @@ export interface KeenableSearchResponse {
   results: ScrapedResult[]
   configured: boolean
   ok: boolean
+  keyCount?: number
   error?: string
 }
 
@@ -85,22 +92,28 @@ function normalizeResult(row: KeenableApiResult, index: number): ScrapedResult |
   }
 }
 
+export function keenableKeyCount(): number {
+  return providerKeyCount(KEENABLE_KEYS)
+}
+
 export function isKeenableConfigured(): boolean {
-  return Boolean(String(process.env.KEENABLE_API_KEY || '').trim())
+  return keenableKeyCount() > 0
 }
 
 export async function searchKeenable(
   query: string,
   options: KeenableSearchOptions = {}
 ): Promise<KeenableSearchResponse> {
-  const apiKey = String(process.env.KEENABLE_API_KEY || '').trim()
-  if (!apiKey) {
+  const keys = rotatingProviderKeys('keenable', KEENABLE_KEYS, 2)
+  const keyCount = keenableKeyCount()
+  if (keys.length === 0) {
     return {
       text: '',
       results: [],
       configured: false,
       ok: false,
-      error: 'KEENABLE_API_KEY is not configured.',
+      keyCount: 0,
+      error: 'No KEENABLE_API_KEY values are configured.',
     }
   }
 
@@ -111,6 +124,7 @@ export async function searchKeenable(
       results: [],
       configured: true,
       ok: false,
+      keyCount,
       error: 'Keenable query is empty.',
     }
   }
@@ -118,65 +132,69 @@ export async function searchKeenable(
   const timeoutMs = positiveInteger(options.timeoutMs || process.env.KEENABLE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
   const maxResults = Math.max(1, Math.min(50, positiveInteger(options.maxResults, 20)))
   const mode = String(options.mode || process.env.KEENABLE_SEARCH_MODE || 'pro').trim() || 'pro'
+  let lastError = 'Keenable search failed.'
 
-  try {
-    const response = await fetch(endpoint(), {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-        'X-Keenable-Title': 'Ultra Search Browser',
-        'User-Agent': 'UltraSearchBrowser/2.0',
-      },
-      body: JSON.stringify({ query: normalizedQuery, mode }),
-      signal: AbortSignal.timeout(timeoutMs),
-      cache: 'no-store',
-    })
+  for (const slot of keys) {
+    try {
+      const response = await fetch(endpoint(), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-API-Key': slot.value,
+          'X-Keenable-Title': 'Ultra Search Browser',
+          'User-Agent': 'UltraSearchBrowser/2.0',
+        },
+        body: JSON.stringify({ query: normalizedQuery, mode }),
+        signal: AbortSignal.timeout(timeoutMs),
+        cache: 'no-store',
+      })
 
-    const payload = await response.json().catch(() => null) as KeenableApiResponse | null
-    if (!response.ok) {
-      const detail = String(payload?.message || payload?.error || '').trim()
-      return {
-        text: '',
-        results: [],
-        configured: true,
-        ok: false,
-        error: detail
+      const payload = await response.json().catch(() => null) as KeenableApiResponse | null
+      if (!response.ok) {
+        const detail = String(payload?.message || payload?.error || '').trim()
+        lastError = detail
           ? `Keenable returned HTTP ${response.status}: ${detail.slice(0, 300)}`
-          : `Keenable returned HTTP ${response.status}.`,
+          : `Keenable returned HTTP ${response.status}.`
+        if ([401, 402, 403, 429].includes(response.status)) continue
+        return { text: '', results: [], configured: true, ok: false, keyCount, error: lastError }
       }
-    }
 
-    if (!payload || !Array.isArray(payload.results)) {
+      if (!payload || !Array.isArray(payload.results)) {
+        return {
+          text: '',
+          results: [],
+          configured: true,
+          ok: false,
+          keyCount,
+          error: 'Keenable returned an invalid result payload.',
+        }
+      }
+
+      const results = payload.results
+        .map((row, index) => normalizeResult(row, index))
+        .filter((result): result is ScrapedResult => result != null)
+        .slice(0, maxResults)
+        .map((result, index) => ({ ...result, rank: index + 1 }))
+
       return {
-        text: '',
-        results: [],
+        text: results.map(result => `${result.title} ${result.description}`).join(' '),
+        results,
         configured: true,
-        ok: false,
-        error: 'Keenable returned an invalid result payload.',
+        ok: true,
+        keyCount,
       }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
     }
+  }
 
-    const results = payload.results
-      .map((row, index) => normalizeResult(row, index))
-      .filter((result): result is ScrapedResult => result != null)
-      .slice(0, maxResults)
-      .map((result, index) => ({ ...result, rank: index + 1 }))
-
-    return {
-      text: results.map(result => `${result.title} ${result.description}`).join(' '),
-      results,
-      configured: true,
-      ok: true,
-    }
-  } catch (error) {
-    return {
-      text: '',
-      results: [],
-      configured: true,
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }
+  return {
+    text: '',
+    results: [],
+    configured: true,
+    ok: false,
+    keyCount,
+    error: lastError,
   }
 }
