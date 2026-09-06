@@ -5,13 +5,13 @@ import type { ExtractedDocument } from '../src/lib/document-extraction'
 
 const primaryDocument: ExtractedDocument = {
   title: 'Employee Occupational Health Services RFP',
-  text: 'RFP Number: 26-104. Proposals are due August 30, 2026. Occupational health medical examinations and medical surveillance are required.',
+  text: 'RFP Number: 26-104. Proposals are due August 30, 2099. Occupational health medical examinations and medical surveillance are required.',
   metadata: { fileType: 'html' },
   entities: {
     emails: [],
     phones: [],
     urls: [],
-    dates: ['August 30, 2026'],
+    dates: ['August 30, 2099'],
     monetaryValues: [],
   },
   sections: {
