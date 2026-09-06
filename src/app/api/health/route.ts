@@ -74,7 +74,7 @@ function healthPayload() {
   return {
     status: 'ok',
     service: 'ultra-search-browser',
-    productMode: 'rfp-finder-searxng',
+    productMode: 'rfp-finder-multi-source',
     searchPipeline: 'rfp-finder-v7-multisource',
     commit: deployedCommit(),
     capabilities: {
