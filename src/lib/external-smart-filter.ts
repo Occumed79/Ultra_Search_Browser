@@ -1,4 +1,5 @@
 import type { ScrapedResult, SearchLens } from '../types/search'
+import { configuredProviderKeys, rotatingProviderKeys } from './provider-key-pool'
 
 export type ExternalSmartFilterProvider = 'cerebras' | 'groq'
 export type ExternalProviderRole = 'primary' | 'fallback' | 'review'
@@ -61,7 +62,7 @@ interface ProviderConfig {
 }
 
 interface ProviderPoolConfig {
-  cerebrasPrimary?: ProviderConfig
+  cerebrasPrimaries: ProviderConfig[]
   groqFallback?: ProviderConfig
   groqReviewer?: ProviderConfig
 }
@@ -84,6 +85,7 @@ interface ProviderResult {
 interface ProviderEnvironment {
   [key: string]: string | undefined
   CEREBRAS_API_KEY?: string
+  CEREBRAS_API_KEY_2?: string
   CEREBRAS_SMART_MODEL?: string
   GROQ_API_KEY?: string
   GROQ_SMART_MODEL?: string
@@ -96,20 +98,26 @@ const MAX_REVIEW_CANDIDATES = 12
 const DEFAULT_CEREBRAS_MODEL = 'gpt-oss-120b'
 const DEFAULT_GROQ_SMART_MODEL = 'openai/gpt-oss-20b'
 const DEFAULT_GROQ_REVIEW_MODEL = 'openai/gpt-oss-120b'
+const CEREBRAS_KEY_NAMES = ['CEREBRAS_API_KEY', 'CEREBRAS_API_KEY_2']
 
 function clean(value: string | undefined): string {
   return value?.trim() || ''
 }
 
+function asProcessEnv(environment: ProviderEnvironment): NodeJS.ProcessEnv {
+  return environment as NodeJS.ProcessEnv
+}
+
 export function externalSmartFilterCapabilities(
   environment: ProviderEnvironment = process.env
 ) {
-  const cerebrasKey = clean(environment.CEREBRAS_API_KEY)
+  const cerebrasKeys = configuredProviderKeys(CEREBRAS_KEY_NAMES, asProcessEnv(environment))
   const groqKey = clean(environment.GROQ_API_KEY)
 
   return {
     cerebras: {
-      configured: Boolean(cerebrasKey),
+      configured: cerebrasKeys.length > 0,
+      keyCount: cerebrasKeys.length,
       model: clean(environment.CEREBRAS_SMART_MODEL) || DEFAULT_CEREBRAS_MODEL,
     },
     groq: {
@@ -122,18 +130,22 @@ export function externalSmartFilterCapabilities(
 
 function providerPoolConfig(environment: ProviderEnvironment = process.env): ProviderPoolConfig {
   const capabilities = externalSmartFilterCapabilities(environment)
-  const cerebrasKey = clean(environment.CEREBRAS_API_KEY)
   const groqKey = clean(environment.GROQ_API_KEY)
-  const pool: ProviderPoolConfig = {}
+  const cerebrasKeys = rotatingProviderKeys(
+    'cerebras-smart-filter',
+    CEREBRAS_KEY_NAMES,
+    CEREBRAS_KEY_NAMES.length,
+    asProcessEnv(environment)
+  )
 
-  if (cerebrasKey) {
-    pool.cerebrasPrimary = {
-      provider: 'cerebras',
-      role: 'primary',
-      apiKey: cerebrasKey,
+  const pool: ProviderPoolConfig = {
+    cerebrasPrimaries: cerebrasKeys.map(slot => ({
+      provider: 'cerebras' as const,
+      role: 'primary' as const,
+      apiKey: slot.value,
       endpoint: 'https://api.cerebras.ai/v1/chat/completions',
       model: capabilities.cerebras.model,
-    }
+    })),
   }
 
   if (groqKey) {
@@ -419,6 +431,63 @@ async function attemptProvider(
   }
 }
 
+async function finishCerebrasResult(
+  primary: ProviderResult,
+  pool: ProviderPoolConfig,
+  query: string,
+  lens: SearchLens,
+  intent: ExternalIntent,
+  results: ScrapedResult[],
+  candidateIds: number[],
+  localDecisions: LocalDecisionSummary[],
+  attempts: ExternalProviderAttempt[]
+): Promise<ExternalSmartFilterOutcome> {
+  const merged = new Map(primary.decisions)
+  let mode: ExternalSmartFilterOutcome['mode'] = 'cerebras'
+
+  if (pool.groqReviewer) {
+    const reviewIds = candidateIds
+      .filter(id => {
+        const decision = primary.decisions.get(id)
+        return decision ? needsReview(decision, localDecisions[id]) : false
+      })
+      .slice(0, MAX_REVIEW_CANDIDATES)
+
+    if (reviewIds.length) {
+      const review = await attemptProvider(
+        pool.groqReviewer,
+        query,
+        lens,
+        intent,
+        results,
+        reviewIds,
+        localDecisions,
+        attempts
+      )
+
+      if (review) {
+        mode = 'cerebras+groq'
+        for (const id of reviewIds) {
+          const primaryDecision = merged.get(id)
+          const reviewDecision = review.decisions.get(id)
+          if (primaryDecision && reviewDecision) {
+            merged.set(id, mergeProviderDecisions(primaryDecision, reviewDecision))
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    configured: true,
+    used: true,
+    mode,
+    interpretation: primary.interpretation,
+    decisions: merged,
+    attempts,
+  }
+}
+
 export async function runExternalSmartFilterPool(
   query: string,
   lens: SearchLens,
@@ -428,16 +497,16 @@ export async function runExternalSmartFilterPool(
 ): Promise<ExternalSmartFilterOutcome> {
   const pool = providerPoolConfig()
   const attempts: ExternalProviderAttempt[] = []
-  const configured = Boolean(pool.cerebrasPrimary || pool.groqFallback || pool.groqReviewer)
+  const configured = Boolean(pool.cerebrasPrimaries.length || pool.groqFallback || pool.groqReviewer)
   if (!configured || !results.length) {
     return { configured, used: false, decisions: new Map(), attempts }
   }
 
   const candidateIds = results.slice(0, MAX_PRIMARY_CANDIDATES).map((_, index) => index)
 
-  if (pool.cerebrasPrimary) {
+  for (const cerebrasConfig of pool.cerebrasPrimaries) {
     const primary = await attemptProvider(
-      pool.cerebrasPrimary,
+      cerebrasConfig,
       query,
       lens,
       intent,
@@ -448,50 +517,17 @@ export async function runExternalSmartFilterPool(
     )
 
     if (primary) {
-      const merged = new Map(primary.decisions)
-      let mode: ExternalSmartFilterOutcome['mode'] = 'cerebras'
-
-      if (pool.groqReviewer) {
-        const reviewIds = candidateIds
-          .filter(id => {
-            const decision = primary.decisions.get(id)
-            return decision ? needsReview(decision, localDecisions[id]) : false
-          })
-          .slice(0, MAX_REVIEW_CANDIDATES)
-
-        if (reviewIds.length) {
-          const review = await attemptProvider(
-            pool.groqReviewer,
-            query,
-            lens,
-            intent,
-            results,
-            reviewIds,
-            localDecisions,
-            attempts
-          )
-
-          if (review) {
-            mode = 'cerebras+groq'
-            for (const id of reviewIds) {
-              const primaryDecision = merged.get(id)
-              const reviewDecision = review.decisions.get(id)
-              if (primaryDecision && reviewDecision) {
-                merged.set(id, mergeProviderDecisions(primaryDecision, reviewDecision))
-              }
-            }
-          }
-        }
-      }
-
-      return {
-        configured: true,
-        used: true,
-        mode,
-        interpretation: primary.interpretation,
-        decisions: merged,
-        attempts,
-      }
+      return finishCerebrasResult(
+        primary,
+        pool,
+        query,
+        lens,
+        intent,
+        results,
+        candidateIds,
+        localDecisions,
+        attempts
+      )
     }
   }
 
