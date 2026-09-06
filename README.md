@@ -2,7 +2,7 @@
 
 Ultra Search Browser is an Occu-Med procurement intelligence layer over live web search. It is **not** a standalone search index. Neon/PostgreSQL is used for persistence, bookmarks, feedback, and pursuit learning; discovery comes from live search sources.
 
-The application remains usable without paid search credentials: private SearXNG plus the bounded direct-engine fallback provide a zero-key path. When renewable search API keys are configured, those providers join the normal live discovery fan-out.
+The application remains usable without paid search credentials: private SearXNG plus the bounded direct-engine fallback provide a zero-key path. When renewable search API keys are configured, those providers join the normal live discovery fan-out. **SearXNG, Keenable, TinyFish, Tavily, Exa, and LangSearch participate in the live discovery architecture when configured.**
 
 ## Core architecture
 
