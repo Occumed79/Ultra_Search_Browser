@@ -29,8 +29,12 @@ type CapabilityKey =
   | 'localEmbeddings'
   | 'ocr'
 
-type Capability = { configured: boolean; label: string }
-type Capabilities = Partial<Record<CapabilityKey, Capability>>
+type LiveSourceKey = 'keenable' | 'tinyfish' | 'tavily' | 'exa' | 'langsearch'
+type Capability = { configured: boolean; label: string; engines?: string[] }
+type LiveSourceCapability = { configured: boolean; keyCount: number; label: string }
+type Capabilities = Partial<Record<CapabilityKey, Capability>> & {
+  liveSearchSources?: Partial<Record<LiveSourceKey, LiveSourceCapability>>
+}
 type CapabilityState = 'loading' | 'ready' | 'error'
 type BooleanSetting = 'autoSummarize' | 'safeSearch' | 'openInNewTab' | 'showFavicons' | 'showDescriptions'
 
@@ -40,6 +44,14 @@ const BEHAVIOR_OPTIONS: Array<{ key: BooleanSetting; label: string; description:
   { key: 'openInNewTab', label: 'Open in new tab', description: 'Keep Ultra Search open when visiting a result' },
   { key: 'showFavicons', label: 'Show website icons', description: 'Display a small site icon beside each result' },
   { key: 'showDescriptions', label: 'Show descriptions', description: 'Display result snippets beneath titles' },
+]
+
+const LIVE_SOURCE_OPTIONS: Array<{ key: LiveSourceKey; label: string }> = [
+  { key: 'keenable', label: 'Keenable' },
+  { key: 'tinyfish', label: 'TinyFish' },
+  { key: 'tavily', label: 'Tavily' },
+  { key: 'exa', label: 'Exa' },
+  { key: 'langsearch', label: 'LangSearch' },
 ]
 
 export default function SettingsPage() {
@@ -96,7 +108,7 @@ export default function SettingsPage() {
   const runtimeItems: Array<{ key: CapabilityKey; label: string; icon: typeof Globe }> = [
     { key: 'serverSideSearchRetrieval', label: 'Website-only retrieval', icon: Globe },
     { key: 'searxngSearch', label: 'Private SearXNG', icon: Globe },
-    { key: 'zeroKeyDirectRescue', label: 'Zero-key rescue', icon: ShieldCheck },
+    { key: 'zeroKeyDirectRescue', label: 'Direct fallback', icon: ShieldCheck },
     { key: 'deterministicIntent', label: 'Occu-Med query planner', icon: Zap },
     { key: 'evidenceValidation', label: 'Deep evidence validation', icon: ShieldCheck },
     { key: 'database', label: 'Pursuit memory', icon: Database },
@@ -111,7 +123,7 @@ export default function SettingsPage() {
       ? 'Checking'
       : searxngConnected
         ? 'Connected'
-        : 'Rescue mode'
+        : 'API / fallback mode'
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -131,7 +143,7 @@ export default function SettingsPage() {
             </div>
             <h1 className="text-3xl font-semibold tracking-[-0.03em] text-white/95">Settings</h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-white/45">
-              Control zero-key metasearch, result density, and the behaviors that affect Occu-Med opportunity search.
+              Inspect the live search stack, result density, and behaviors that affect Occu-Med opportunity search.
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -153,12 +165,12 @@ export default function SettingsPage() {
                 <div className="mb-3 flex items-center gap-2">
                   <Globe className="h-5 w-5 text-white/60" />
                   <div>
-                    <h2 className="text-[15px] font-semibold text-white/85">Website-only retrieval</h2>
-                    <p className="text-xs text-white/35">No download. No extension. No search API key.</p>
+                    <h2 className="text-[15px] font-semibold text-white/85">Website-only live retrieval</h2>
+                    <p className="text-xs text-white/35">No download. No extension. Search API keys are optional accelerators.</p>
                   </div>
                 </div>
                 <p className="text-[12px] leading-relaxed text-white/50">
-                  Ultra Search builds targeted Occu-Med procurement queries on the server, sends them through SearXNG when connected, merges the upstream result pool, then applies the same relevance, exclusion, deduplication, validation, and learning gates already used by the app.
+                  Ultra Search fans targeted Occu-Med procurement queries across private SearXNG plus every configured live-search API, merges the independent result pools, then applies the same relevance, exclusion, deduplication, validation, and learning gates.
                 </p>
               </div>
 
@@ -179,7 +191,7 @@ export default function SettingsPage() {
             <div className="mt-5 grid gap-2 sm:grid-cols-3">
               <div className="rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-200/55">Search API keys</p>
-                <p className="mt-1 text-[13px] font-medium text-emerald-100/80">Not required</p>
+                <p className="mt-1 text-[13px] font-medium text-emerald-100/80">Optional boosters</p>
               </div>
               <div className="rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] px-4 py-3">
                 <p className="text-[10px] uppercase tracking-[0.1em] text-emerald-200/55">Browser extension</p>
@@ -192,7 +204,7 @@ export default function SettingsPage() {
             </div>
 
             <div className="mt-5 border-t border-white/8 pt-5">
-              <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">SearXNG web ensemble</p>
+              <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">SearXNG primary web ensemble</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {SEARXNG_WEB_ENGINES.map(engine => (
                   <span key={engine} className="rounded-full border border-white/8 bg-white/[0.03] px-3 py-1 text-[10px] text-white/45">
@@ -201,8 +213,40 @@ export default function SettingsPage() {
                 ))}
               </div>
               <p className="mt-3 text-[11px] leading-relaxed text-white/35">
-                If the private SearXNG pool is unavailable or too sparse, Ultra Search can make a small zero-key DuckDuckGo/Bing rescue pass so the app does not become unusable.
+                Google CSE, Bing, and DuckDuckGo are requested through SearXNG during normal retrieval. The separate direct Google/DuckDuckGo/Bing path runs only when aggregate primary coverage is too sparse.
               </p>
+            </div>
+
+            <div className="mt-5 border-t border-white/8 pt-5">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.1em] text-white/30">Independent live-search APIs</p>
+                  <p className="mt-1 text-[11px] text-white/35">Runtime status comes directly from this deployment; key values are never shown.</p>
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-5">
+                {LIVE_SOURCE_OPTIONS.map(item => {
+                  const source = capabilities?.liveSearchSources?.[item.key]
+                  const configured = source?.configured === true
+                  return (
+                    <div key={item.key} className={`rounded-xl border px-3 py-3 ${configured ? 'border-emerald-300/15 bg-emerald-300/[0.05]' : 'border-white/8 bg-white/[0.025]'}`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${capabilityState === 'error' ? 'bg-red-300' : configured ? 'bg-emerald-300' : 'bg-white/20'}`} />
+                        <p className="text-[11px] font-medium text-white/70">{item.label}</p>
+                      </div>
+                      <p className="mt-2 text-[9px] uppercase tracking-[0.08em] text-white/30">
+                        {capabilityState === 'loading'
+                          ? 'Checking'
+                          : capabilityState === 'error'
+                            ? 'Unavailable'
+                            : configured
+                              ? `${source?.keyCount || 1} key${(source?.keyCount || 1) === 1 ? '' : 's'}`
+                              : 'Not configured'}
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
 
             <div className="mt-5 flex items-center justify-between gap-4 border-t border-white/8 pt-5">
@@ -261,7 +305,7 @@ export default function SettingsPage() {
               <Cpu className="h-5 w-5 text-white/60" />
               <div>
                 <h2 className="text-[15px] font-semibold text-white/85">Runtime capabilities</h2>
-                <p className="text-xs text-white/35">Live contract for this deployment. Optional accelerators are not required for core search.</p>
+                <p className="text-xs text-white/35">Live contract for this deployment. Optional accelerators are not required for the zero-key fallback path.</p>
               </div>
             </div>
 
