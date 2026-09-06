@@ -7,6 +7,7 @@ const KEENABLE_KEYS = [
   'KEENABLE_API_KEY',
   'KEENABLE_API_KEY_2',
   'KEENABLE_API_KEY_3',
+  'KEENABLE_API_KEY_4',
 ]
 
 interface KeenableApiResult {
