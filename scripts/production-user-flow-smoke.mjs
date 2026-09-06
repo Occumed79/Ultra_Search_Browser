@@ -11,7 +11,17 @@ const CANARY_QUERIES = [
   'fitness for duty occupational medicine services',
   'OCONUS occupational health services',
 ]
-const VALID_RETRIEVAL_TRANSPORTS = new Set(['searxng', 'zero-key-direct-rescue', 'searxng+direct-rescue'])
+const VALID_RETRIEVAL_TRANSPORTS = new Set([
+  'searxng',
+  'keenable',
+  'multi-source',
+  'zero-key-direct-rescue',
+  'searxng+direct-rescue',
+  'searxng+keenable',
+  'keenable+direct-rescue',
+  'searxng+keenable+direct-rescue',
+  'multi-source+direct-rescue',
+])
 const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILABLE'])
 const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice inviting bids)\b/i
 const PROCUREMENT_DESTINATION = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|\/(?:procurement|purchasing|bids?|bid-opportunities|solicitations?|opportunities|contract-opportunities|vendor-opportunities|rfps?|rfqs?|ifbs?)(?:\/|$|[-_])|\.(?:pdf|docx?)(?:$|[?#]))/i
@@ -76,7 +86,7 @@ async function retrieve(query, plan) {
     && EXPECTED_EMPTY_CODES.has(data.code)
     && VALID_RETRIEVAL_TRANSPORTS.has(data.transport)
   if (!expectedEmpty) {
-    throw new Error(`Live retrieval failed outside the zero-key exhaustion contract for "${query}": HTTP ${response.status} ${JSON.stringify(data).slice(0, 2_000)}`)
+    throw new Error(`Live retrieval failed outside the source-exhaustion contract for "${query}": HTTP ${response.status} ${JSON.stringify(data).slice(0, 2_000)}`)
   }
 
   console.log(`[user-flow] query="${query}" upstream pool empty; code=${data.code}; transport=${data.transport}; ingest skipped`)
@@ -128,7 +138,7 @@ async function main() {
     summaries.push(await ingest(query, plan, retrieval))
   }
   if (summaries.length === 0) {
-    console.log('[user-flow] all live source pools were empty within the explicit zero-key exhaustion contract')
+    console.log('[user-flow] all live source pools were empty within the explicit source-exhaustion contract')
     return
   }
   console.log(`[user-flow] capability-canaries passed ${summaries.length}/${CANARY_QUERIES.length} live retrieval paths`)
