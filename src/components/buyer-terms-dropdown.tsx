@@ -1,49 +1,38 @@
 'use client'
 
-import { ChevronDown, Tag } from 'lucide-react'
-import { useState } from 'react'
+import { Tag } from 'lucide-react'
 import { buyerLanguageTermsForQuery } from '../lib/occumed-capability-matching'
 
 export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onTermSelect: (term: string) => void }) {
-  const [isOpen, setIsOpen] = useState(false)
   const buyerTerms = buyerLanguageTermsForQuery(query, 12)
 
   return (
-    <div className="relative">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 rounded-lg border border-teal-300/20 bg-teal-300/[0.08] px-3 py-2 text-[11px] text-teal-100/70 hover:bg-teal-300/[0.12] hover:text-teal-100/90 transition-colors"
-      >
-        <Tag className="h-3.5 w-3.5" />
-        <span>Buyer Terms</span>
-        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-white/10 bg-black/95 backdrop-blur-sm shadow-2xl">
-          <div className="p-3">
-            <p className="mb-2 text-[10px] uppercase tracking-wider text-white/40">Terms used by buyers</p>
-            {buyerTerms.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {buyerTerms.map((term, index) => (
-                  <button
-                    key={index}
-                    onClick={() => {
-                      onTermSelect(term)
-                      setIsOpen(false)
-                    }}
-                    className="rounded-md border border-teal-300/10 bg-teal-300/[0.04] px-2 py-1 text-[10px] text-teal-100/60 hover:border-teal-300/20 hover:bg-teal-300/[0.08] hover:text-teal-100/80 transition-colors"
-                  >
-                    {term}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="text-[10px] text-white/40">Type a search query to see buyer terms</p>
-            )}
-          </div>
+    <section className="search-pill mt-3 w-full px-5 py-3" aria-label="Buyer search terms">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex min-w-[145px] items-center gap-2 pt-0.5 text-[11px] font-medium text-teal-100/70">
+          <Tag className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>Buyer search terms</span>
         </div>
-      )}
-    </div>
+
+        {buyerTerms.length > 0 ? (
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+            {buyerTerms.map(term => (
+              <button
+                key={term}
+                type="button"
+                onClick={() => onTermSelect(term)}
+                className="rounded-full border border-teal-300/10 bg-teal-300/[0.04] px-2.5 py-1 text-[10px] text-teal-100/60 transition-colors hover:border-teal-300/25 hover:bg-teal-300/[0.09] hover:text-teal-100/90"
+              >
+                {term}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="flex-1 pt-0.5 text-[11px] text-white/35">
+            Type a search query and the buyer-language terms Ultra Search is using will appear here.
+          </p>
+        )}
+      </div>
+    </section>
   )
 }
