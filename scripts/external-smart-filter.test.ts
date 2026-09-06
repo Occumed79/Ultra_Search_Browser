@@ -1,10 +1,30 @@
-import test from 'node:test'
+import test, { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   externalSmartFilterCapabilities,
   mergeProviderDecisions,
   parseProviderPayload,
+  runExternalSmartFilterPool,
 } from '../src/lib/external-smart-filter'
+import { resetProviderKeyPoolForTests } from '../src/lib/provider-key-pool'
+
+const originalFetch = globalThis.fetch
+const originalCerebrasKey = process.env.CEREBRAS_API_KEY
+const originalCerebrasKey2 = process.env.CEREBRAS_API_KEY_2
+const originalGroqKey = process.env.GROQ_API_KEY
+
+function restoreEnvironment() {
+  globalThis.fetch = originalFetch
+  if (originalCerebrasKey === undefined) delete process.env.CEREBRAS_API_KEY
+  else process.env.CEREBRAS_API_KEY = originalCerebrasKey
+  if (originalCerebrasKey2 === undefined) delete process.env.CEREBRAS_API_KEY_2
+  else process.env.CEREBRAS_API_KEY_2 = originalCerebrasKey2
+  if (originalGroqKey === undefined) delete process.env.GROQ_API_KEY
+  else process.env.GROQ_API_KEY = originalGroqKey
+  resetProviderKeyPoolForTests()
+}
+
+afterEach(restoreEnvironment)
 
 test('parses structured provider decisions and ignores unknown candidate ids', () => {
   const parsed = parseProviderPayload(JSON.stringify({
@@ -48,6 +68,80 @@ test('Groq roles receive distinct defaults when only the key is configured', () 
 
   assert.equal(capabilities.groq.smartModel, 'openai/gpt-oss-20b')
   assert.equal(capabilities.groq.reviewModel, 'openai/gpt-oss-120b')
+})
+
+test('Cerebras capability recognizes the second pool key even when key one is absent', () => {
+  const capabilities = externalSmartFilterCapabilities({ CEREBRAS_API_KEY_2: 'second-key' })
+
+  assert.equal(capabilities.cerebras.configured, true)
+  assert.equal(capabilities.cerebras.keyCount, 1)
+})
+
+test('Cerebras retries the second pool key in the same review when the first key fails', async () => {
+  delete process.env.GROQ_API_KEY
+  process.env.CEREBRAS_API_KEY = 'cerebras-one'
+  process.env.CEREBRAS_API_KEY_2 = 'cerebras-two'
+  resetProviderKeyPoolForTests()
+
+  const authorizations: string[] = []
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const authorization = new Headers(init?.headers).get('Authorization') || ''
+    authorizations.push(authorization)
+
+    if (authorization === 'Bearer cerebras-one') {
+      return new Response('quota reached', { status: 429 })
+    }
+
+    return new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            interpretation: 'Open occupational health procurement.',
+            decisions: [{
+              id: 0,
+              status: 'valid',
+              relevance: 0.95,
+              reason: 'The result is an active occupational-health solicitation.',
+            }],
+          }),
+        },
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+
+  const outcome = await runExternalSmartFilterPool(
+    'occupational health RFP',
+    'procurement',
+    {
+      originalQuery: 'occupational health RFP',
+      interpretation: 'Find active occupational health procurements.',
+      requiredConcepts: ['occupational health', 'procurement'],
+      exactPhrases: ['occupational health'],
+      minimumRequiredMatches: 1,
+    },
+    [{
+      title: 'Occupational Health Services RFP',
+      url: 'https://example.gov/rfp/123',
+      description: 'Open solicitation for occupational health medical services.',
+      domain: 'example.gov',
+      source: 'SearXNG · google',
+      rank: 1,
+      score: 90,
+    }],
+    [{
+      status: 'valid',
+      relevance: 0.9,
+      matchedConcepts: ['occupational health', 'procurement'],
+    }]
+  )
+
+  assert.deepEqual(authorizations, ['Bearer cerebras-one', 'Bearer cerebras-two'])
+  assert.equal(outcome.used, true)
+  assert.equal(outcome.mode, 'cerebras')
+  assert.equal(outcome.decisions.get(0)?.status, 'valid')
+  assert.equal(outcome.attempts.length, 2)
+  assert.equal(outcome.attempts[0].status, 'failed')
+  assert.equal(outcome.attempts[1].status, 'success')
 })
 
 test('agreement averages provider confidence', () => {
