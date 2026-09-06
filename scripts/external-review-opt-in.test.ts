@@ -14,7 +14,7 @@ test('semantic reviewer keys remain optional while live search keys are document
   assert.match(envExample, /ENABLE_EXTERNAL_SMART_FILTER=false/)
   assert.match(envExample, /Merely setting reviewer keys does not put them on the procurement critical/i)
   assert.match(envExample, /Independent live-web discovery sources/i)
-  assert.match(envExample, /SEARXNG_ENGINES=google cse,brave,duckduckgo,startpage,bing,qwant,mojeek,yahoo/i)
+  assert.match(envExample, /SEARXNG_ENGINES=google,google cse,brave,duckduckgo,startpage,bing,qwant,mojeek,yahoo/i)
 })
 
 test('deep validation documentation reflects the current 48-candidate adaptive ceiling', () => {
