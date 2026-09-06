@@ -1,12 +1,34 @@
 'use client'
 
 import { Tag } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { buyerLanguageTermsForQuery } from '../lib/occumed-capability-matching'
 
 export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onTermSelect: (term: string) => void }) {
+  const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
   const buyerTerms = buyerLanguageTermsForQuery(query, 12)
 
-  return (
+  useEffect(() => {
+    const searchInput = document.querySelector<HTMLInputElement>('.search-pill input')
+    const searchBar = searchInput?.closest<HTMLElement>('.search-pill')
+    if (!searchBar?.parentElement) return
+
+    const host = document.createElement('div')
+    host.dataset.buyerTermsHost = 'true'
+    host.className = 'w-full'
+    searchBar.insertAdjacentElement('afterend', host)
+    setPortalHost(host)
+
+    return () => {
+      host.remove()
+      setPortalHost(null)
+    }
+  }, [])
+
+  if (!portalHost) return null
+
+  return createPortal(
     <section className="search-pill mt-3 w-full px-5 py-3" aria-label="Buyer search terms">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex min-w-[145px] items-center gap-2 pt-0.5 text-[11px] font-medium text-teal-100/70">
@@ -33,6 +55,7 @@ export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onT
           </p>
         )}
       </div>
-    </section>
+    </section>,
+    portalHost
   )
 }
