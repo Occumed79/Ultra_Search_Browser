@@ -5,7 +5,7 @@ import {
   normalizeBrowserSerpCandidates,
 } from '../src/lib/browser-search-pipeline'
 import { SEARXNG_WEB_ENGINES } from '../src/lib/searxng-engines'
-import { resolveSearxngBase, searchSearXNG } from '../src/lib/searxng'
+import { configuredSearxngEngines, resolveSearxngBase, searchSearXNG } from '../src/lib/searxng'
 
 test('zero-key search plan is deterministic, procurement-focused, and server transported', () => {
   const plan = buildBrowserSearchPlan('Occupational Health Services RFP')
@@ -21,7 +21,7 @@ test('zero-key search plan is deterministic, procurement-focused, and server tra
   assert.ok(plan.searches.some(search => /filetype:pdf/i.test(search.query)))
 })
 
-test('SearXNG ensemble contains broad independent web engines including the live Google CSE default', () => {
+test('SearXNG ensemble contains broad independent web engines including Google, Bing, and DuckDuckGo paths', () => {
   assert.ok(SEARXNG_WEB_ENGINES.includes('google cse'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('brave'))
   assert.ok(SEARXNG_WEB_ENGINES.includes('duckduckgo'))
@@ -43,12 +43,14 @@ test('SearXNG base URL preserves a deployment path prefix', () => {
   }
 })
 
-test('SearXNG default request lets the private instance choose enabled engines', async () => {
+test('SearXNG default request explicitly asks for the Ultra Search engine ensemble', async () => {
   const originalUrl = process.env.SEARXNG_URL
+  const originalEngines = process.env.SEARXNG_ENGINES
   const originalFetch = globalThis.fetch
   let requestedUrl = ''
   try {
     process.env.SEARXNG_URL = 'https://search.example.test'
+    delete process.env.SEARXNG_ENGINES
     globalThis.fetch = async input => {
       requestedUrl = String(input)
       return new Response(JSON.stringify({
@@ -68,8 +70,13 @@ test('SearXNG default request lets the private instance choose enabled engines',
 
     const response = await searchSearXNG('occupational health RFP')
     const requested = new URL(requestedUrl)
+    const requestedEngines = (requested.searchParams.get('engines') || '').split(',')
 
-    assert.equal(requested.searchParams.has('engines'), false)
+    assert.deepEqual(configuredSearxngEngines(), [...SEARXNG_WEB_ENGINES])
+    assert.deepEqual(requestedEngines, [...SEARXNG_WEB_ENGINES])
+    assert.ok(requestedEngines.includes('google cse'))
+    assert.ok(requestedEngines.includes('bing'))
+    assert.ok(requestedEngines.includes('duckduckgo'))
     assert.equal(requested.searchParams.get('categories'), 'general')
     assert.deepEqual(response.engines, ['google cse'])
     assert.equal(response.results.length, 1)
@@ -77,6 +84,19 @@ test('SearXNG default request lets the private instance choose enabled engines',
     globalThis.fetch = originalFetch
     if (originalUrl === undefined) delete process.env.SEARXNG_URL
     else process.env.SEARXNG_URL = originalUrl
+    if (originalEngines === undefined) delete process.env.SEARXNG_ENGINES
+    else process.env.SEARXNG_ENGINES = originalEngines
+  }
+})
+
+test('SEARXNG_ENGINES may override the default ensemble for deployment-specific health', () => {
+  const original = process.env.SEARXNG_ENGINES
+  try {
+    process.env.SEARXNG_ENGINES = 'google cse,bing,duckduckgo,bing'
+    assert.deepEqual(configuredSearxngEngines(), ['google cse', 'bing', 'duckduckgo'])
+  } finally {
+    if (original === undefined) delete process.env.SEARXNG_ENGINES
+    else process.env.SEARXNG_ENGINES = original
   }
 })
 

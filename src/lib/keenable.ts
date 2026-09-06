@@ -7,6 +7,7 @@ const KEENABLE_KEYS = [
   'KEENABLE_API_KEY',
   'KEENABLE_API_KEY_2',
   'KEENABLE_API_KEY_3',
+  'KEENABLE_API_KEY_4',
 ]
 
 interface KeenableApiResult {
@@ -104,7 +105,7 @@ export async function searchKeenable(
   query: string,
   options: KeenableSearchOptions = {}
 ): Promise<KeenableSearchResponse> {
-  const keys = rotatingProviderKeys('keenable', KEENABLE_KEYS, 2)
+  const keys = rotatingProviderKeys('keenable', KEENABLE_KEYS, KEENABLE_KEYS.length)
   const keyCount = keenableKeyCount()
   if (keys.length === 0) {
     return {

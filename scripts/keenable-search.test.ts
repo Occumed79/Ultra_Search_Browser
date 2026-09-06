@@ -1,26 +1,40 @@
 import test, { afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { isKeenableConfigured, searchKeenable } from '../src/lib/keenable'
+import { resetProviderKeyPoolForTests } from '../src/lib/provider-key-pool'
+import { isKeenableConfigured, keenableKeyCount, searchKeenable } from '../src/lib/keenable'
 
 const originalFetch = globalThis.fetch
-const originalKey = process.env.KEENABLE_API_KEY
+const KEY_NAMES = [
+  'KEENABLE_API_KEY',
+  'KEENABLE_API_KEY_2',
+  'KEENABLE_API_KEY_3',
+  'KEENABLE_API_KEY_4',
+]
+const originalKeys = Object.fromEntries(KEY_NAMES.map(name => [name, process.env[name]]))
 const originalBase = process.env.KEENABLE_API_BASE_URL
 const originalMode = process.env.KEENABLE_SEARCH_MODE
 
+function clearKeys() {
+  for (const name of KEY_NAMES) delete process.env[name]
+}
+
 function restoreEnvironment() {
   globalThis.fetch = originalFetch
-  if (originalKey === undefined) delete process.env.KEENABLE_API_KEY
-  else process.env.KEENABLE_API_KEY = originalKey
+  clearKeys()
+  for (const [name, value] of Object.entries(originalKeys)) {
+    if (value !== undefined) process.env[name] = value
+  }
   if (originalBase === undefined) delete process.env.KEENABLE_API_BASE_URL
   else process.env.KEENABLE_API_BASE_URL = originalBase
   if (originalMode === undefined) delete process.env.KEENABLE_SEARCH_MODE
   else process.env.KEENABLE_SEARCH_MODE = originalMode
+  resetProviderKeyPoolForTests()
 }
 
 afterEach(restoreEnvironment)
 
 test('Keenable is optional when no API key is configured', async () => {
-  delete process.env.KEENABLE_API_KEY
+  clearKeys()
   assert.equal(isKeenableConfigured(), false)
 
   const response = await searchKeenable('occupational health RFP')
@@ -31,6 +45,7 @@ test('Keenable is optional when no API key is configured', async () => {
 })
 
 test('Keenable sends the API key, pro mode, and normalizes web results', async () => {
+  clearKeys()
   process.env.KEENABLE_API_KEY = 'test-key'
   delete process.env.KEENABLE_API_BASE_URL
   delete process.env.KEENABLE_SEARCH_MODE
@@ -62,6 +77,7 @@ test('Keenable sends the API key, pro mode, and normalizes web results', async (
   const response = await searchKeenable('occupational health services RFP', { maxResults: 10 })
 
   assert.equal(isKeenableConfigured(), true)
+  assert.equal(keenableKeyCount(), 1)
   assert.equal(requestedUrl, 'https://api.keenable.ai/v1/search')
   assert.equal(requestInit?.method, 'POST')
   assert.equal(new Headers(requestInit?.headers).get('X-API-Key'), 'test-key')
@@ -79,7 +95,46 @@ test('Keenable sends the API key, pro mode, and normalizes web results', async (
   assert.equal(response.results[0].description, 'Responses due September 30, 2026.')
 })
 
+test('Keenable can fail through the whole four-key pool before succeeding', async () => {
+  clearKeys()
+  resetProviderKeyPoolForTests()
+  process.env.KEENABLE_API_KEY = 'keenable-one'
+  process.env.KEENABLE_API_KEY_2 = 'keenable-two'
+  process.env.KEENABLE_API_KEY_3 = 'keenable-three'
+  process.env.KEENABLE_API_KEY_4 = 'keenable-four'
+
+  const keysSeen: string[] = []
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const key = new Headers(init?.headers).get('X-API-Key') || ''
+    keysSeen.push(key)
+    if (key !== 'keenable-four') {
+      return new Response(JSON.stringify({ message: 'trial quota reached' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({
+      results: [{
+        title: 'Fourth Keenable key result',
+        url: 'https://example.gov/procurement/rfp-4',
+        snippet: 'Open occupational health RFP.',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+
+  const response = await searchKeenable('occupational health RFP')
+  assert.equal(response.ok, true)
+  assert.equal(response.keyCount, 4)
+  assert.deepEqual(keysSeen, [
+    'keenable-one',
+    'keenable-two',
+    'keenable-three',
+    'keenable-four',
+  ])
+})
+
 test('Keenable HTTP failures fail open with diagnostics instead of throwing', async () => {
+  clearKeys()
   process.env.KEENABLE_API_KEY = 'test-key'
   globalThis.fetch = (async () => new Response(JSON.stringify({ message: 'trial quota reached' }), {
     status: 429,

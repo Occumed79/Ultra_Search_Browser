@@ -2,6 +2,7 @@
 // Private/self-hosted metasearch transport for Ultra Search.
 
 import type { ScrapedResult } from '../types/search'
+import { SEARXNG_WEB_ENGINES } from './searxng-engines'
 
 export { SEARXNG_WEB_ENGINES } from './searxng-engines'
 
@@ -52,6 +53,21 @@ export function isSearxngConfigured(): boolean {
   return resolveSearxngBase() !== null
 }
 
+/**
+ * The normal Ultra Search path explicitly requests its web-engine ensemble so
+ * Google CSE, Bing, DuckDuckGo, Brave, Startpage, Qwant, Mojeek, and Yahoo are
+ * attempted through SearXNG instead of depending on an unseen instance default.
+ * SEARXNG_ENGINES may override the list for a deployment when necessary.
+ */
+export function configuredSearxngEngines(): string[] {
+  const configured = String(process.env.SEARXNG_ENGINES || '')
+    .split(',')
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean)
+
+  return Array.from(new Set(configured.length > 0 ? configured : [...SEARXNG_WEB_ENGINES]))
+}
+
 function sourceEngines(result: SearXNGResult): string[] {
   const values = [
     ...(Array.isArray(result.engines) ? result.engines : []),
@@ -96,9 +112,9 @@ function normalizeResult(result: SearXNGResult, index: number): ScrapedResult | 
 
 /**
  * Query a private SearXNG instance through its JSON Search API.
- * Search API keys are not required. By default Ultra Search lets the private
- * SearXNG deployment choose its own enabled general engines. Callers can still
- * provide an explicit engine list when a targeted diagnostic/search needs it.
+ * Search API keys are not required. The default primary request explicitly uses
+ * Ultra Search's configured web-engine ensemble; callers may still supply an
+ * alternate engine list for a targeted diagnostic/search.
  */
 export async function searchSearXNG(
   query: string,
@@ -117,7 +133,7 @@ export async function searchSearXNG(
   }
 
   const requestedEngines = Array.from(new Set(
-    (options.engines || [])
+    (options.engines ?? configuredSearxngEngines())
       .map(value => value.trim().toLowerCase())
       .filter(Boolean)
   ))
