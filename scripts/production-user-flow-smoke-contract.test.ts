@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const canary = readFileSync(new URL('./production-user-flow-smoke.mjs', import.meta.url), 'utf8')
+const smoke = readFileSync(new URL('./production-smoke.mjs', import.meta.url), 'utf8')
 const workflow = readFileSync(new URL('../.github/workflows/production-smoke.yml', import.meta.url), 'utf8')
 
 test('production canary exercises the broad query plus the major Occu-Med capability families', () => {
@@ -36,14 +37,30 @@ test('live canary rejects retained pages without procurement evidence or destina
   assert.match(canary, /Non-procurement page survived the live ingest gate/)
 })
 
-test('live canary preserves zero-key and transport contracts', () => {
+test('live canary preserves optional-key and complete transport contracts', () => {
   assert.match(canary, /apiKeysRequired !== false/)
   assert.match(canary, /VALID_RETRIEVAL_TRANSPORTS/)
+  for (const transport of [
+    'searxng',
+    'keenable',
+    'multi-source',
+    'zero-key-direct-rescue',
+    'searxng+direct-rescue',
+    'searxng+keenable',
+    'keenable+direct-rescue',
+    'searxng+keenable+direct-rescue',
+    'multi-source+direct-rescue',
+  ]) {
+    assert.match(canary, new RegExp(transport.replace(/[+]/g, '\\+')))
+    assert.match(smoke, new RegExp(transport.replace(/[+]/g, '\\+')))
+  }
   assert.match(canary, /data\.diagnostics\?\.transport !== retrieval\.transport/)
+  assert.match(smoke, /rfp-finder-v7-multisource/)
+  assert.match(smoke, /SearXNG primary ensemble is missing/)
 })
 
 test('production workflow runs fixture smoke and live user-flow smoke before publishing success', () => {
   assert.match(workflow, /node scripts\/production-smoke\.mjs/)
   assert.match(workflow, /node scripts\/production-user-flow-smoke\.mjs/)
-  assert.match(workflow, /live zero-key search checks passed/)
+  assert.match(workflow, /live multi-source search checks passed/)
 })
