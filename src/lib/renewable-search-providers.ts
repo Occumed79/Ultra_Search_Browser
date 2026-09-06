@@ -19,6 +19,7 @@ const LANGSEARCH_KEYS = ['LANGSEARCH_API_KEY']
 const TINYFISH_KEYS = ['TINYFISH_API_KEY']
 
 const DEFAULT_TIMEOUT_MS = 10_000
+const EXA_FREE_RESULT_CEILING = 10
 
 export interface RenewableSearchOptions {
   maxResults?: number
@@ -139,7 +140,7 @@ export async function searchTavily(
   query: string,
   options: RenewableSearchOptions = {}
 ): Promise<RenewableSearchResponse> {
-  const keys = rotatingProviderKeys('tavily', TAVILY_KEYS, 2)
+  const keys = rotatingProviderKeys('tavily', TAVILY_KEYS, TAVILY_KEYS.length)
   const keyCount = providerKeyCount(TAVILY_KEYS)
   if (keys.length === 0) return failure(false, 0, 'No TAVILY_API_KEY values are configured.')
 
@@ -176,7 +177,8 @@ export async function searchTavily(
       } | null
 
       if (!response.ok) {
-        lastError = `Tavily returned HTTP ${response.status}${cleanText(payload?.detail || payload?.message, 300) ? `: ${cleanText(payload?.detail || payload?.message, 300)}` : '.'}`
+        const detail = cleanText(payload?.detail || payload?.message, 300)
+        lastError = `Tavily returned HTTP ${response.status}${detail ? `: ${detail}` : '.'}`
         if (retryableStatus(response.status)) continue
         return failure(true, keyCount, lastError)
       }
@@ -208,13 +210,14 @@ export async function searchExa(
   query: string,
   options: RenewableSearchOptions = {}
 ): Promise<RenewableSearchResponse> {
-  const keys = rotatingProviderKeys('exa', EXA_KEYS, 2)
+  const keys = rotatingProviderKeys('exa', EXA_KEYS, EXA_KEYS.length)
   const keyCount = providerKeyCount(EXA_KEYS)
   if (keys.length === 0) return failure(false, 0, 'No EXA_SEARCH_API_KEY values are configured.')
 
   const q = normalizedQuery(query)
   if (!q) return failure(true, keyCount, 'Exa query is empty.')
   let lastError = 'Exa search failed.'
+  const resultLimit = maxResults(options, EXA_FREE_RESULT_CEILING)
 
   for (const slot of keys) {
     try {
@@ -229,7 +232,10 @@ export async function searchExa(
         body: JSON.stringify({
           query: q,
           type: 'auto',
-          numResults: maxResults(options, 50),
+          numResults: resultLimit,
+          contents: {
+            highlights: { dynamic: true },
+          },
         }),
         signal: AbortSignal.timeout(timeoutMs(options)),
         cache: 'no-store',
@@ -265,7 +271,7 @@ export async function searchExa(
           row.score
         ))
         .filter((result): result is ScrapedResult => result != null)
-        .slice(0, maxResults(options, 50))
+        .slice(0, resultLimit)
         .map((result, index) => ({ ...result, rank: index + 1 }))
 
       return success(results, keyCount)
@@ -372,8 +378,6 @@ export async function searchTinyFish(
   endpoint.searchParams.set('query', q)
   endpoint.searchParams.set('location', 'US')
   endpoint.searchParams.set('language', 'en')
-  const purpose = cleanText(options.purpose, 2_000)
-  if (purpose) endpoint.searchParams.set('purpose', purpose)
 
   try {
     const response = await fetch(endpoint.toString(), {
