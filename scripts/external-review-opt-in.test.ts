@@ -10,10 +10,11 @@ test('Occu-Med procurement external reviewers require explicit feature opt-in', 
   assert.match(smartFilter, /options\.useExternalProviders === true\s*&&\s*externalSemanticReviewEnabled\(\)/)
 })
 
-test('trial provider keys alone are documented as non-core and off by default', () => {
+test('semantic reviewer keys remain optional while live search keys are documented separately', () => {
   assert.match(envExample, /ENABLE_EXTERNAL_SMART_FILTER=false/)
-  assert.match(envExample, /Merely setting trial provider keys does not put them on the procurement critical/i)
-  assert.match(envExample, /core zero-key SearXNG \+ public-engine retrieval path/i)
+  assert.match(envExample, /Merely setting reviewer keys does not put them on the procurement critical/i)
+  assert.match(envExample, /Independent live-web discovery sources/i)
+  assert.match(envExample, /SEARXNG_ENGINES=google cse,brave,duckduckgo,startpage,bing,qwant,mojeek,yahoo/i)
 })
 
 test('deep validation documentation reflects the current 48-candidate adaptive ceiling', () => {
