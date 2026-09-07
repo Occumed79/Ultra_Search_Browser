@@ -83,20 +83,47 @@ function numericValue(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+const PROCUREMENT_PLAN_PURPOSE_WEIGHT: Record<QueryPurpose, number> = {
+  'ai-intent': 120,
+  broad: 110,
+  'intent-core': 105,
+  official: 100,
+  document: 95,
+  freshness: 90,
+  portal: 85,
+  semantic: 70,
+}
+
+/**
+ * The server route gives some renewable providers only the first two or three
+ * plan variants. If the literal query is something like "occupational health
+ * exams", sending those limited slots only to broad/intent-core searches finds
+ * clinic marketing pages rather than procurements. Put the buyer-language RFP
+ * variant first, then preserve the literal and protected queries, while keeping
+ * official/document/freshness/portal coverage inside the same bounded plan.
+ */
+function orderProcurementBrowserVariants<T extends { purpose: QueryPurpose; priority: number }>(variants: T[]): T[] {
+  return [...variants].sort((left, right) => {
+    const purposeDelta = PROCUREMENT_PLAN_PURPOSE_WEIGHT[right.purpose]
+      - PROCUREMENT_PLAN_PURPOSE_WEIGHT[left.purpose]
+    return purposeDelta || right.priority - left.priority
+  })
+}
+
 export function buildBrowserSearchPlan(rawQuery: string, maxSearches = 8): BrowserSearchPlan {
   const bangs = parseBangs(rawQuery)
   const operators = parseSearchOperators(bangs.cleanQuery || rawQuery)
   const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
   const intent = buildDeterministicSemanticIntent(normalizedQuery, 'procurement')
   const expanded = expandQuery(normalizedQuery, 'procurement')
-  const variants = buildQueryVariants(
+  const variants = orderProcurementBrowserVariants(buildQueryVariants(
     normalizedQuery,
     'procurement',
     expanded,
     operators,
     new Date().getFullYear(),
     intent
-  )
+  ))
 
   const searches = variants.slice(0, Math.max(1, Math.min(12, maxSearches))).map((variant, index) => ({
     id: `q${index + 1}`,
