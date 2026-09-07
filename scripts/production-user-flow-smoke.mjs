@@ -24,8 +24,6 @@ const VALID_RETRIEVAL_TRANSPORTS = new Set([
 ])
 const PRIMARY_SOURCE_NAMES = ['searxng', 'keenable', 'tinyfish', 'tavily', 'exa', 'langsearch']
 const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILABLE'])
-const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice inviting bids|market research|acquisition strategy|strategic sourcing)\b/i
-const PROCUREMENT_DESTINATION = /(?:sam\.gov\/(?:workspace\/contract\/opp\/|opp\/)|governmentcontracts\.us|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|\/(?:procurement|purchasing|bids?|bid-opportunities|solicitations?|opportunities|contract-opportunit(?:y|ies)|opportunity-details|vendor-opportunities|rfps?|rfqs?|ifbs?)(?:\/|$|[-_])|\.(?:pdf|docx?)(?:$|[?#]))/i
 let sourceTelemetryLogged = false
 const configuredPrimarySources = new Set()
 let primaryCandidateTotal = 0
@@ -136,10 +134,29 @@ async function retrieve(query, plan) {
   return null
 }
 
-function assertProcurementShape(query, result) {
-  const text = `${result.title || ''} ${result.description || ''} ${result.url || ''}`
-  if (PROCUREMENT_EVIDENCE.test(text) || PROCUREMENT_DESTINATION.test(result.url || '')) return
-  throw new Error(`Non-procurement page survived the live ingest gate for "${query}": ${JSON.stringify({ title: result.title, url: result.url, description: result.description }).slice(0, 1_500)}`)
+function assertCandidateGateContract(query, data) {
+  const intentGate = data?.diagnostics?.intentGate
+  if (intentGate?.applied !== true) {
+    throw new Error(`Application procurement intent gate was not applied for "${query}": ${JSON.stringify(intentGate)}`)
+  }
+
+  const retained = Number(intentGate.retained)
+  const smartFilter = data?.diagnostics?.smartFilter
+  const smartCandidateCount = Number(smartFilter?.candidateCount)
+  const displayedCount = Number(smartFilter?.displayedCount)
+  if (!Number.isFinite(retained) || !Number.isFinite(smartCandidateCount) || retained !== smartCandidateCount) {
+    throw new Error(`Candidate gate handoff mismatch for "${query}": intentRetained=${intentGate?.retained} smartCandidates=${smartFilter?.candidateCount}`)
+  }
+  if (!Number.isFinite(displayedCount) || displayedCount !== data.results.length) {
+    throw new Error(`Smart-filter display contract mismatch for "${query}": displayed=${smartFilter?.displayedCount} returned=${data.results.length}`)
+  }
+
+  for (const result of data.results) {
+    const status = result?.validation?.status
+    if (status !== 'valid' && status !== 'uncertain') {
+      throw new Error(`Rejected candidate escaped the application gate for "${query}": ${JSON.stringify({ title: result?.title, url: result?.url, validation: result?.validation }).slice(0, 1_500)}`)
+    }
+  }
 }
 
 async function ingest(query, plan, retrieval) {
@@ -165,9 +182,9 @@ async function ingest(query, plan, retrieval) {
   if (Number(data.confidence || 0) !== 0) throw new Error(`Candidate-stage confidence must remain 0 for "${query}"; received ${data.confidence}`)
   if (!Array.isArray(data.results)) throw new Error(`Live ingest returned no result array for "${query}".`)
 
-  for (const result of data.results) assertProcurementShape(query, result)
+  assertCandidateGateContract(query, data)
 
-  console.log(`[user-flow] query="${query}" raw=${retrieval.results.length}; retained=${data.results.length}; transport=${retrieval.transport}; procurement-shape=clean`)
+  console.log(`[user-flow] query="${query}" raw=${retrieval.results.length}; retained=${data.results.length}; transport=${retrieval.transport}; candidate-gates=clean`)
   return { query, raw: retrieval.results.length, retained: data.results.length, transport: retrieval.transport }
 }
 
