@@ -38,7 +38,9 @@ test('live canary rejects retained pages without procurement evidence or destina
 })
 
 test('live canary recognizes established procurement listing portals and acquisition-stage language', () => {
+  assert.match(canary, /sam\\\.gov/)
   assert.match(canary, /governmentcontracts\\\.us/)
+  assert.match(canary, /contract-opportunit/)
   assert.match(canary, /opportunity-details/)
   assert.match(canary, /market research/)
   assert.match(canary, /acquisition strategy/)
