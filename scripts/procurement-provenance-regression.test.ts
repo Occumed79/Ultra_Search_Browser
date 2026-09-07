@@ -71,6 +71,70 @@ test('an editorial-looking title still survives when the page itself has direct 
   assert.deepEqual(gated.results.map(item => item.url), [result.url])
 })
 
+test('a generic documents container cannot turn an ADA manual chapter into procurement', () => {
+  const query = 'employee medical examinations'
+  const intent = buildDeterministicSemanticIntent(query, 'procurement')
+  const result = candidate({
+    title: 'VI. MEDICAL EXAMINATIONS AND INQUIRIES',
+    url: 'https://corada.com/documents/title-i-ta-manual/vi-medical-examinations-and-inquiries',
+    domain: 'corada.com',
+    description: 'Overview of Legal Obligations Pre-Employment, Pre-Offer. An employer may not require a job applicant to take a medical examination before the employer makes a job offer.',
+    retrieval: {
+      sources: ['Keenable'],
+      queries: ['employee medical examinations RFP RFQ solicitation bid tender'],
+      purposes: ['ai-intent'],
+      overlap: 1,
+    },
+  })
+
+  const gated = applyIntentCandidateGate(query, 'procurement', [result], intent)
+
+  assert.equal(gated.results.length, 0)
+  assert.equal(gated.diagnostics.reasons['missing-procurement-evidence'], 1)
+})
+
+test('a procurement documents container remains eligible through its procurement path', () => {
+  const query = 'employee medical examinations'
+  const intent = buildDeterministicSemanticIntent(query, 'procurement')
+  const result = candidate({
+    title: 'Employee Medical Examination Services',
+    url: 'https://county.gov/procurement/documents/26-114',
+    domain: 'county.gov',
+    description: 'Employee medical examination services and occupational health requirements.',
+    retrieval: {
+      sources: ['Keenable'],
+      queries: ['employee medical examinations RFP RFQ solicitation bid tender'],
+      purposes: ['ai-intent'],
+      overlap: 1,
+    },
+  })
+
+  const gated = applyIntentCandidateGate(query, 'procurement', [result], intent)
+
+  assert.deepEqual(gated.results.map(item => item.url), [result.url])
+})
+
+test('a sparse direct procurement document may still use targeted-query provenance to reach deep validation', () => {
+  const query = 'employee medical examinations'
+  const intent = buildDeterministicSemanticIntent(query, 'procurement')
+  const result = candidate({
+    title: 'Employee Medical Examination Services',
+    url: 'https://county.gov/files/26-114.pdf',
+    domain: 'county.gov',
+    description: 'Employee medical examination services and related occupational health requirements.',
+    retrieval: {
+      sources: ['SearXNG · google cse'],
+      queries: ['employee medical examinations RFP RFQ solicitation bid tender'],
+      purposes: ['document'],
+      overlap: 1,
+    },
+  })
+
+  const gated = applyIntentCandidateGate(query, 'procurement', [result], intent)
+
+  assert.deepEqual(gated.results.map(item => item.url), [result.url])
+})
+
 test('a sparse procurement destination may use targeted-query provenance to reach deep validation', () => {
   const query = 'employee medical examinations'
   const intent = buildDeterministicSemanticIntent(query, 'procurement')
