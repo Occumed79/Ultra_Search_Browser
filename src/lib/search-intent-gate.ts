@@ -12,13 +12,10 @@ export interface IntentGateDiagnostics {
 
 const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quot(?:e|es|ation|ations)|rfq|request for information|rfi|request for tenders?|rft|invitation (?:to|for) bids?|ifb|sources sought|solicitation|tender|bid(?:ding)?|procurement|contract (?:opportunity|notice)|bid opportunity|business opportunity|vendor opportunity|notice of intent|competitive sealed proposal|notice inviting bids)\b/i
 const PROCUREMENT_PORTALS = /(?:sam\.gov|ebuy\.gsa\.gov|piee\.eb\.mil|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|bidexpress\.com|demandstar\.com|vendorregistry\.com|jaggaer\.com|sciquest\.com|ariba\.com|coupa\.com|periscopeholdings\.com)/i
-const PROCUREMENT_DESTINATION_HINTS = /(?:^|[\/_-])(?:opp(?:s|ortunit(?:y|ies))?|procurement|purchasing|bids?|rfps?|rfqs?|rfis?|solicitations?|tenders?|vendor|contract-opportunit(?:y|ies)|business-opportunit(?:y|ies)|opportunities|notices?|events?|sourcing|documentcenter|documents?|downloads?|attachments?)(?:[\/_?.#=-]|$)/i
+const PROCUREMENT_DESTINATION_HINTS = /(?:^|[\/_-])(?:opp(?:s|ortunit(?:y|ies))?|procurement|purchasing|bids?|rfps?|rfqs?|rfis?|solicitations?|tenders?|vendor|suppliers?|contract-opportunit(?:y|ies)|business-opportunit(?:y|ies)|opportunities|notices?|events?|sourcing|acquisition|documentcenter|documents?|downloads?|attachments?)(?:[\/_?.#=-]|$)/i
 const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory|therapy)\b/i
 const BROAD_OCCUMED_SERVICE_QUERY = /\b(?:employment|employee|occupational|workforce|pre employment|medical|fitness for duty|fit for duty)\b.*\b(?:evaluation|evaluations|exam|exams|examination|examinations|physical|physicals|screening|screenings|health|medicine|clearance)\b/i
 const NON_MEDICAL_EMPLOYMENT_QUERY = /\b(?:performance|appraisal|employee review|human resources|hr evaluation|training evaluation)\b/i
-const PROVIDER_MARKETING_PATH = /(?:^|\/)(?:services?(?:\/|$)|locations?(?:\/|$)|clinics?(?:\/|$)|providers?(?:\/|$)|patients?(?:\/|$)|urgent-care(?:[-/]|$)|occupational-health(?:[-/]|$)|occupational-medicine(?:[-/]|$))/i
-const PROVIDER_MARKETING_TEXT = /\b(?:book an appointment|schedule an appointment|find a location|patient portal|clinic hours|walk[- ]?in|urgent care|accepted insurance|our services|services we offer)\b/i
-const TARGETED_PROCUREMENT_PURPOSES = new Set(['ai-intent', 'official', 'document', 'freshness', 'portal'])
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'by', 'for', 'from', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with',
   'find', 'search', 'show', 'request', 'requests', 'proposal', 'proposals', 'quotation', 'quotations', 'tender', 'tenders',
@@ -86,9 +83,10 @@ function subjectMatches(
 }
 
 /**
- * Search engines sometimes omit procurement words from a sparse snippet even
- * when the query itself explicitly asked for an RFP/solicitation. Provenance is
- * useful, but ordinary clinic/service pages must still be kept out.
+ * A procurement-targeted retrieval query is useful corroborating evidence, but
+ * it can never by itself turn an ordinary clinic/provider webpage into an RFP.
+ * Candidate ingest therefore combines retrieval provenance with an actual
+ * procurement-looking destination whenever the snippet itself is sparse.
  */
 function retrievalSignalsProcurementIntent(result: ScrapedResult): boolean {
   const queries = result.retrieval?.queries || []
@@ -96,10 +94,6 @@ function retrievalSignalsProcurementIntent(result: ScrapedResult): boolean {
     PROCUREMENT_TERMS.test(retrievalQuery)
     || PROCUREMENT_PORTALS.test(retrievalQuery)
   )
-}
-
-function retrievalPurposeSignalsProcurement(result: ScrapedResult): boolean {
-  return (result.retrieval?.purposes || []).some(purpose => TARGETED_PROCUREMENT_PURPOSES.has(purpose))
 }
 
 function destinationSignalsProcurement(result: ScrapedResult): boolean {
@@ -112,36 +106,12 @@ function destinationSignalsProcurement(result: ScrapedResult): boolean {
     if (/\.(?:pdf|docx?)(?:$|[?#])/i.test(pathAndQuery)) return true
 
     const host = url.hostname.toLowerCase()
-    if (/\b(?:procurement|purchasing|bids?|vendor)\b/i.test(host.replace(/[.-]+/g, ' '))) return true
+    if (/\b(?:procurement|purchasing|bids?|vendor|supplier|sourcing|tender|acquisition|eproc)\b/i.test(host.replace(/[.-]+/g, ' '))) return true
   } catch {
     return false
   }
 
   return false
-}
-
-function looksLikeProviderMarketing(result: ScrapedResult): boolean {
-  const text = `${result.title} ${result.description}`
-  if (PROVIDER_MARKETING_TEXT.test(text)) return true
-  try {
-    return PROVIDER_MARKETING_PATH.test(new URL(result.url).pathname)
-  } catch {
-    return true
-  }
-}
-
-/**
- * A targeted procurement search result with an opaque destination URL should
- * be allowed to reach destination-page validation when the snippet still
- * matches the requested service. Modern public/private sourcing systems often
- * expose GUID/event URLs and weak snippets that contain no literal RFP word.
- * The deep validator, not this snippet gate, is the authoritative SHOW/REJECT
- * stage. Obvious clinic/provider marketing pages remain blocked here.
- */
-function targetedProcurementProvenanceMayContinue(result: ScrapedResult): boolean {
-  return retrievalSignalsProcurementIntent(result)
-    && retrievalPurposeSignalsProcurement(result)
-    && !looksLikeProviderMarketing(result)
 }
 
 function rejectReason(
@@ -159,11 +129,9 @@ function rejectReason(
     || PROCUREMENT_PORTALS.test(result.url)
   const hasProcurementRetrievalContext = retrievalSignalsProcurementIntent(result)
   const hasProcurementDestination = destinationSignalsProcurement(result)
-  const hasTargetedProcurementProvenance = targetedProcurementProvenanceMayContinue(result)
   if (
     !hasDirectProcurementEvidence
     && !(hasProcurementRetrievalContext && hasProcurementDestination)
-    && !hasTargetedProcurementProvenance
   ) {
     return 'missing-procurement-evidence'
   }
