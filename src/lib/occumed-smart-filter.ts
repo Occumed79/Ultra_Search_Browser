@@ -6,6 +6,7 @@ import {
 import {
   alignOccuMedSemanticIntent,
   isBroadOccuMedCapabilityQuery,
+  matchOccuMedCapabilityGroups,
 } from './occumed-capability-matching'
 import {
   assessOccuMedRfpText,
@@ -96,6 +97,60 @@ function externalSemanticReviewEnabled(): boolean {
   return process.env.ENABLE_EXTERNAL_SMART_FILTER === 'true'
 }
 
+function preserveSparseCapabilityMatches(
+  query: string,
+  sourceResults: ScrapedResult[],
+  filtered: { results: ScrapedResult[]; diagnostics: SmartFilterDiagnostics },
+  displayLimit: number
+): { results: ScrapedResult[]; diagnostics: SmartFilterDiagnostics } {
+  if (filtered.results.length >= displayLimit || sourceResults.length === 0) return filtered
+
+  const requestedCapabilities = new Set(
+    matchOccuMedCapabilityGroups(query, 3).map(group => group.label)
+  )
+  if (requestedCapabilities.size === 0) return filtered
+
+  const existingUrls = new Set(filtered.results.map(result => result.url))
+  const rescueLimit = Math.max(0, displayLimit - filtered.results.length)
+  const rescued = sourceResults
+    .filter(result => !existingUrls.has(result.url))
+    .map(result => ({ result, assessment: assessOccuMedRfpText(resultEvidenceText(result)) }))
+    .filter(({ assessment }) =>
+      assessment.exclusions.length === 0
+      && assessment.matchedCapabilities.some(label => requestedCapabilities.has(label))
+    )
+    .sort((left, right) => right.result.score - left.result.score)
+    .slice(0, rescueLimit)
+    .map(({ result, assessment }) => ({
+      ...result,
+      score: result.score + 3,
+      validation: {
+        status: 'uncertain' as const,
+        relevance: Number(Math.max(0.35, assessment.score).toFixed(3)),
+        reason: 'Sparse procurement snippet matches the requested Occu-Med capability family; retaining it for destination-page and solicitation-package validation.',
+        matchedConcepts: assessment.matchedCapabilities,
+        mode: 'local-rules' as const,
+      },
+    }))
+
+  if (rescued.length === 0) return filtered
+
+  const results = [...filtered.results, ...rescued]
+    .slice(0, displayLimit)
+    .map((result, index) => ({ ...result, rank: index + 1 }))
+
+  return {
+    results,
+    diagnostics: {
+      ...filtered.diagnostics,
+      uncertainCount: filtered.diagnostics.uncertainCount + rescued.length,
+      rejectedCount: Math.max(0, filtered.diagnostics.rejectedCount - rescued.length),
+      displayedCount: results.length,
+      interpretation: `${filtered.diagnostics.interpretation} Sparse candidates that independently match the requested Occu-Med capability family are retained as uncertain for deep destination validation rather than being discarded from snippet evidence alone.`,
+    },
+  }
+}
+
 export async function applyOccuMedSmartFilter(
   query: string,
   lens: SearchLens,
@@ -107,12 +162,6 @@ export async function applyOccuMedSmartFilter(
     return applySmartFilter(query, lens, results, displayLimit, options)
   }
 
-  // The procurement candidate gate has already required real procurement
-  // evidence before this stage. For true umbrella searches, reuse the shared
-  // Occu-Med ontology assessment instead of coercing dozens of capability terms
-  // through the generic 12-term concept normalizer. This keeps a one-family
-  // sparse candidate visible as uncertain for destination-page review while
-  // still rejecting hard exclusions and genuinely irrelevant scope.
   if (isBroadOccuMedCapabilityQuery(query)) {
     return applyUmbrellaOccuMedFilter(query, results, displayLimit)
   }
@@ -122,12 +171,11 @@ export async function applyOccuMedSmartFilter(
   const useExternalProviders = options.useExternalProviders === true
     && externalSemanticReviewEnabled()
 
-  return applySmartFilter(query, lens, results, displayLimit, {
+  const filtered = await applySmartFilter(query, lens, results, displayLimit, {
     ...options,
-    // Core procurement review is deterministic and zero-key by default. Merely
-    // having a trial Cerebras/Groq key present in Render must not alter latency
-    // or classification. External semantic reviewers are an explicit opt-in.
     useExternalProviders,
     semanticIntent: alignedIntent,
   })
+
+  return preserveSparseCapabilityMatches(query, results, filtered, displayLimit)
 }
