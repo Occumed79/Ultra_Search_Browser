@@ -14,6 +14,8 @@ const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quot(?:e|
 const PROCUREMENT_PORTALS = /(?:sam\.gov|ebuy\.gsa\.gov|piee\.eb\.mil|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|bidexpress\.com|demandstar\.com|vendorregistry\.com|jaggaer\.com|sciquest\.com|ariba\.com|coupa\.com|periscopeholdings\.com)/i
 const PROCUREMENT_DESTINATION_HINTS = /(?:^|[\/_-])(?:opp(?:s|ortunit(?:y|ies))?|procurement|purchasing|bids?|rfps?|rfqs?|rfis?|solicitations?|tenders?|vendor|suppliers?|contract-opportunit(?:y|ies)|business-opportunit(?:y|ies)|opportunities|notices?|events?|sourcing|acquisition|documentcenter|documents?|downloads?|attachments?)(?:[\/_?.#=-]|$)/i
 const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory|therapy)\b/i
+const EDITORIAL_MARKETING_TITLE = /\b(?:strategic guide|buyers? guide|guide to|how to|explainer|blog|article|best practices|insider (?:guide|note)|what is)\b/i
+const EDITORIAL_MARKETING_PATH = /(?:\/(?:blog|articles?|resources?|guides?|insights?|news)\/|\/\d{4}\/\d{1,2}\/|(?:^|[\/_-])(?:strategic-guide|buyers?-guide|how-to|best-practices|explainer)(?:[\/_-]|$))/i
 const BROAD_OCCUMED_SERVICE_QUERY = /\b(?:employment|employee|occupational|workforce|pre employment|medical|fitness for duty|fit for duty)\b.*\b(?:evaluation|evaluations|exam|exams|examination|examinations|physical|physicals|screening|screenings|health|medicine|clearance)\b/i
 const NON_MEDICAL_EMPLOYMENT_QUERY = /\b(?:performance|appraisal|employee review|human resources|hr evaluation|training evaluation)\b/i
 const STOP_WORDS = new Set([
@@ -114,6 +116,18 @@ function destinationSignalsProcurement(result: ScrapedResult): boolean {
   return false
 }
 
+function editorialOrMarketingPage(result: ScrapedResult): boolean {
+  if (PROCUREMENT_PORTALS.test(result.url)) return false
+  if (EDITORIAL_MARKETING_TITLE.test(result.title)) return true
+
+  try {
+    const url = new URL(result.url)
+    return EDITORIAL_MARKETING_PATH.test(url.pathname)
+  } catch {
+    return false
+  }
+}
+
 function rejectReason(
   query: string,
   result: ScrapedResult,
@@ -129,6 +143,14 @@ function rejectReason(
     || PROCUREMENT_PORTALS.test(result.url)
   const hasProcurementRetrievalContext = retrievalSignalsProcurementIntent(result)
   const hasProcurementDestination = destinationSignalsProcurement(result)
+
+  // Search providers frequently return SEO/editorial articles whose slugs use
+  // words such as "sourcing". Those destination hints are not procurement
+  // evidence when the page itself has no RFP/bid/solicitation language.
+  if (!hasDirectProcurementEvidence && editorialOrMarketingPage(result)) {
+    return 'editorial-or-marketing-page'
+  }
+
   if (
     !hasDirectProcurementEvidence
     && !(hasProcurementRetrievalContext && hasProcurementDestination)
