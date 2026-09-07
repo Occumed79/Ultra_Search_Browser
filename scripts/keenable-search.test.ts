@@ -13,6 +13,7 @@ const KEY_NAMES = [
 const originalKeys = Object.fromEntries(KEY_NAMES.map(name => [name, process.env[name]]))
 const originalBase = process.env.KEENABLE_API_BASE_URL
 const originalMode = process.env.KEENABLE_SEARCH_MODE
+const originalPublic = process.env.KEENABLE_PUBLIC_SEARCH
 
 function clearKeys() {
   for (const name of KEY_NAMES) delete process.env[name]
@@ -28,20 +29,57 @@ function restoreEnvironment() {
   else process.env.KEENABLE_API_BASE_URL = originalBase
   if (originalMode === undefined) delete process.env.KEENABLE_SEARCH_MODE
   else process.env.KEENABLE_SEARCH_MODE = originalMode
+  if (originalPublic === undefined) delete process.env.KEENABLE_PUBLIC_SEARCH
+  else process.env.KEENABLE_PUBLIC_SEARCH = originalPublic
   resetProviderKeyPoolForTests()
 }
 
 afterEach(restoreEnvironment)
 
-test('Keenable is optional when no API key is configured', async () => {
+test('Keenable uses its keyless public endpoint when no API key is configured', async () => {
   clearKeys()
+  delete process.env.KEENABLE_PUBLIC_SEARCH
+  let requestedUrl = ''
+  let requestInit: RequestInit | undefined
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    requestedUrl = String(input)
+    requestInit = init
+    return new Response(JSON.stringify({
+      results: [{
+        title: 'Public Occupational Health RFP',
+        url: 'https://example.gov/procurement/public-rfp',
+        snippet: 'Open occupational health procurement.',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+
+  assert.equal(isKeenableConfigured(), true)
+  assert.equal(keenableKeyCount(), 0)
+  const response = await searchKeenable('occupational health RFP')
+
+  assert.equal(requestedUrl, 'https://api.keenable.ai/v1/search/public')
+  assert.equal(new Headers(requestInit?.headers).get('X-API-Key'), null)
+  assert.equal(new Headers(requestInit?.headers).get('X-Keenable-Title'), 'Ultra Search Browser')
+  assert.deepEqual(JSON.parse(String(requestInit?.body)), {
+    query: 'occupational health RFP',
+    mode: 'pro',
+  })
+  assert.equal(response.configured, true)
+  assert.equal(response.ok, true)
+  assert.equal(response.keyCount, 0)
+  assert.equal(response.results[0].source, 'Keenable')
+})
+
+test('Keenable public search can be explicitly disabled when no key is configured', async () => {
+  clearKeys()
+  process.env.KEENABLE_PUBLIC_SEARCH = 'false'
   assert.equal(isKeenableConfigured(), false)
 
   const response = await searchKeenable('occupational health RFP')
   assert.equal(response.configured, false)
   assert.equal(response.ok, false)
   assert.deepEqual(response.results, [])
-  assert.match(response.error || '', /KEENABLE_API_KEY/i)
+  assert.match(response.error || '', /public search is disabled/i)
 })
 
 test('Keenable sends the API key, pro mode, and normalizes web results', async () => {
@@ -130,6 +168,40 @@ test('Keenable can fail through the whole four-key pool before succeeding', asyn
     'keenable-two',
     'keenable-three',
     'keenable-four',
+  ])
+})
+
+test('Keenable falls back to the public endpoint when every configured key is quota limited', async () => {
+  clearKeys()
+  resetProviderKeyPoolForTests()
+  process.env.KEENABLE_API_KEY = 'keenable-one'
+  process.env.KEENABLE_API_KEY_2 = 'keenable-two'
+
+  const requests: Array<{ url: string; key: string | null }> = []
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const key = new Headers(init?.headers).get('X-API-Key')
+    requests.push({ url: String(input), key })
+    if (key) {
+      return new Response(JSON.stringify({ message: 'quota reached' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return new Response(JSON.stringify({
+      results: [{
+        title: 'Public fallback result',
+        url: 'https://example.gov/bids/public-fallback',
+        snippet: 'Open medical services solicitation.',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+
+  const response = await searchKeenable('medical services solicitation')
+  assert.equal(response.ok, true)
+  assert.deepEqual(requests, [
+    { url: 'https://api.keenable.ai/v1/search', key: 'keenable-one' },
+    { url: 'https://api.keenable.ai/v1/search', key: 'keenable-two' },
+    { url: 'https://api.keenable.ai/v1/search/public', key: null },
   ])
 })
 
