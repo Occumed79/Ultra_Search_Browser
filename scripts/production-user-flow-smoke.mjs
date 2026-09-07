@@ -25,6 +25,7 @@ const VALID_RETRIEVAL_TRANSPORTS = new Set([
 const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILABLE'])
 const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice inviting bids)\b/i
 const PROCUREMENT_DESTINATION = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|\/(?:procurement|purchasing|bids?|bid-opportunities|solicitations?|opportunities|contract-opportunities|vendor-opportunities|rfps?|rfqs?|ifbs?)(?:\/|$|[-_])|\.(?:pdf|docx?)(?:$|[?#]))/i
+let sourceTelemetryLogged = false
 
 async function readJson(response) {
   const text = await response.text()
@@ -40,6 +41,18 @@ function commitMatches(actual, expected) {
     && (actual.startsWith(expected) || expected.startsWith(actual)))
 }
 
+function compactSourceHealth(health) {
+  const capabilities = health?.capabilities || {}
+  const live = capabilities.liveSearchSources || {}
+  const circuit = capabilities.retrievalSourceHealth || {}
+  const configured = Object.fromEntries(Object.entries(live).map(([name, value]) => [name, {
+    configured: Boolean(value?.configured),
+    ...(Number.isFinite(Number(value?.keyCount)) ? { keyCount: Number(value.keyCount) } : {}),
+    ...(Array.isArray(value?.engines) ? { engines: value.engines } : {}),
+  }]))
+  return { configured, circuit }
+}
+
 async function assertDeployment() {
   const response = await fetch(`${APP_URL}/api/health?user-flow=${Date.now()}`, {
     headers: { Accept: 'application/json' },
@@ -51,6 +64,8 @@ async function assertDeployment() {
   if (EXPECTED_COMMIT && !commitMatches(health.commit, EXPECTED_COMMIT)) {
     throw new Error(`User-flow canary reached stale deployment ${health.commit}; expected ${EXPECTED_COMMIT}`)
   }
+  console.log(`[source-health] ${JSON.stringify(compactSourceHealth(health))}`)
+  return health
 }
 
 async function buildPlan(query) {
@@ -67,6 +82,16 @@ async function buildPlan(query) {
   return plan
 }
 
+function compactDiagnostics(data) {
+  return (Array.isArray(data?.diagnostics) ? data.diagnostics : []).map(item => ({
+    engine: item?.engine,
+    query: item?.query,
+    resultCount: item?.resultCount,
+    circuitOpen: item?.circuitOpen,
+    error: item?.error,
+  }))
+}
+
 async function retrieve(query, plan) {
   const response = await fetch(`${APP_URL}/api/search`, {
     method: 'POST',
@@ -75,6 +100,10 @@ async function retrieve(query, plan) {
     signal: AbortSignal.timeout(80_000),
   })
   const data = await readJson(response)
+  if (!sourceTelemetryLogged) {
+    console.log(`[source-retrieval] query="${query}" transport=${data.transport || 'unknown'} configuredSources=${JSON.stringify(data.configuredSources || {})} keyPools=${JSON.stringify(data.keyPools || {})} candidateCounts=${JSON.stringify(data.candidateCounts || {})} diagnostics=${JSON.stringify(compactDiagnostics(data))}`)
+    sourceTelemetryLogged = true
+  }
   if (response.ok) {
     if (!Array.isArray(data.results)) throw new Error(`Live retrieval returned no result array for "${query}".`)
     if (!VALID_RETRIEVAL_TRANSPORTS.has(data.transport)) throw new Error(`Unexpected live transport ${data.transport} for "${query}".`)
@@ -141,6 +170,11 @@ async function main() {
     console.log('[user-flow] all live source pools were empty within the explicit source-exhaustion contract')
     return
   }
+  const transportCounts = summaries.reduce((counts, item) => {
+    counts[item.transport] = (counts[item.transport] || 0) + 1
+    return counts
+  }, {})
+  console.log(`[source-transport-summary] ${JSON.stringify(transportCounts)}`)
   console.log(`[user-flow] capability-canaries passed ${summaries.length}/${CANARY_QUERIES.length} live retrieval paths`)
 }
 
