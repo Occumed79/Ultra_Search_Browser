@@ -31,20 +31,16 @@ test('production canary exercises the broad query plus the major Occu-Med capabi
   assert.match(canary, /fetch\(`\$\{APP_URL\}\/api\/search\/ingest`,/)
 })
 
-test('live canary rejects retained pages without procurement evidence or destination structure', () => {
-  assert.match(canary, /PROCUREMENT_EVIDENCE/)
-  assert.match(canary, /PROCUREMENT_DESTINATION/)
-  assert.match(canary, /Non-procurement page survived the live ingest gate/)
-})
-
-test('live canary recognizes established procurement listing portals and acquisition-stage language', () => {
-  assert.match(canary, /sam\\\.gov/)
-  assert.match(canary, /governmentcontracts\\\.us/)
-  assert.match(canary, /contract-opportunit/)
-  assert.match(canary, /opportunity-details/)
-  assert.match(canary, /market research/)
-  assert.match(canary, /acquisition strategy/)
-  assert.match(canary, /strategic sourcing/)
+test('live canary verifies the application candidate gate contract instead of duplicating procurement heuristics', () => {
+  assert.match(canary, /assertCandidateGateContract/)
+  assert.match(canary, /intentGate\?\.applied !== true/)
+  assert.match(canary, /intentRetained/)
+  assert.match(canary, /smartCandidates/)
+  assert.match(canary, /smartFilter\?\.displayedCount/)
+  assert.match(canary, /validation\?\.status/)
+  assert.match(canary, /Rejected candidate escaped the application gate/)
+  assert.doesNotMatch(canary, /const PROCUREMENT_EVIDENCE/)
+  assert.doesNotMatch(canary, /const PROCUREMENT_DESTINATION/)
 })
 
 test('live canary preserves optional-key and complete transport contracts', () => {
