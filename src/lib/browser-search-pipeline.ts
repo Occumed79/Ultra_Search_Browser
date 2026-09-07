@@ -51,10 +51,76 @@ function reconstructQuery(operators: OperatorsResult, fallback: string): string 
     .trim() || fallback.trim()
 }
 
-function cleanResultUrl(value: string): string | null {
+function safeHttpUrl(value: string): URL | null {
   try {
     const url = new URL(value)
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url : null
+  } catch {
+    return null
+  }
+}
+
+function decodeBase64Url(value: string): string | null {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+  try {
+    return atob(padded)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Search engines sometimes return their own tracking/redirect URL instead of
+ * the destination URL. Keeping the wrapper breaks domain/path classification,
+ * dedupe, and destination validation. Resolve only well-known deterministic
+ * wrapper shapes; if a recognized wrapper cannot yield a safe HTTP(S) target,
+ * drop it rather than pretending the search-engine tracking URL is evidence.
+ */
+function unwrapSearchEngineRedirect(url: URL): URL | null {
+  const host = url.hostname.toLowerCase()
+  const path = url.pathname.toLowerCase()
+
+  if ((host === 'bing.com' || host.endsWith('.bing.com')) && path.startsWith('/ck/')) {
+    const rawTarget = url.searchParams.get('u')?.trim() || ''
+    if (!rawTarget) return null
+
+    const direct = safeHttpUrl(rawTarget)
+    if (direct) return direct
+
+    // Bing commonly prefixes its base64url destination with the marker "a1".
+    const encoded = rawTarget.startsWith('a1') ? rawTarget.slice(2) : rawTarget
+    const decoded = decodeBase64Url(encoded)
+    return decoded ? safeHttpUrl(decoded) : null
+  }
+
+  if ((host === 'duckduckgo.com' || host.endsWith('.duckduckgo.com')) && (path === '/l/' || path === '/l')) {
+    const target = url.searchParams.get('uddg')?.trim() || ''
+    return target ? safeHttpUrl(target) : null
+  }
+
+  if ((host === 'google.com' || /(^|\.)google\.[a-z.]+$/i.test(host)) && path === '/url') {
+    const target = (url.searchParams.get('url') || url.searchParams.get('q') || '').trim()
+    return target ? safeHttpUrl(target) : null
+  }
+
+  return url
+}
+
+function cleanResultUrl(value: string): string | null {
+  try {
+    let url = safeHttpUrl(value)
+    if (!url) return null
+
+    // Allow one nested search wrapper (for example Google -> Bing -> target)
+    // without permitting arbitrary redirect chasing or network requests.
+    for (let depth = 0; depth < 2; depth += 1) {
+      const unwrapped = unwrapSearchEngineRedirect(url)
+      if (!unwrapped) return null
+      if (unwrapped.toString() === url.toString()) break
+      url = unwrapped
+    }
+
     url.hash = ''
     for (const key of Array.from(url.searchParams.keys())) {
       const lowered = key.toLowerCase()
