@@ -59,6 +59,16 @@ test('live canary preserves optional-key and complete transport contracts', () =
   assert.match(smoke, /SearXNG primary ensemble is missing/)
 })
 
+test('production canary fails when configured primary discovery contributes zero candidates', () => {
+  for (const source of ['searxng', 'keenable', 'tinyfish', 'tavily', 'exa', 'langsearch']) {
+    assert.match(canary, new RegExp(source, 'i'))
+  }
+  assert.match(canary, /recordPrimarySourceContribution\(data\)/)
+  assert.match(canary, /configuredPrimarySources\.size > 0 && primaryCandidateTotal === 0/)
+  assert.match(canary, /Direct rescue cannot mask a dead primary search stack/)
+  assert.match(canary, /\[source-primary-summary\]/)
+})
+
 test('production workflow runs fixture smoke and live user-flow smoke before publishing success', () => {
   assert.match(workflow, /node scripts\/production-smoke\.mjs/)
   assert.match(workflow, /node scripts\/production-user-flow-smoke\.mjs/)

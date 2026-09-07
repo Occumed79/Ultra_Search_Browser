@@ -173,7 +173,7 @@ test('Exa, LangSearch, and TinyFish use their live web search APIs and normalize
 
   const [exa, lang, tiny] = await Promise.all([
     searchExa('employee medical exams', { maxResults: 20 }),
-    searchLangSearch('medical readiness procurement'),
+    searchLangSearch('medical readiness procurement', { maxResults: 20 }),
     searchTinyFish('occupational health solicitation', { purpose: 'Find current procurement opportunities.' }),
   ])
 
@@ -192,6 +192,9 @@ test('Exa, LangSearch, and TinyFish use their live web search APIs and normalize
   const exaBody = JSON.parse(exaCall?.body || '{}')
   assert.equal(exaBody.numResults, 10)
   assert.deepEqual(exaBody.contents, { highlights: { dynamic: true } })
+
+  const langBody = JSON.parse(langCall?.body || '{}')
+  assert.equal(langBody.count, 10)
 
   const tinyUrl = new URL(tinyCall?.url || 'https://api.search.tinyfish.ai')
   assert.equal(tinyUrl.searchParams.get('query'), 'occupational health solicitation')

@@ -22,10 +22,13 @@ const VALID_RETRIEVAL_TRANSPORTS = new Set([
   'searxng+keenable+direct-rescue',
   'multi-source+direct-rescue',
 ])
+const PRIMARY_SOURCE_NAMES = ['searxng', 'keenable', 'tinyfish', 'tavily', 'exa', 'langsearch']
 const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILABLE'])
 const PROCUREMENT_EVIDENCE = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for information|rfi|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|sources sought|notice inviting bids)\b/i
 const PROCUREMENT_DESTINATION = /(?:ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|\/(?:procurement|purchasing|bids?|bid-opportunities|solicitations?|opportunities|contract-opportunities|vendor-opportunities|rfps?|rfqs?|ifbs?)(?:\/|$|[-_])|\.(?:pdf|docx?)(?:$|[?#]))/i
 let sourceTelemetryLogged = false
+const configuredPrimarySources = new Set()
+let primaryCandidateTotal = 0
 
 async function readJson(response) {
   const text = await response.text()
@@ -51,6 +54,16 @@ function compactSourceHealth(health) {
     ...(Array.isArray(value?.engines) ? { engines: value.engines } : {}),
   }]))
   return { configured, circuit }
+}
+
+function recordPrimarySourceContribution(data) {
+  const configured = data?.configuredSources || {}
+  const counts = data?.candidateCounts || {}
+  for (const source of PRIMARY_SOURCE_NAMES) {
+    if (configured[source] === true) configuredPrimarySources.add(source)
+    const count = Number(counts[source])
+    if (Number.isFinite(count) && count > 0) primaryCandidateTotal += count
+  }
 }
 
 async function assertDeployment() {
@@ -100,6 +113,7 @@ async function retrieve(query, plan) {
     signal: AbortSignal.timeout(80_000),
   })
   const data = await readJson(response)
+  recordPrimarySourceContribution(data)
   if (!sourceTelemetryLogged) {
     console.log(`[source-retrieval] query="${query}" transport=${data.transport || 'unknown'} configuredSources=${JSON.stringify(data.configuredSources || {})} keyPools=${JSON.stringify(data.keyPools || {})} candidateCounts=${JSON.stringify(data.candidateCounts || {})} diagnostics=${JSON.stringify(compactDiagnostics(data))}`)
     sourceTelemetryLogged = true
@@ -166,6 +180,12 @@ async function main() {
     if (!retrieval) continue
     summaries.push(await ingest(query, plan, retrieval))
   }
+
+  console.log(`[source-primary-summary] configured=${JSON.stringify([...configuredPrimarySources])} candidateTotal=${primaryCandidateTotal}`)
+  if (configuredPrimarySources.size > 0 && primaryCandidateTotal === 0) {
+    throw new Error(`Configured primary search sources contributed zero candidates across all capability canaries: ${[...configuredPrimarySources].join(', ')}. Direct rescue cannot mask a dead primary search stack.`)
+  }
+
   if (summaries.length === 0) {
     console.log('[user-flow] all live source pools were empty within the explicit source-exhaustion contract')
     return

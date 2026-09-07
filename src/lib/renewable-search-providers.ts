@@ -21,6 +21,7 @@ const TINYFISH_KEYS = ['TINYFISH_API_KEY']
 
 const DEFAULT_TIMEOUT_MS = 10_000
 const EXA_FREE_RESULT_CEILING = 10
+const LANGSEARCH_RESULT_CEILING = 10
 
 export interface RenewableSearchOptions {
   maxResults?: number
@@ -302,6 +303,7 @@ export async function searchLangSearch(
 
   const q = normalizedQuery(query)
   if (!q) return failure(true, keyCount, 'LangSearch query is empty.')
+  const resultLimit = maxResults(options, LANGSEARCH_RESULT_CEILING)
 
   try {
     const response = await fetch('https://api.langsearch.com/v1/web-search', {
@@ -316,7 +318,7 @@ export async function searchLangSearch(
         query: q,
         freshness: 'noLimit',
         summary: false,
-        count: maxResults(options, 20),
+        count: resultLimit,
       }),
       signal: AbortSignal.timeout(timeoutMs(options)),
       cache: 'no-store',
@@ -347,7 +349,7 @@ export async function searchLangSearch(
     const results = (Array.isArray(rows) ? rows : [])
       .map((row, index) => buildResult('LangSearch', row.name, row.url, row.snippet || row.summary, index))
       .filter((result): result is ScrapedResult => result != null)
-      .slice(0, maxResults(options, 20))
+      .slice(0, resultLimit)
       .map((result, index) => ({ ...result, rank: index + 1 }))
 
     return success(results, keyCount)
