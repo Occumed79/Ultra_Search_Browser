@@ -37,6 +37,14 @@ test('live canary rejects retained pages without procurement evidence or destina
   assert.match(canary, /Non-procurement page survived the live ingest gate/)
 })
 
+test('live canary recognizes established procurement listing portals and acquisition-stage language', () => {
+  assert.match(canary, /governmentcontracts\\\.us/)
+  assert.match(canary, /opportunity-details/)
+  assert.match(canary, /market research/)
+  assert.match(canary, /acquisition strategy/)
+  assert.match(canary, /strategic sourcing/)
+})
+
 test('live canary preserves optional-key and complete transport contracts', () => {
   assert.match(canary, /apiKeysRequired !== false/)
   assert.match(canary, /VALID_RETRIEVAL_TRANSPORTS/)
