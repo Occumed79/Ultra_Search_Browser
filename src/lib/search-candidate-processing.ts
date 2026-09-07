@@ -59,6 +59,32 @@ function withBudget<T>(promise: Promise<T>, timeoutMs: number, label: string): P
   })
 }
 
+function zeroResultSummary(
+  rawCount: number,
+  intentRetained: number,
+  intentReasons: Record<string, number>,
+  smartCandidateCount: number
+): string {
+  if (rawCount === 0) {
+    return 'Live retrieval completed without any usable search candidates. Check source health and retrieval diagnostics.'
+  }
+
+  if (intentRetained === 0) {
+    const topReasons = Object.entries(intentReasons)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 2)
+      .map(([reason, count]) => `${reason} (${count})`)
+      .join(', ')
+    return `Live retrieval returned ${rawCount} candidates, but the snippet-stage procurement gate rejected all of them${topReasons ? `: ${topReasons}` : '.'}`
+  }
+
+  if (smartCandidateCount === 0) {
+    return `Live retrieval returned ${rawCount} candidates and ${intentRetained} passed procurement evidence screening, but the Occu-Med capability filter rejected every remaining snippet before destination validation.`
+  }
+
+  return 'No candidate survived the current pre-validation pipeline.'
+}
+
 export async function processSearchCandidates(input: ProcessSearchCandidatesInput) {
   const startedAt = Date.now()
   const plan = buildSearchPlan(input.settings)
@@ -183,7 +209,12 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
     lens: 'procurement' as const,
     requestedLens: 'procurement' as const,
     summary: results.length === 0
-      ? 'Search retrieval completed, but the Occu-Med relevance gate discarded every raw result as irrelevant, generic, expired, or insufficiently procurement-specific.'
+      ? zeroResultSummary(
+          normalizedCandidates.length,
+          intentGate.results.length,
+          intentGate.diagnostics.reasons,
+          smartFilter.results.length
+        )
       : undefined,
     expandedQueries,
     signals: [],
