@@ -2,6 +2,7 @@ import type { ScrapedResult } from '../types/search'
 import { providerKeyCount, rotatingProviderKeys } from './provider-key-pool'
 
 const DEFAULT_ENDPOINT = 'https://api.keenable.ai/v1/search'
+const DEFAULT_PUBLIC_ENDPOINT = 'https://api.keenable.ai/v1/search/public'
 const DEFAULT_TIMEOUT_MS = 12_000
 const KEENABLE_KEYS = [
   'KEENABLE_API_KEY',
@@ -45,16 +46,42 @@ function positiveInteger(value: unknown, fallback: number): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function endpoint(): string {
-  const raw = String(process.env.KEENABLE_API_BASE_URL || DEFAULT_ENDPOINT).trim()
+function validatedEndpoint(rawValue: string, fallback: string): string {
+  const raw = String(rawValue || fallback).trim()
   try {
     const parsed = new URL(raw)
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return DEFAULT_ENDPOINT
-    if (!parsed.hostname || parsed.username || parsed.password) return DEFAULT_ENDPOINT
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return fallback
+    if (!parsed.hostname || parsed.username || parsed.password) return fallback
     return parsed.toString()
   } catch {
-    return DEFAULT_ENDPOINT
+    return fallback
   }
+}
+
+function endpoint(): string {
+  return validatedEndpoint(process.env.KEENABLE_API_BASE_URL || DEFAULT_ENDPOINT, DEFAULT_ENDPOINT)
+}
+
+function publicEndpoint(): string {
+  const configured = String(process.env.KEENABLE_API_BASE_URL || '').trim()
+  if (!configured) return DEFAULT_PUBLIC_ENDPOINT
+
+  const authenticated = validatedEndpoint(configured, DEFAULT_ENDPOINT)
+  try {
+    const parsed = new URL(authenticated)
+    if (/\/v1\/search\/public\/?$/i.test(parsed.pathname)) return parsed.toString()
+    if (/\/v1\/search\/?$/i.test(parsed.pathname)) {
+      parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}/public`
+      return parsed.toString()
+    }
+  } catch {
+    // Fall through to the known public endpoint.
+  }
+  return DEFAULT_PUBLIC_ENDPOINT
+}
+
+function publicSearchEnabled(): boolean {
+  return String(process.env.KEENABLE_PUBLIC_SEARCH || 'true').trim().toLowerCase() !== 'false'
 }
 
 function normalizeHttpUrl(value: unknown): string | null {
@@ -93,12 +120,34 @@ function normalizeResult(row: KeenableApiResult, index: number): ScrapedResult |
   }
 }
 
+function normalizedResults(payload: KeenableApiResponse, maxResults: number): ScrapedResult[] {
+  return (Array.isArray(payload.results) ? payload.results : [])
+    .map((row, index) => normalizeResult(row, index))
+    .filter((result): result is ScrapedResult => result != null)
+    .slice(0, maxResults)
+    .map((result, index) => ({ ...result, rank: index + 1 }))
+}
+
+function success(results: ScrapedResult[], keyCount: number): KeenableSearchResponse {
+  return {
+    text: results.map(result => `${result.title} ${result.description}`).join(' '),
+    results,
+    configured: true,
+    ok: true,
+    keyCount,
+  }
+}
+
 export function keenableKeyCount(): number {
   return providerKeyCount(KEENABLE_KEYS)
 }
 
+/**
+ * Keenable is available even without credentials through its public keyless
+ * endpoint. A configured key pool raises rate limits but is not required.
+ */
 export function isKeenableConfigured(): boolean {
-  return keenableKeyCount() > 0
+  return keenableKeyCount() > 0 || publicSearchEnabled()
 }
 
 export async function searchKeenable(
@@ -107,32 +156,33 @@ export async function searchKeenable(
 ): Promise<KeenableSearchResponse> {
   const keys = rotatingProviderKeys('keenable', KEENABLE_KEYS, KEENABLE_KEYS.length)
   const keyCount = keenableKeyCount()
-  if (keys.length === 0) {
-    return {
-      text: '',
-      results: [],
-      configured: false,
-      ok: false,
-      keyCount: 0,
-      error: 'No KEENABLE_API_KEY values are configured.',
-    }
-  }
-
   const normalizedQuery = String(query || '').replace(/\s+/g, ' ').trim().slice(0, 500)
   if (!normalizedQuery) {
     return {
       text: '',
       results: [],
-      configured: true,
+      configured: isKeenableConfigured(),
       ok: false,
       keyCount,
       error: 'Keenable query is empty.',
     }
   }
 
+  if (keys.length === 0 && !publicSearchEnabled()) {
+    return {
+      text: '',
+      results: [],
+      configured: false,
+      ok: false,
+      keyCount: 0,
+      error: 'Keenable public search is disabled and no KEENABLE_API_KEY values are configured.',
+    }
+  }
+
   const timeoutMs = positiveInteger(options.timeoutMs || process.env.KEENABLE_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
   const maxResults = Math.max(1, Math.min(50, positiveInteger(options.maxResults, 20)))
   const mode = String(options.mode || process.env.KEENABLE_SEARCH_MODE || 'pro').trim() || 'pro'
+  const body = JSON.stringify({ query: normalizedQuery, mode })
   let lastError = 'Keenable search failed.'
 
   for (const slot of keys) {
@@ -146,7 +196,7 @@ export async function searchKeenable(
           'X-Keenable-Title': 'Ultra Search Browser',
           'User-Agent': 'UltraSearchBrowser/2.0',
         },
-        body: JSON.stringify({ query: normalizedQuery, mode }),
+        body,
         signal: AbortSignal.timeout(timeoutMs),
         cache: 'no-store',
       })
@@ -157,33 +207,45 @@ export async function searchKeenable(
         lastError = detail
           ? `Keenable returned HTTP ${response.status}: ${detail.slice(0, 300)}`
           : `Keenable returned HTTP ${response.status}.`
-        if ([401, 402, 403, 429].includes(response.status)) continue
-        return { text: '', results: [], configured: true, ok: false, keyCount, error: lastError }
+        continue
       }
 
       if (!payload || !Array.isArray(payload.results)) {
-        return {
-          text: '',
-          results: [],
-          configured: true,
-          ok: false,
-          keyCount,
-          error: 'Keenable returned an invalid result payload.',
-        }
+        lastError = 'Keenable returned an invalid result payload.'
+        continue
       }
 
-      const results = payload.results
-        .map((row, index) => normalizeResult(row, index))
-        .filter((result): result is ScrapedResult => result != null)
-        .slice(0, maxResults)
-        .map((result, index) => ({ ...result, rank: index + 1 }))
+      return success(normalizedResults(payload, maxResults), keyCount)
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+    }
+  }
 
-      return {
-        text: results.map(result => `${result.title} ${result.description}`).join(' '),
-        results,
-        configured: true,
-        ok: true,
-        keyCount,
+  if (publicSearchEnabled()) {
+    try {
+      const response = await fetch(publicEndpoint(), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'X-Keenable-Title': 'Ultra Search Browser',
+          'User-Agent': 'UltraSearchBrowser/2.0',
+        },
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+        cache: 'no-store',
+      })
+
+      const payload = await response.json().catch(() => null) as KeenableApiResponse | null
+      if (!response.ok) {
+        const detail = String(payload?.message || payload?.error || '').trim()
+        lastError = detail
+          ? `Keenable public search returned HTTP ${response.status}: ${detail.slice(0, 300)}`
+          : `Keenable public search returned HTTP ${response.status}.`
+      } else if (!payload || !Array.isArray(payload.results)) {
+        lastError = 'Keenable public search returned an invalid result payload.'
+      } else {
+        return success(normalizedResults(payload, maxResults), keyCount)
       }
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error)
@@ -193,7 +255,7 @@ export async function searchKeenable(
   return {
     text: '',
     results: [],
-    configured: true,
+    configured: isKeenableConfigured(),
     ok: false,
     keyCount,
     error: lastError,
