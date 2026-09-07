@@ -29,6 +29,25 @@ test('live Bing wrapper is unwrapped before procurement classification and clini
   assert.equal(gated.diagnostics.reasons['missing-procurement-evidence'], 1)
 })
 
+test('live provider homepage is not procurement merely because an RFP-targeted query found it', () => {
+  const query = 'occupational health services'
+  const normalized = normalizeBrowserSerpCandidates([{
+    title: 'Occupational Medicine Services at Northwest Medical Group',
+    url: 'https://nwmedicalgroupwa.com',
+    description: 'Discover how Northwest Medical Group can help you recover. Your best work is ahead with personalized occupational healthcare.',
+    source: 'Direct rescue · Bing',
+    rank: 1,
+    score: 88,
+    query: 'occupational health services RFP RFQ solicitation bid tender',
+    purpose: 'ai-intent',
+  }])
+
+  const intent = buildDeterministicSemanticIntent(query, 'procurement')
+  const gated = applyIntentCandidateGate(query, 'procurement', normalized, intent)
+  assert.equal(gated.results.length, 0)
+  assert.equal(gated.diagnostics.reasons['missing-procurement-evidence'], 1)
+})
+
 test('search-engine wrappers unwrap to real procurement destinations without losing recall', () => {
   const target = 'https://sam.gov/opp/abc123/view'
   const candidates = normalizeBrowserSerpCandidates([
