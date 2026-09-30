@@ -41,8 +41,8 @@ const SOURCE_COLORS: Record<string, string> = {
 }
 
 const BUCKET_LABELS: Record<ResultBucket, string> = {
-  valid: 'SHOW',
-  uncertain: 'Needs review',
+  valid: 'Verified',
+  uncertain: 'Needs verification',
   expired: 'Expired / closed',
   dead: 'Dead',
   rejected: 'Rejected',
@@ -316,8 +316,6 @@ export default function Home() {
 
   const visibleResults = useMemo(() => {
     const filtered = (scrapedResults as ResultWithId[]).filter(result => {
-      const approved = result.bucket === 'valid' || result.validation?.status === 'valid'
-      if (!approved) return false
       if (filterSource && result.source !== filterSource) return false
       if (fitFilter !== 'all' && result.rfpIntelligence?.fitBand !== fitFilter) return false
       if (deadlineFilter !== 'all') {
@@ -426,7 +424,7 @@ export default function Home() {
           <section className="mt-5">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
-                <span>{visibleResults.length} approved opportunities · {searchTime.toFixed(0)}ms discovery</span>
+                <span>{visibleResults.length} matching opportunities · {searchTime.toFixed(0)}ms discovery</span>
                 {isEnriching && <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-1 text-[10px] text-cyan-100/65"><Sparkles className="h-3 w-3 animate-pulse" /> Opening pages, attachments, and amendments</span>}
               </div>
               <div className="flex items-center gap-2">
@@ -439,14 +437,14 @@ export default function Home() {
               <div className="glass-surface animate-in mb-4 rounded-xl p-3">
                 <div className="mb-2 flex items-center justify-between text-[11px] text-white/50"><span className="capitalize">{validationProgress.phase.replaceAll('-', ' ')}</span><span>{validationProgress.checked}/{validationProgress.total} pages checked</span></div>
                 <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]"><div className="h-full rounded-full bg-teal-300/60 transition-all duration-300" style={{ width: `${validationProgress.total ? Math.min(100, validationProgress.checked / validationProgress.total * 100) : 0}%` }} /></div>
-                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-white/40"><span>{validationProgress.reachable} reachable</span><span>{validationProgress.valid} SHOW</span><span>{validationProgress.uncertain} review</span><span>{validationProgress.expired} expired/closed</span><span>{validationProgress.dead} dead</span><span>{validationProgress.rejected} rejected</span><span>{validationProgress.duplicates} duplicates</span></div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-white/40"><span>{validationProgress.reachable} reachable</span><span>{validationProgress.valid} verified</span><span>{validationProgress.uncertain} needs verification</span><span>{validationProgress.expired} expired/closed</span><span>{validationProgress.dead} dead</span><span>{validationProgress.rejected} rejected</span><span>{validationProgress.duplicates} duplicates</span></div>
               </div>
             )}
 
             {showFilters && (
               <div className="glass-surface animate-in mb-4 flex flex-wrap items-center gap-3 rounded-xl p-3">
                 <label className="flex items-center gap-2 text-[11px] text-white/40">Sort<select value={sortMode} onChange={event => setSortMode(event.target.value as SortMode)} className="rounded border border-white/10 bg-black/30 px-2 py-1 text-white/70"><option value="score">Learned rank</option><option value="fit">Fit score</option><option value="deadline">Deadline</option><option value="source">Source</option></select></label>
-                <label className="flex items-center gap-2 text-[11px] text-white/40">Fit<select value={fitFilter} onChange={event => setFitFilter(event.target.value as FitFilter)} className="rounded border border-white/10 bg-black/30 px-2 py-1 text-white/70"><option value="all">All approved</option><option value="strong">Strong</option><option value="good">Good</option></select></label>
+                <label className="flex items-center gap-2 text-[11px] text-white/40">Fit<select value={fitFilter} onChange={event => setFitFilter(event.target.value as FitFilter)} className="rounded border border-white/10 bg-black/30 px-2 py-1 text-white/70"><option value="all">All matches</option><option value="strong">Strong</option><option value="good">Good</option></select></label>
                 <label className="flex items-center gap-2 text-[11px] text-white/40">Due<select value={deadlineFilter} onChange={event => setDeadlineFilter(event.target.value as DeadlineFilter)} className="rounded border border-white/10 bg-black/30 px-2 py-1 text-white/70"><option value="all">Any date</option><option value="14">14 days</option><option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option></select></label>
                 <label className="flex items-center gap-2 text-[11px] text-white/40">Source<select value={filterSource ?? ''} onChange={event => setFilterSource(event.target.value || null)} className="rounded border border-white/10 bg-black/30 px-2 py-1 text-white/70"><option value="">All</option>{sources.map(source => <option key={source} value={source}>{source}</option>)}</select></label>
                 <button className="glass-button text-[11px]" onClick={() => { setFilterSource(null); setFitFilter('all'); setDeadlineFilter('all') }}><X className="h-3 w-3" /> Clear</button>
@@ -455,7 +453,7 @@ export default function Home() {
             )}
 
             {error && <div className="mb-4 flex gap-2 rounded-xl border border-red-400/30 bg-red-400/5 p-4 text-sm text-red-300"><AlertTriangle className="h-4 w-4 flex-shrink-0" /> {error}</div>}
-            {enrichmentError && <div className="mb-4 flex gap-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3 text-xs text-amber-100/65"><AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />Complete-package validation did not finish. Unverified discovery candidates remain hidden.</div>}
+            {enrichmentError && <div className="mb-4 flex gap-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3 text-xs text-amber-100/65"><AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />Complete-package validation did not finish. Search results are still shown with the evidence available.</div>}
 
             {settings.autoSummarize && intelligence?.summary && (
               <div className="glass-surface animate-in mb-5 rounded-xl p-4"><div className="mb-2 flex items-center gap-2"><Sparkles className="h-4 w-4 text-teal-300/80" /><h2 className="text-[13px] font-medium text-white/80">RFP intelligence</h2><span className="ml-auto text-[10px] text-white/40">{intelligence.confidence}% confidence</span></div><p className="text-[13px] leading-relaxed text-white/50">{intelligence.summary}</p></div>
@@ -465,7 +463,7 @@ export default function Home() {
 
             {excludedCount > 0 && (
               <details className="glass-surface mt-5 rounded-xl p-3">
-                <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-white/55"><ChevronDown className="h-4 w-4" />{excludedCount} opportunities withheld from the primary list<span className="ml-auto text-[10px] text-white/30">review evidence</span></summary>
+                <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-white/55"><ChevronDown className="h-4 w-4" />{excludedCount} unavailable, expired, rejected, or duplicate results<span className="ml-auto text-[10px] text-white/30">review evidence</span></summary>
                 <div className="mt-3 space-y-4">
                   {excludedBuckets.map(({ bucket, results }) => (
                     <div key={bucket}><div className="mb-2 flex items-center gap-2"><span className={'rounded-full border px-2 py-1 text-[10px] ' + BUCKET_STYLES[bucket]}>{BUCKET_LABELS[bucket]} · {results.length}</span></div><div className="space-y-2">{results.slice(0, 20).map(result => <a key={`${bucket}-${result.url}`} href={result.url} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-white/[0.06] bg-black/10 px-3 py-2 hover:border-white/15"><p className="line-clamp-1 text-[11px] text-white/60">{result.title}</p><p className="mt-1 line-clamp-2 text-[10px] text-white/35">{result.pageValidation?.lifecycle.reason || result.pageValidation?.reason || result.validation?.reason}</p></a>)}</div></div>
@@ -474,7 +472,7 @@ export default function Home() {
               </details>
             )}
 
-            {!isLoading && !isEnriching && !error && visibleResults.length === 0 && <div className="py-12 text-center text-sm text-white/40">No active Occu-Med-fit opportunities passed every verification gate.</div>}
+            {!isLoading && !isEnriching && !error && visibleResults.length === 0 && <div className="py-12 text-center text-sm text-white/40">No matching Occu-Med opportunities were returned for this search.</div>}
           </section>
         )}
       </main>
