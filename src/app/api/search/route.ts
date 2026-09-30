@@ -94,7 +94,38 @@ function coercePlan(value: unknown): BrowserSearchPlan | null {
   const candidate = value as Partial<BrowserSearchPlan>
   if (typeof candidate.query !== 'string' || !candidate.query.trim()) return null
   if (!Array.isArray(candidate.searches) || candidate.searches.length === 0) return null
-  return buildBrowserSearchPlan(candidate.query.trim(), Math.min(12, candidate.searches.length))
+
+  const fallback = buildBrowserSearchPlan(
+    candidate.query.trim(),
+    Math.min(12, candidate.searches.length),
+    candidate.intent
+  )
+  const searches = candidate.searches
+    .slice(0, 12)
+    .filter(search =>
+      search
+      && typeof search.query === 'string'
+      && search.query.trim()
+      && typeof search.purpose === 'string'
+      && Number.isFinite(Number(search.priority))
+    )
+    .map((search, index) => ({
+      id: typeof search.id === 'string' && search.id.trim() ? search.id : `q${index + 1}`,
+      query: search.query.trim(),
+      purpose: search.purpose,
+      priority: Number(search.priority),
+    })) as BrowserSearchVariant[]
+
+  if (searches.length === 0) return fallback
+
+  return {
+    ...fallback,
+    searches,
+    maxResultsPerSearch: Number.isFinite(Number(candidate.maxResultsPerSearch))
+      ? Math.max(5, Math.min(50, Number(candidate.maxResultsPerSearch)))
+      : fallback.maxResultsPerSearch,
+    traceId: typeof candidate.traceId === 'string' ? candidate.traceId : fallback.traceId,
+  }
 }
 
 function traceIdFromPlan(value: unknown): string | undefined {

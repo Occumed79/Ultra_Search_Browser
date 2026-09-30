@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { buildBrowserSearchPlan } from '../../../../lib/browser-search-pipeline'
+import { planSemanticIntent } from '../../../../lib/semantic-intent'
 import { createSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
 
 export async function POST(request: NextRequest) {
@@ -9,7 +10,8 @@ export async function POST(request: NextRequest) {
     if (!query) return NextResponse.json({ error: 'Query is required' }, { status: 400 })
 
     const traceId = createSearchTrace(query, body.traceId)
-    const basePlan = buildBrowserSearchPlan(query, body.maxSearches)
+    const semanticIntent = await planSemanticIntent(query, 'procurement')
+    const basePlan = buildBrowserSearchPlan(query, body.maxSearches, semanticIntent)
     const plan = {
       ...basePlan,
       traceId,
@@ -24,6 +26,10 @@ export async function POST(request: NextRequest) {
       purposes: plan.searches.map(search => search.purpose),
       apiKeysRequired: plan.apiKeysRequired,
       transport: plan.transport,
+      intentProvider: basePlan.intent.provider,
+      intentModel: basePlan.intent.model,
+      externalIntentUsed: basePlan.intent.usedExternal,
+      searchVariants: plan.searches.map(search => search.query),
     })
 
     return NextResponse.json(plan, {

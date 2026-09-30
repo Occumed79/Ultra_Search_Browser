@@ -6,7 +6,6 @@ import {
   type BrowserSerpCandidateInput,
 } from './browser-search-pipeline'
 import { applyResultFeedbackRanking } from './result-feedback-ranking'
-import { applyIntentCandidateGate } from './search-intent-gate'
 import { buildSearchPlan } from './search-settings'
 import { insertSearchResult, insertSearchRun } from './search-storage'
 
@@ -59,30 +58,14 @@ function withBudget<T>(promise: Promise<T>, timeoutMs: number, label: string): P
   })
 }
 
-function zeroResultSummary(
-  rawCount: number,
-  intentRetained: number,
-  intentReasons: Record<string, number>,
-  smartCandidateCount: number
-): string {
+function zeroResultSummary(rawCount: number, smartCandidateCount: number): string {
   if (rawCount === 0) {
     return 'Live retrieval completed without any usable search candidates. Check source health and retrieval diagnostics.'
   }
-
-  if (intentRetained === 0) {
-    const topReasons = Object.entries(intentReasons)
-      .sort((left, right) => right[1] - left[1])
-      .slice(0, 2)
-      .map(([reason, count]) => `${reason} (${count})`)
-      .join(', ')
-    return `Live retrieval returned ${rawCount} candidates, but the snippet-stage procurement gate rejected all of them${topReasons ? `: ${topReasons}` : '.'}`
-  }
-
   if (smartCandidateCount === 0) {
-    return `Live retrieval returned ${rawCount} candidates and ${intentRetained} passed procurement evidence screening, but the Occu-Med capability filter rejected every remaining snippet before destination validation.`
+    return `Live retrieval returned ${rawCount} candidates, but none matched the Occu-Med relevance layer strongly enough to rank as useful results.`
   }
-
-  return 'No candidate survived the current pre-validation pipeline.'
+  return 'No candidate survived the current relevance-ranking pipeline.'
 }
 
 export async function processSearchCandidates(input: ProcessSearchCandidatesInput) {
@@ -90,11 +73,10 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
   const plan = buildSearchPlan(input.settings)
   const intent = coerceBrowserIntent(input.intent, input.query)
   const normalizedCandidates = normalizeBrowserSerpCandidates(input.results)
-  const intentGate = applyIntentCandidateGate(input.query, 'procurement', normalizedCandidates, intent)
   const smartFilter = await applyOccuMedSmartFilter(
     input.query,
     'procurement',
-    intentGate.results,
+    normalizedCandidates,
     Math.max(plan.resultsPerPage, 40),
     {
       useLocalTransformer: false,
@@ -139,7 +121,6 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
           apiKeysRequired: false,
           searches: input.searches || [],
           rawCandidates: normalizedCandidates.length,
-          intentGate: intentGate.diagnostics,
           smartFilter: smartFilter.diagnostics,
           productMode: input.productMode,
         },
@@ -209,12 +190,7 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
     lens: 'procurement' as const,
     requestedLens: 'procurement' as const,
     summary: results.length === 0
-      ? zeroResultSummary(
-          normalizedCandidates.length,
-          intentGate.results.length,
-          intentGate.diagnostics.reasons,
-          smartFilter.results.length
-        )
+      ? zeroResultSummary(normalizedCandidates.length, smartFilter.results.length)
       : undefined,
     expandedQueries,
     signals: [],
@@ -230,7 +206,6 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
       transport: input.transport,
       apiKeysRequired: false,
       [input.rawCandidateLabel || 'rawCandidates']: normalizedCandidates.length,
-      intentGate: intentGate.diagnostics,
       smartFilter: smartFilter.diagnostics,
       productMode: input.productMode,
       persistenceAttempted: shouldPersist,
