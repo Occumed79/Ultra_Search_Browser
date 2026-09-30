@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
-import { applyOccuMedDecisionGate } from '../../../../lib/occumed-result-decision'
 import { applyResultFeedbackRanking } from '../../../../lib/result-feedback-ranking'
 import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { createSearchTrace, finishSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
@@ -190,8 +189,11 @@ export async function POST(request: NextRequest) {
           bucketCounts: Object.fromEntries(Object.entries(rawOutcome.buckets).map(([key, values]) => [key, values.length])),
         })
 
-        const outcome = applyOccuMedDecisionGate(rawOutcome)
-        recordSearchFlightStage(traceId, 'validation.decision-gate', {
+        // No SHOW/REVIEW/REJECT judge gate. Deep validation enriches and annotates
+        // results, while Occu-Med relevance remains a ranking/honing signal rather
+        // than a second approval layer that can hide otherwise useful matches.
+        const outcome = rawOutcome
+        recordSearchFlightStage(traceId, 'validation.annotation-complete', {
           progress: outcome.progress,
           primaryResultCount: outcome.results.length,
           bucketCounts: Object.fromEntries(Object.entries(outcome.buckets).map(([key, values]) => [key, values.length])),
@@ -269,14 +271,14 @@ export async function POST(request: NextRequest) {
           results: outcome.results,
           summary: verifiedResults.length > 0
             ? verifiedSearchSummary(query, lens, verifiedResults)
-            : 'No active procurement opportunities passed the complete-package, Occu-Med relevance, and expiration gates.',
+            : 'No matching procurement opportunities were returned after Occu-Med relevance ranking and evidence checks.',
           confidence: verifiedSearchConfidence(verifiedResults),
           lens,
           requestedLens,
           traceId,
           diagnostics: {
             ...outcome.diagnostics,
-            verifiedOnly: true,
+            verifiedOnly: false,
             verifiedCount: verifiedResults.length,
             pursuitLearningApplied,
             pursuitLearningSkipped: testMode,
