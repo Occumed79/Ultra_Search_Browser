@@ -35,7 +35,7 @@ function normalizedUrl(value: string): string {
   }
 }
 
-function identity(result: RfpResult): string {
+export function solicitationIdentity(result: RfpResult): string {
   const intelligence = result.rfpIntelligence
   const number = normalize(intelligence?.solicitationNumber)
   const buyer = normalize(intelligence?.organization)
@@ -111,9 +111,10 @@ function mergeResult(primary: RfpResult, duplicate: RfpResult): RfpResult {
       queries: Array.from(new Set([...(primary.retrieval?.queries || []), ...(duplicate.retrieval?.queries || [])])),
       purposes: Array.from(new Set([...(primary.retrieval?.purposes || []), ...(duplicate.retrieval?.purposes || []), 'solicitation-dedupe'])),
       overlap: sources.length,
+      research: [...(primary.retrieval?.research || []), ...(duplicate.retrieval?.research || [])],
     },
     entity: {
-      fingerprint: identity(primary),
+      fingerprint: solicitationIdentity(primary),
       confirmationCount: sources.length,
       alternateUrls: alternateUrls.filter(url => url !== normalizedUrl(preferred.url)),
       alternateSources: sources.filter(source => source !== preferred.source),
@@ -128,7 +129,7 @@ export function deduplicateSolicitations(results: ScrapedResult[]): Solicitation
   const duplicates: ScrapedResult[] = []
 
   for (const raw of results as RfpResult[]) {
-    const key = identity(raw)
+    const key = solicitationIdentity(raw)
     const existing = canonical.get(key)
     if (!existing) {
       canonical.set(key, {

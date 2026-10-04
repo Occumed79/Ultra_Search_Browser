@@ -322,6 +322,7 @@ export async function validateCandidatePage(
   query: string,
   options: {
     timeoutMs?: number
+    signal?: AbortSignal
     bypassCache?: boolean
     fetchImpl?: typeof fetch
     inspectPackage?: boolean
@@ -339,6 +340,9 @@ export async function validateCandidatePage(
   const controller = new AbortController()
   const timeoutMs = options.timeoutMs ?? PAGE_TIMEOUT_MS
   const startedAt = Date.now()
+  const abort = () => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) abort()
+  else options.signal?.addEventListener('abort', abort, { once: true })
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const fetchImpl = options.fetchImpl ?? fetch
 
@@ -480,6 +484,7 @@ export async function validateCandidatePage(
     return failureResult(result, 'error', reason)
   } finally {
     clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abort)
   }
 }
 

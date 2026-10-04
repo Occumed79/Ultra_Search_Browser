@@ -205,7 +205,7 @@ test('Exa, LangSearch, and TinyFish use their live web search APIs and normalize
 
 test('Ultra Search live retrieval fan-out includes every renewable discovery source and excludes Algolia memory', () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
-  const route = readFileSync(`${root}/src/app/api/search/route.ts`, 'utf8')
+  const route = readFileSync(`${root}/src/lib/search-retrieval.ts`, 'utf8')
   const env = readFileSync(`${root}/.env.example`, 'utf8')
 
   for (const source of ['Keenable', 'TinyFish', 'Tavily', 'Exa', 'LangSearch']) {
