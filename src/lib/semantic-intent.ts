@@ -113,17 +113,6 @@ interface ConceptFamily {
 
 const CONCEPT_FAMILIES: ConceptFamily[] = [
   {
-    id: 'occupational-health',
-    label: 'occupational health',
-    kind: 'subject',
-    terms: [
-      'occupational health', 'occupational medicine', 'employee health',
-      'workplace health', 'worksite medicine', 'industrial medicine',
-      'employer medical',
-    ],
-    weight: 1.5,
-  },
-  {
     id: 'procurement-opportunity',
     label: 'procurement opportunity',
     kind: 'format',
@@ -145,71 +134,6 @@ const CONCEPT_FAMILIES: ConceptFamily[] = [
       'self-pay price', 'self-pay prices', 'rate card', 'rates', 'cost',
     ],
     weight: 1.35,
-  },
-  {
-    id: 'treadmill-stress-test',
-    label: 'treadmill stress test',
-    kind: 'service',
-    terms: [
-      'treadmill stress test', 'exercise stress test', 'exercise treadmill test',
-      'treadmill ecg', 'stress ecg', 'cardiac stress test', 'exercise tolerance test',
-    ],
-    weight: 1.5,
-  },
-  {
-    id: 'bruce-protocol',
-    label: 'Bruce protocol',
-    kind: 'subject',
-    terms: ['bruce protocol', 'bruce treadmill protocol'],
-    weight: 1.35,
-  },
-  {
-    id: 'pulmonary-function-test',
-    label: 'pulmonary function test',
-    kind: 'service',
-    terms: ['pulmonary function test', 'pulmonary function testing', 'pft', 'spirometry', 'lung function test'],
-    weight: 1.5,
-  },
-  {
-    id: 'pure-tone-audiogram',
-    label: 'pure-tone audiogram',
-    kind: 'service',
-    terms: [
-      'pure tone audiogram', 'pure-tone audiogram', 'pure tone audiograms',
-      'pure-tone audiograms', 'pure tone audiometry', 'audiometry', 'audiometrie',
-      'hearing test',
-    ],
-    weight: 1.45,
-  },
-  {
-    id: 'respirator-fit-test',
-    label: 'respirator fit testing',
-    kind: 'service',
-    terms: ['respirator fit test', 'respirator fit testing', 'mask fit test', 'quantitative fit test', 'qualitative fit test'],
-    weight: 1.5,
-  },
-  {
-    id: 'dot-physical',
-    label: 'DOT physical',
-    kind: 'service',
-    terms: ['dot physical', 'dot exam', 'cdl physical', 'department of transportation physical'],
-    weight: 1.45,
-  },
-  {
-    id: 'employment-medical-evaluation',
-    label: 'employment medical evaluation',
-    kind: 'service',
-    terms: [
-      'employment evaluation', 'employment medical evaluation', 'employee medical evaluation',
-      'pre-employment evaluation', 'pre employment evaluation',
-      'pre-employment medical evaluation', 'pre employment medical evaluation',
-      'pre-employment physical', 'pre employment physical',
-      'pre-employment physical exam', 'pre employment physical exam',
-      'pre-employment examination', 'pre employment examination',
-      'occupational health evaluation', 'fitness for duty evaluation',
-      'medical evaluation services',
-    ],
-    weight: 1.5,
   },
   {
     id: 'pdf-document',
@@ -444,19 +368,14 @@ function extractSourcePreferences(query: string): string[] {
 
 function inferIntentKind(query: string): SemanticIntentKind {
   if (/\b(?:compare|versus|vs\.?|difference between)\b/i.test(query)) return 'compare'
-  if (CONCEPT_FAMILIES[1].terms.some(term => phraseIsPresent(query, term))) return 'find-procurement'
-  if (CONCEPT_FAMILIES[2].terms.some(term => phraseIsPresent(query, term))) return 'find-pricing'
+  if (CONCEPT_FAMILIES[0].terms.some(term => phraseIsPresent(query, term))) return 'find-procurement'
+  if (CONCEPT_FAMILIES[1].terms.some(term => phraseIsPresent(query, term))) return 'find-pricing'
   if (/\b(?:pdf|document|manual|report|whitepaper|download)\b/i.test(query)) return 'find-document'
   if (/\b(?:news|press release|breaking|news coverage|press coverage)\b/i.test(query)) return 'find-news'
   if (/\b(?:api|sdk|source code|github|developer|programming|stack trace|error message|route handler|abortsignal|timeout|exception|next\.?js)\b/i.test(query)) return 'technical'
   if (/\b(?:what is|what are|how does|how do|why does|definition|meaning|explained?)\b/i.test(query)) return 'explain'
-  const providerLanguage = /\b(?:clinic|clinics|provider|providers|doctor|physician|hospital|facility|near|offering|offers|perform|performs|services?)\b/i.test(query)
-  const healthcareSubject = matchingFamily(query)?.kind === 'service'
-    || phraseIsPresent(query, 'occupational health')
-    || phraseIsPresent(query, 'occupational medicine')
-    || /\b(?:cardiology|dental|dentist|healthcare|medical|medicine|radiology|laboratory|urgent care)\b/i.test(query)
-  const explicitMedicalProvider = /\b(?:clinic|clinics|doctor|doctors|physician|physicians|hospital|hospitals|urgent care|medical center|health center)\b/i.test(query)
-  if ((providerLanguage && healthcareSubject) || explicitMedicalProvider) return 'find-provider'
+  const explicitProviderRequest = /\b(?:find|locate|near|nearby|provider|providers|clinic|clinics|facility|facilities|practice|practices)\b/i.test(query)
+  if (explicitProviderRequest) return 'find-provider'
   return 'research'
 }
 
@@ -831,7 +750,7 @@ function plannerPrompt(query: string, lens: SearchLens): string {
   return [
     'You are the semantic intent planner for a public-web metasearch engine.',
     'Infer the task the person is trying to accomplish, not just the nouns they typed.',
-    'Separate required meaning into concept groups. A concept group represents one requirement and contains exact equivalents that may satisfy it; for example occupational health and occupational medicine belong in one group, while a requested test and a city belong in separate groups.',
+    'Separate required meaning into concept groups. A concept group represents one requirement and contains exact equivalents that may satisfy it; for example true synonyms belong in one group, while a requested subject and a city belong in separate groups.',
     'Do not treat conversational request words such as find, show, need, services, near, or please as standalone required concepts.',
     'Preserve organization names, model numbers, quoted phrases, requested services, geography, dates, exclusions, and source-quality constraints.',
     'Choose the intent kind and the best lens for the task.',
