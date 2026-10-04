@@ -177,7 +177,7 @@ function orderProcurementBrowserVariants<T extends { purpose: QueryPurpose; prio
   })
 }
 
-export function buildBrowserSearchPlan(rawQuery: string, maxSearches = 8, semanticIntent?: SemanticIntentPlan): BrowserSearchPlan {
+export function buildBrowserSearchPlan(rawQuery: string, maxSearches = 12, semanticIntent?: SemanticIntentPlan): BrowserSearchPlan {
   const bangs = parseBangs(rawQuery)
   const operators = parseSearchOperators(bangs.cleanQuery || rawQuery)
   const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
