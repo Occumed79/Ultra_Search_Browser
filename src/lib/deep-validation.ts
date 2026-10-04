@@ -29,7 +29,7 @@ export interface AdaptiveValidationDiagnostics {
   wavesCompleted: number
   likelyShowTarget: number
   likelyShowCount: number
-  stopReason: 'show-target-reached' | 'target-cap-reached' | 'pool-exhausted'
+  stopReason: 'show-target-reached' | 'target-cap-reached' | 'pool-exhausted' | 'time-budget' | 'cancelled'
 }
 
 export interface DeepValidationOutcome {
@@ -48,6 +48,9 @@ export interface DeepValidationOutcome {
 
 export interface DeepValidationOptions {
   maxTargets?: number
+  pageTimeoutMs?: number
+  deadline?: number
+  signal?: AbortSignal
   concurrency?: number
   onEvent?: (event: DeepValidationEvent) => void | Promise<void>
   semanticIntent?: SemanticIntentPlan
@@ -225,6 +228,10 @@ export async function deepValidateResults(
     : 'pool-exhausted'
 
   for (let waveStart = 0; waveStart < targetPool.length; waveStart += VALIDATION_WAVE_SIZE) {
+    if (options.signal?.aborted || (options.deadline && Date.now() >= options.deadline - 10_000)) {
+      stopReason = options.signal?.aborted ? 'cancelled' : 'time-budget'
+      break
+    }
     const wave = targetPool.slice(waveStart, waveStart + VALIDATION_WAVE_SIZE)
     const waveResults = await mapWithConcurrency(wave, concurrency, async (result, waveIndex) => {
       const page = await validateCandidatePage(result, lens, query, {
@@ -232,6 +239,8 @@ export async function deepValidateResults(
         // selected candidate. Validation stops once enough likely SHOW records
         // exist, rather than skipping the best result because it ranked 25th.
         inspectPackage: lens === 'procurement',
+        timeoutMs: options.pageTimeoutMs,
+        signal: options.signal,
       })
       progress.checked += 1
       if (page.availability === 'reachable') progress.reachable += 1

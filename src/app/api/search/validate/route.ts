@@ -1,3 +1,5 @@
+import { continueAdaptiveResearch } from '../../../../lib/adaptive-research'
+import { RESEARCH_LIMITS } from '../../../../lib/adaptive-research-planner'
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
@@ -31,6 +33,8 @@ interface ValidationRequest {
   intent?: unknown
   traceId?: string
   testMode?: boolean
+  executedQueries?: string[]
+  research?: boolean
 }
 
 type PersistableRfpResult = ScrapedResult & {
@@ -151,7 +155,7 @@ export async function POST(request: NextRequest) {
     && results.every(isProductionSmokeFixture)
 
   if (!query) return Response.json({ error: 'Query is required' }, { status: 400 })
-  if (results.length === 0) return Response.json({ error: 'At least one result is required' }, { status: 400 })
+  if (results.length === 0 && body.research !== true) return Response.json({ error: 'At least one result is required' }, { status: 400 })
   const traceId = createSearchTrace(query, body.traceId || traceIdFromIntent(body.intent))
   const semanticIntent = coerceSemanticIntentPlan(body.intent, query, lens)
   recordSearchFlightStage(traceId, 'validation.start', {
@@ -160,6 +164,7 @@ export async function POST(request: NextRequest) {
     testMode,
   })
 
+  const researchDeadline = Date.now() + RESEARCH_LIMITS.budgetMs
   const encoder = new TextEncoder()
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -179,6 +184,7 @@ export async function POST(request: NextRequest) {
         const rawOutcome = await deepValidateResults(query, lens, results, {
           maxTargets,
           semanticIntent,
+          signal: request.signal,
           onEvent: async (event: DeepValidationEvent) => {
             if (event.type === 'complete') return
             if (event.type === 'progress') write(event.type, { ...event, traceId })
@@ -190,7 +196,15 @@ export async function POST(request: NextRequest) {
         })
 
         // Deep validation applies the canonical Neon decision after generic evidence/lifecycle checks.
-        const outcome = rawOutcome
+        const outcome = !testMode && body.research !== false
+          ? await continueAdaptiveResearch(query, rawOutcome, {
+              executedQueries: Array.isArray(body.executedQueries) ? body.executedQueries.filter(value => typeof value === 'string').map(value => value.slice(0, 800)) : undefined,
+              traceId, deadline: researchDeadline, signal: request.signal,
+              validation: { semanticIntent, onEvent: async event => {
+                if (event.type === 'progress') write('progress', { ...event, traceId })
+              } },
+            })
+          : rawOutcome
         recordSearchFlightStage(traceId, 'validation.decision-gate', {
           progress: outcome.progress,
           primaryResultCount: outcome.results.length,

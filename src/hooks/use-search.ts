@@ -231,7 +231,9 @@ export function useSearch(): UseSearchReturn {
     searchLens: SearchLens,
     results: ScrapedResult[],
     sequence: number,
-    semanticIntent?: SemanticIntentPlan
+    semanticIntent?: SemanticIntentPlan,
+    executedQueries?: string[],
+    traceId?: string
   ) => {
     validationController.current?.abort()
     const controller = new AbortController()
@@ -294,6 +296,16 @@ export function useSearch(): UseSearchReturn {
           summary?: string
           confidence?: number
           lens?: SearchLens
+          diagnostics?: { adaptiveResearch?: import('@/lib/adaptive-research').AdaptiveResearchDiagnostics }
+        }
+        const research = payload.diagnostics?.adaptiveResearch
+        if (research) {
+          const followupQueries = research.waves.flatMap(wave => wave.queries.map(search => search.query))
+          setSuggestions(searchSuggestions([...(executedQueries || []), ...followupQueries]))
+          setRetrievalStatus(current => current ? { ...current,
+            attemptedSearches: current.attemptedSearches + followupQueries.length,
+            diagnostics: [...current.diagnostics, ...research.waves.flatMap(wave => wave.retrievalDiagnostics)],
+          } : current)
         }
         if (payload.results) setScrapedResults(payload.results)
         if (payload.buckets) setResultBuckets(payload.buckets)
@@ -303,6 +315,7 @@ export function useSearch(): UseSearchReturn {
           lens: payload.lens || current.lens,
           summary: payload.summary,
           confidence: payload.confidence ?? 0,
+          queryExpansions: [...new Set([...current.queryExpansions, ...(research?.waves.flatMap(wave => wave.queries.map(search => search.query)) || [])])],
         } : current)
         return
       }
@@ -320,7 +333,7 @@ export function useSearch(): UseSearchReturn {
           Accept: 'text/event-stream',
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query: searchQuery, lens: searchLens, results, intent: semanticIntent }),
+        body: JSON.stringify({ query: searchQuery, lens: searchLens, results, intent: semanticIntent, executedQueries, traceId, research: true }),
         signal: controller.signal,
       })
 
@@ -508,9 +521,7 @@ export function useSearch(): UseSearchReturn {
       setIsLoading(false)
       setSuggestions(searchSuggestions(data.expandedQueries))
 
-      if (data.results.length > 0) {
-        void runStreamingValidation(data.query, data.lens, data.results, sequence, data.intent)
-      }
+      void runStreamingValidation(data.query, data.lens, data.results, sequence, data.intent, plannedQueries, serverBatch.traceId)
 
       try {
         const stored = localStorage.getItem('search_history')

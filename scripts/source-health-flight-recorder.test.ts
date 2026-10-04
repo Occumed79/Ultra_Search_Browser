@@ -62,7 +62,7 @@ test('flight recorder preserves stage counts while stripping secret-shaped field
 test('planner, retrieval, ingest, validation, and diagnostics share the trace contract', () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const plan = readFileSync(`${root}/src/app/api/search/plan/route.ts`, 'utf8')
-  const retrieval = readFileSync(`${root}/src/app/api/search/route.ts`, 'utf8')
+  const retrieval = readFileSync(`${root}/src/lib/search-retrieval.ts`, 'utf8')
   const ingest = readFileSync(`${root}/src/app/api/search/ingest/route.ts`, 'utf8')
   const validation = readFileSync(`${root}/src/app/api/search/validate/route.ts`, 'utf8')
   const diagnostics = readFileSync(`${root}/src/app/api/diagnostics/search-traces/route.ts`, 'utf8')

@@ -15,6 +15,7 @@ export interface BrowserSearchVariant {
   query: string
   purpose: QueryPurpose
   priority: number
+  research?: import('./adaptive-research-planner').ResearchProvenance
 }
 
 export interface BrowserSearchPlan {
@@ -38,6 +39,7 @@ export interface BrowserSerpCandidateInput {
   score?: unknown
   query?: unknown
   purpose?: unknown
+  research?: unknown
 }
 
 function normalizeSpace(value: string): string {
@@ -221,6 +223,18 @@ export function coerceBrowserIntent(value: unknown, query: string): SemanticInte
   return coerceSemanticIntentPlan(value, query, 'procurement')
 }
 
+function researchProvenance(value: unknown): import('./adaptive-research-planner').ResearchProvenance[] | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const item = value as Record<string, unknown>
+  const reasons = ['exact-title-followup', 'solicitation-number-followup', 'buyer-domain-followup', 'portal-followup', 'attachment-followup', 'coverage-gap', 'canonical-service-gap']
+  if (![2, 3].includes(Number(item.wave)) || typeof item.reason !== 'string' || !reasons.includes(item.reason)) return undefined
+  return [{ wave: Number(item.wave), reason: item.reason as import('./adaptive-research-planner').ResearchReason,
+    evidenceUrls: Array.isArray(item.evidenceUrls) ? item.evidenceUrls.filter((url): url is string => typeof url === 'string').slice(0, 4).map(url => cleanResultUrl(url.slice(0, 2_000))).filter((url): url is string => Boolean(url)) : [],
+    gap: stringValue(item.gap, 200) || undefined,
+    profileVersion: stringValue(item.profileVersion, 100) || undefined,
+  }]
+}
+
 export function normalizeBrowserSerpCandidates(
   rawCandidates: BrowserSerpCandidateInput[],
   maxCandidates = 240
@@ -255,6 +269,7 @@ export function normalizeBrowserSerpCandidates(
         queries: query ? [query] : [],
         purposes: purpose ? [purpose] : [],
         overlap: 1,
+        research: researchProvenance(raw.research),
       },
     }
 
@@ -285,6 +300,7 @@ export function normalizeBrowserSerpCandidates(
         queries,
         purposes,
         overlap: sources.length,
+        research: [...(existing.retrieval?.research || []), ...(result.retrieval?.research || [])],
       },
     })
   }

@@ -60,6 +60,7 @@ export interface ScrapedResult {
     queries: string[];
     purposes: string[];
     overlap: number;
+    research?: import('../lib/adaptive-research-planner').ResearchProvenance[];
   };
   semanticRerank?: {
     provider: "cloudflare";

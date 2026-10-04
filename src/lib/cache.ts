@@ -126,10 +126,12 @@ export const scrapeCache = new SimpleCache<any>(10 * 60 * 1000) // 10 minutes
 export const searchRateLimiter = new RateLimiter(60000, 10) // 10 requests per minute
 export const scrapeRateLimiter = new RateLimiter(60000, 5) // 5 scrapes per minute per domain
 
-// Cleanup expired entries every 5 minutes
-setInterval(() => {
+// Cleanup expired entries every 5 minutes without keeping a completed server worker alive.
+const cleanupTimer = setInterval(() => {
   searchCache.cleanup()
   scrapeCache.cleanup()
   searchRateLimiter.cleanup()
   scrapeRateLimiter.cleanup()
 }, 5 * 60 * 1000)
+
+cleanupTimer.unref?.()

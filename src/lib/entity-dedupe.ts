@@ -140,6 +140,7 @@ export function deduplicateEntities(results: ScrapedResult[], lens: SearchLens):
         queries: retrievalQueries,
         purposes: retrievalPurposes,
         overlap: retrievalSources.length,
+        research: ordered.flatMap(item => item.retrieval?.research || []),
       },
       entity: {
         fingerprint: primaryFingerprint,
