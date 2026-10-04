@@ -35,8 +35,8 @@ const TARGETED_SOURCE_ORDER: LiveSearchSource[] = [
   'yahoo',
   'google',
 ]
-const DEFAULT_QUERY_VARIANTS = 7
-const DEFAULT_LIVE_TASKS = 14
+const DEFAULT_QUERY_VARIANTS = 12
+const DEFAULT_LIVE_TASKS = 28
 
 export function searchCandidateLimit(resultsPerPage: number): number {
   return Math.min(80, Math.max(40, resultsPerPage * 3))
@@ -50,8 +50,8 @@ export function semanticBudgets(intent?: SemanticIntentPlan): { variants: number
   if (!intent || intent.complexity === 'simple') {
     return { variants: DEFAULT_QUERY_VARIANTS, tasks: DEFAULT_LIVE_TASKS }
   }
-  if (intent.complexity === 'moderate') return { variants: 9, tasks: 20 }
-  return { variants: 12, tasks: 28 }
+  if (intent.complexity === 'moderate') return { variants: 16, tasks: 36 }
+  return { variants: 20, tasks: 48 }
 }
 
 function addVariant(
@@ -205,9 +205,8 @@ export function buildQueryVariants(
   )
 
   if (lens === 'procurement') {
-    // These four complementary strategies are more valuable than another
-    // synonym-only variant, so reserve them before the seven-slot simple-query
-    // budget can be exhausted.
+    // Reserve complementary source-shape strategies before the broader manual-style
+    // sweep fills the remaining canonical-profile-driven query budget.
     addVariant(variants, seen, official, 'official', 94, budgets.variants)
     addVariant(variants, seen, document, 'document', 92, budgets.variants)
     addVariant(variants, seen, freshness, 'freshness', 90, budgets.variants)
