@@ -427,7 +427,7 @@ export function useSearch(): UseSearchReturn {
       const planResponse = await fetchWithTimeout('/api/search/plan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: normalizedSearchQuery, maxSearches: 8 }),
+        body: JSON.stringify({ query: normalizedSearchQuery, maxSearches: 12 }),
       }, PLAN_TIMEOUT_MS, controller.signal)
       const searchPlan = await planResponse.json().catch(() => null) as (ServerSearchPlan & {
         error?: string
