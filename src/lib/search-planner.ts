@@ -159,7 +159,7 @@ export function buildQueryVariants(
     protectedIntentQuery(query, operators, semanticIntent),
     'intent-core',
     98,
-    budgets.variants
+    maxVariants
   )
 
   if (lens === 'procurement') {
