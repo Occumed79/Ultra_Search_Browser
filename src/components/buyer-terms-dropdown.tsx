@@ -3,11 +3,25 @@
 import { Tag } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { buyerLanguageTermsForQuery } from '../lib/occumed-capability-matching'
 
 export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onTermSelect: (term: string) => void }) {
   const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
-  const buyerTerms = buyerLanguageTermsForQuery(query, 12)
+  const [buyerTerms, setBuyerTerms] = useState<string[]>([])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setBuyerTerms([])
+    if (!query.trim()) return () => controller.abort()
+    const timer = setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/relevance/terms?query=${encodeURIComponent(query)}`, { signal: controller.signal })
+        if (!response.ok) return
+        const data = await response.json()
+        if (!controller.signal.aborted) setBuyerTerms(Array.isArray(data.terms) ? data.terms.filter((term: unknown) => typeof term === 'string') : [])
+      } catch { /* Suggestions are optional; search remains usable. */ }
+    }, 250)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [query])
 
   useEffect(() => {
     const searchInput = document.querySelector<HTMLInputElement>('.search-pill input')
@@ -53,7 +67,7 @@ export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onT
         </div>
       ) : (
         <p className="min-w-0 flex-1 truncate text-[11px] text-white/35">
-          Type a search query and the buyer-language terms Ultra Search is using will appear here.
+          Type a search query and available buyer terms will appear here.
         </p>
       )}
     </section>,

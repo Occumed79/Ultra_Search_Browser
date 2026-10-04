@@ -1,3 +1,4 @@
+import { alignCanonicalIntent } from './canonical-relevance'
 import { parseBangs } from './bangs'
 import { expandQuery } from './intelligence'
 import { buildQueryVariants, type QueryPurpose } from './search-planner'
@@ -180,9 +181,10 @@ export function buildBrowserSearchPlan(rawQuery: string, maxSearches = 8, semant
   const bangs = parseBangs(rawQuery)
   const operators = parseSearchOperators(bangs.cleanQuery || rawQuery)
   const normalizedQuery = reconstructQuery(operators, bangs.cleanQuery || rawQuery)
-  const intent = semanticIntent
+  const rawIntent = semanticIntent
     ? coerceSemanticIntentPlan(semanticIntent, normalizedQuery, 'procurement')
     : buildDeterministicSemanticIntent(normalizedQuery, 'procurement')
+  const intent = alignCanonicalIntent(normalizedQuery, rawIntent)
   const expanded = expandQuery(normalizedQuery, 'procurement')
   const variants = orderProcurementBrowserVariants(buildQueryVariants(
     normalizedQuery,

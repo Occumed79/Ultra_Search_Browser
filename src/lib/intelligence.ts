@@ -96,8 +96,6 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
         `${baseQuery} bid`,
         `${baseQuery} RFP`,
         `${baseQuery} solicitation`,
-        'occupational health site:.gov',
-        'occupational medicine site:.gov',
       ]
       
       return expansions
@@ -108,7 +106,6 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
       { pattern: /\.us\b/i, score: 30, name: '.us domain' },
       { pattern: /government|official|federal|state agency|county|city|municipal/i, score: 30, name: 'government source' },
       { pattern: /procurement|bid|RFP|solicitation/i, score: 25, name: 'procurement content' },
-      { pattern: /occupational health|occupational medicine/i, score: 25, name: 'occupational health content' },
     ],
   },
 
@@ -118,7 +115,6 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
     keywords: ['RFP', 'bid', 'solicitation', 'procurement', 'tender', 'contract', 'proposal', 'RFQ', 'RFT'],
     synonymMap: {
       RFP: ['request for proposal', 'solicitation', 'bid', 'tender', 'procurement', 'RFQ', 'RFT', 'request for qualifications'],
-      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment', 'employer clinic'],
       services: ['contract', 'agreement', 'engagement', 'arrangement', 'professional services'],
       open: ['active', 'current', 'accepting proposals', 'bid opportunity', 'vendor opportunity'],
     },
@@ -234,12 +230,7 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
     keywords: ['price', 'cost', 'fee', 'rate', 'schedule', 'pricing', 'charge', 'cash pay', 'self pay'],
     synonymMap: {
       pricing: ['fee schedule', 'cost', 'rates', 'charges', 'fees', 'price list', 'rate card', 'chargemaster'],
-      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment', 'employer clinic'],
-      'PFT': ['spirometry', 'pulmonary function test', 'breathing test', 'lung function'],
-      'DOT': ['department of transportation', 'DOT physical', 'DOT exam', 'CDL physical'],
-      physical: ['exam', 'screening', 'medical exam', 'health screening', 'pre-employment physical'],
       PDF: ['document', 'fee schedule', 'price list', 'rate sheet', 'transparency file'],
-      occupational: ['worksite', 'industrial', 'employee', 'corporate', 'employer'],
     },
     expansions: (q) => {
       const baseExpansions = [
@@ -263,15 +254,12 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
         `${q} cash pay`,
         `${q} out-of-pocket cost`,
         `${q} employer account`,
-        `${q} work comp`,
-        `${q} workers compensation`,
       ];
       
       const providerExpansions = [
         `${q} clinic`,
         `${q} provider`,
         `${q} urgent care`,
-        `${q} occupational medicine`,
       ];
       
       return [...baseExpansions, ...pdfExpansions, ...paymentTypeExpansions, ...providerExpansions];
@@ -282,21 +270,17 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
       { pattern: /filetype:pdf|\.pdf/i, score: 40, name: 'PDF document' },
       { pattern: /\$[\d,]+(?:\.\d{2})?|\$\d+\s*(million|k|K)?/i, score: 25, name: 'price values' },
       { pattern: /self-pay|cash price|out-of-pocket|cash pay/i, score: 30, name: 'self-pay mention' },
-      { pattern: /employer account|work comp|workers compensation/i, score: 25, name: 'employer payment' },
-      { pattern: /spirometry|pulmonary function|PFT/i, score: 20, name: 'PFT pricing' },
-      { pattern: /DOT physical|CDL physical|department of transportation/i, score: 20, name: 'DOT pricing' },
+      { pattern: /employer account/i, score: 25, name: 'employer payment' },
     ],
   },
 
   provider: {
     label: 'PROVIDER INTEL',
-    description: 'Find occupational health clinics, providers, and services',
-    keywords: ['clinic', 'provider', 'doctor', 'physician', 'healthcare', 'medical', 'practice', 'occupational health', 'occupational medicine'],
+    description: 'Find clinics, providers, and services',
+    keywords: ['clinic', 'provider', 'doctor', 'physician', 'healthcare', 'medical', 'practice'],
     synonymMap: {
       clinic: ['medical center', 'health center', 'practice', 'facility', 'office', 'urgent care'],
       provider: ['doctor', 'physician', 'practitioner', 'specialist', 'clinician', 'medical group'],
-      'occupational health': ['occupational medicine', 'worksite clinic', 'employee health', 'industrial medicine', 'pre-employment', 'employer clinic'],
-      services: ['exams', 'screenings', 'physicals', 'testing', 'drug testing', 'DOT physical', 'PFT'],
     },
     expansions: (q) => {
       const baseExpansions = [
@@ -309,15 +293,6 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
         `${q} locations`,
       ];
       
-      const serviceExpansions = [
-        `${q} occupational health services`,
-        `${q} DOT physical`,
-        `${q} drug testing`,
-        `${q} pre-employment physical`,
-        `${q} pulmonary function test`,
-        `${q} audiometry`,
-        `${q} respirator fit test`,
-      ];
       
       const locationExpansions = [
         `${q} near me`,
@@ -326,7 +301,7 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
         `${q} clinic locations`,
       ];
       
-      return [...baseExpansions, ...serviceExpansions, ...locationExpansions];
+      return [...baseExpansions, ...locationExpansions];
     },
     siteOperators: [],
     scoringRules: [
@@ -334,8 +309,6 @@ const LENS_CONFIGS: Record<SearchLens, VerticalConfig> = {
       { pattern: /physician|doctor|provider|clinician|medical group/i, score: 25, name: 'provider keywords' },
       { pattern: /board certified|licensed|accredited/i, score: 20, name: 'credentials' },
       { pattern: /location|address|suite|floor/i, score: 15, name: 'physical address' },
-      { pattern: /occupational health|occupational medicine|worksite clinic/i, score: 35, name: 'occupational health provider' },
-      { pattern: /DOT physical|drug testing|pre-employment|PFT/i, score: 30, name: 'occupational services' },
     ],
   },
 
@@ -482,7 +455,7 @@ export function classifyLens(query: string): SearchLens {
   // Special weighting
   if (/\b(rfp|rfq|tender|solicitation|procurement|bid)\b/i.test(q)) scores.procurement += 5
   if (/\b(price|cost|fee|rate|pricing|schedule)\b/i.test(q)) scores.pricing += 5
-  if (/\b(clinic|provider|doctor|physician|occupational health|occupational medicine)\b/i.test(q)) scores.provider += 5
+  if (/\b(clinic|provider|doctor|physician)\b/i.test(q)) scores.provider += 5
   if (/\b(pdf|document|file|report|guide|manual)\b/i.test(q)) scores.pdf += 3
   if (/\b(government|official|federal|state|agency)\b/i.test(q)) scores.government += 4
   if (/\b(api|documentation|code|developer|github|programming)\b/i.test(q)) scores.technical += 4
@@ -605,22 +578,8 @@ export function scoreSignals(text: string, url?: string): Signal[] {
   if (/self-pay|cash price|out-of-pocket|cash pay/i.test(text)) {
     signals.push({ name: 'self-pay mention', score: 30, description: 'Self-pay pricing available' })
   }
-  if (/employer account|work comp|workers compensation/i.test(text)) {
+  if (/employer account/i.test(text)) {
     signals.push({ name: 'employer payment', score: 25, description: 'Employer billing options' })
-  }
-
-  // Content signals - Occupational Health
-  if (/occupational health|occupational medicine|worksite clinic|employee health/i.test(text)) {
-    signals.push({ name: 'occupational health match', score: 25, description: 'Exact service match' })
-  }
-  if (/DOT physical|CDL physical|department of transportation/i.test(text)) {
-    signals.push({ name: 'DOT physical', score: 20, description: 'DOT exam services' })
-  }
-  if (/spirometry|pulmonary function|PFT/i.test(text)) {
-    signals.push({ name: 'PFT pricing', score: 20, description: 'Pulmonary function testing' })
-  }
-  if (/drug testing|pre-employment physical|audiometry|respirator fit test/i.test(text)) {
-    signals.push({ name: 'occupational services', score: 25, description: 'Specific occupational health services' })
   }
 
   // Content signals - Provider

@@ -27,3 +27,6 @@ npm-debug.log*
 # Misc
 dist/
 build/
+
+# Runtime-only canonical profile cache must never become a local seed
+*relevance-profile-cache*.json

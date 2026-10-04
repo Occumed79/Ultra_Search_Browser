@@ -13,7 +13,7 @@ import mammoth from 'mammoth'
 
 const execFileAsync = promisify(execFile)
 const MAX_EMBEDDED_STATE_TEXT = 120_000
-const EMBEDDED_PROCUREMENT_HINT = /\b(?:rfp|rfq|rfi|solicitation|procurement|bid|tender|proposal|deadline|closing date|scope of work|statement of work|occupational health|medical surveillance)\b/i
+const EMBEDDED_PROCUREMENT_HINT = /\b(?:rfp|rfq|rfi|solicitation|procurement|bid|tender|proposal|deadline|closing date|scope of work|statement of work)\b/i
 
 export interface ExtractedDocument {
   text: string

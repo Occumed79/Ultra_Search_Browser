@@ -31,7 +31,6 @@ export interface SearchVerticalConfig {
     containsPricing?: number;
     containsEmail?: number;
     containsDueDate?: number;
-    occupationalHealthTerms?: number;
     [key: string]: number | undefined;
   };
   feedbackLabels?: string[];

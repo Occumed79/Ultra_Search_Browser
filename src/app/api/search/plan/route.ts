@@ -1,3 +1,4 @@
+import { ensureRelevanceProfile } from '../../../../lib/canonical-relevance'
 import { NextRequest, NextResponse } from 'next/server'
 import { buildBrowserSearchPlan } from '../../../../lib/browser-search-pipeline'
 import { planSemanticIntent } from '../../../../lib/semantic-intent'
@@ -10,6 +11,7 @@ export async function POST(request: NextRequest) {
     if (!query) return NextResponse.json({ error: 'Query is required' }, { status: 400 })
 
     const traceId = createSearchTrace(query, body.traceId)
+    await ensureRelevanceProfile()
     const semanticIntent = await planSemanticIntent(query, 'procurement')
     const basePlan = buildBrowserSearchPlan(query, body.maxSearches, semanticIntent)
     const plan = {

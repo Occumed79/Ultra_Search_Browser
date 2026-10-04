@@ -1,14 +1,14 @@
 /**
- * Federal Register public JSON API → Occu-Med–relevant index entries
+ * Federal Register public JSON API → profile-targeted index entries
  * https://www.federalregister.gov/developers/documentation/api/v1
  *
- * Structured feed only — results filtered to occupational health / exam scope.
+ * Structured feed only — relevance is decided by the canonical Neon profile.
  */
 
 import crypto from 'crypto'
 import type { FeedEntry } from './small-web'
 import { addFeedSource, storeFeedEntries, updateFeedLastFetched } from './small-web'
-import { isOccuMedRelevant } from './occumed-index-filters'
+import { assessCanonicalRelevance, ensureRelevanceProfile, getRelevanceProfile } from './canonical-relevance'
 
 const FR_JSON = 'https://www.federalregister.gov/api/v1/documents.json'
 
@@ -23,27 +23,12 @@ export interface FrIngestTarget {
   perPage?: number
 }
 
-/**
- * Priority agencies + term searches for Occu-Med scope.
- * Broad “all notices” dumps removed — too much noise.
- */
-export const FR_INGEST_TARGETS: FrIngestTarget[] = [
-  // Agency lenses (still filtered client-side)
-  { id: 'fr-hhs', title: 'FR — HHS (Occu-Med filter)', category: 'healthcare_procurement', agency: 'health-and-human-services-department', type: 'NOTICE', perPage: 50 },
-  { id: 'fr-va', title: 'FR — VA (Occu-Med filter)', category: 'healthcare_procurement', agency: 'veterans-affairs-department', type: 'NOTICE', perPage: 50 },
-  { id: 'fr-labor', title: 'FR — Labor (Occu-Med filter)', category: 'healthcare_procurement', agency: 'labor-department', type: 'NOTICE', perPage: 50 },
-  { id: 'fr-dhs', title: 'FR — DHS (Occu-Med filter)', category: 'healthcare_procurement', agency: 'homeland-security-department', type: 'NOTICE', perPage: 40 },
-  { id: 'fr-dod', title: 'FR — Defense (Occu-Med filter)', category: 'healthcare_procurement', agency: 'defense-department', type: 'NOTICE', perPage: 40 },
-  { id: 'fr-dot', title: 'FR — Transportation (Occu-Med filter)', category: 'healthcare_procurement', agency: 'transportation-department', type: 'NOTICE', perPage: 40 },
-  { id: 'fr-gsa', title: 'FR — GSA (Occu-Med filter)', category: 'healthcare_procurement', agency: 'general-services-administration', type: 'NOTICE', perPage: 40 },
-  { id: 'fr-osha', title: 'FR — OSHA / Labor rules', category: 'healthcare_procurement', agency: 'labor-department', type: 'PRORULE', perPage: 30 },
-  // Term searches across FR
-  { id: 'fr-term-occ-health', title: 'FR term — occupational health', category: 'healthcare_procurement', term: '"occupational health"', type: 'NOTICE', perPage: 40 },
-  { id: 'fr-term-med-surv', title: 'FR term — medical surveillance', category: 'healthcare_procurement', term: '"medical surveillance"', type: 'NOTICE', perPage: 30 },
-  { id: 'fr-term-drug-test', title: 'FR term — drug testing', category: 'healthcare_procurement', term: '"drug testing"', type: 'NOTICE', perPage: 30 },
-  { id: 'fr-term-fit-duty', title: 'FR term — fitness for duty', category: 'healthcare_procurement', term: '"fitness for duty"', type: 'NOTICE', perPage: 20 },
-  { id: 'fr-term-respirator', title: 'FR term — respirator medical', category: 'healthcare_procurement', term: '"respirator" medical', type: 'NOTICE', perPage: 20 },
-]
+/** Target terms come from the canonical profile; no embedded agency or service preferences. */
+export function federalRegisterTargets(maxTargets = 13): FrIngestTarget[] {
+  return [...new Set(getRelevanceProfile().categories.flatMap(category => category.explicit))].slice(0, Math.max(1, Math.min(50, maxTargets))).map((term, index) => ({
+    id: `fr-profile-${index}`, title: `FR — ${term}`, category: 'procurement', term: `"${term}"`, type: 'NOTICE', perPage: 40,
+  }))
+}
 
 function sourceUrl(target: FrIngestTarget): string {
   const u = new URL(FR_JSON)
@@ -104,7 +89,7 @@ export async function fetchFederalRegisterJson(target: FrIngestTarget): Promise<
     const typeLabel = typeof row.type === 'string' ? row.type : target.type || 'Document'
     const description = [typeLabel, agencies, abstract].filter(Boolean).join(' — ').slice(0, 2000)
 
-    if (!isOccuMedRelevant({ title, description })) continue
+    if (assessCanonicalRelevance({ title, description }).verdict === 'reject') continue
 
     entries.push({
       id: entryId(feedUrl, docNumber, htmlUrl),
@@ -116,7 +101,7 @@ export async function fetchFederalRegisterJson(target: FrIngestTarget): Promise<
       publishedAt,
       feedUrl,
       feedTitle: target.title,
-      category: 'healthcare_procurement',
+      category: 'procurement',
     })
   }
 
@@ -124,10 +109,12 @@ export async function fetchFederalRegisterJson(target: FrIngestTarget): Promise<
 }
 
 export async function ingestFederalRegisterTargets(
-  targets: FrIngestTarget[] = FR_INGEST_TARGETS
+  requestedTargets?: FrIngestTarget[]
 ): Promise<{ attempted: number; stored: number; failures: string[]; perTarget: Array<{ id: string; stored: number; error?: string }> }> {
   let stored = 0
   const failures: string[] = []
+  await ensureRelevanceProfile()
+  const targets = requestedTargets ?? federalRegisterTargets()
   const perTarget: Array<{ id: string; stored: number; error?: string }> = []
 
   for (const target of targets) {
@@ -143,7 +130,7 @@ export async function ingestFederalRegisterTargets(
       const entries = await fetchFederalRegisterJson(target)
       if (!entries.length) {
         // Not a hard failure — filter may legitimately drop everything
-        perTarget.push({ id: target.id, stored: 0, error: 'no Occu-Med–relevant items' })
+        perTarget.push({ id: target.id, stored: 0, error: 'no profile-targeted items' })
         continue
       }
       const n = await storeFeedEntries(entries)

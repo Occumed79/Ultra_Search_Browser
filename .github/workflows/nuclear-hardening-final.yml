@@ -67,7 +67,7 @@ jobs:
           MAX_WAIT_MS: 720000
           POLL_INTERVAL_MS: 15000
         run: node scripts/production-smoke.mjs
-      - name: Run nine live Occu-Med capability canaries
+      - name: Run configured live retrieval canaries
         if: github.event_name == 'push'
         env:
           APP_URL: https://ultra-search-browser.onrender.com
@@ -85,7 +85,7 @@ jobs:
             --header "Authorization: Bearer ${GH_TOKEN}" \
             --header 'X-GitHub-Api-Version: 2022-11-28' \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
-            --data "{\"state\":\"success\",\"context\":\"nuclear-hardening-final\",\"description\":\"All hardening, build, purge, Render, and nine-canary gates passed\",\"target_url\":\"${TARGET_URL}\"}"
+            --data "{\"state\":\"success\",\"context\":\"nuclear-hardening-final\",\"description\":\"All hardening, build, purge, Render, and live-canary gates passed\",\"target_url\":\"${TARGET_URL}\"}"
       - name: Publish nuclear hardening failure status
         if: github.event_name == 'push' && failure()
         env:

@@ -1,4 +1,4 @@
-import { assessOccuMedRfpText } from './occumed-rfp-profile'
+import { assessCanonicalRelevance } from './canonical-relevance'
 import type { ResultStatusAssessment } from './result-status'
 
 export type RfpOpportunityType =
@@ -198,35 +198,8 @@ function extractEstimatedVolume(text: string): string | undefined {
   ], 130)
 }
 
-function serviceSummary(text: string): string[] {
-  const groups: Array<[string, RegExp]> = [
-    ['Employment and pre-placement medical evaluations', /\b(?:pre[- ]employment|pre[- ]placement|post[- ]offer|employment)\s+(?:medical|physical|examination|evaluation)s?\b/i],
-    ['Fitness-for-duty and return-to-work evaluations', /\b(?:fitness for duty|fit for duty|return[- ]to[- ]work|medical clearance)\b/i],
-    ['Deployment and medical-readiness examinations', /\b(?:deployment|medical readiness|overseas medical|oconus|contractor medical clearance)\b/i],
-    ['Medical-surveillance program services', /\b(?:medical surveillance|osha surveillance|hazwoper|asbestos|silica|lead surveillance)\b/i],
-    ['Audiograms and hearing-conservation testing', /\b(?:audiogram|audiometric|hearing conservation|hearing testing)\b/i],
-    ['Spirometry and pulmonary-function testing', /\b(?:spirometry|pulmonary function|\bpft\b|respirator clearance)\b/i],
-    ['Drug and alcohol testing', /\b(?:drug testing|drug screening|alcohol testing|toxicology)\b/i],
-    ['Laboratory, TB, imaging, and ancillary testing', /\b(?:laboratory testing|blood draw|urine testing|tb testing|tuberculosis|quantiferon|chest x[- ]?ray|\bekg\b|\becg\b)\b/i],
-    ['Vaccinations and travel-health services', /\b(?:vaccination|immunization|travel health|yellow fever|typhoid|rabies)\b/i],
-    ['Medical review and occupational-health program administration', /\b(?:medical review|medical advisor|quality assurance|medical records review|program management|provider network coordination)\b/i],
-    ['Public-safety or firefighter medical evaluations', /\b(?:firefighter|law enforcement|public safety|nfpa\s*1582)\b/i],
-    ['DOT and regulated-driver examinations', /\b(?:dot physical|fmcsa|commercial driver medical)\b/i],
-  ]
-  return groups.filter(([, pattern]) => pattern.test(text)).map(([label]) => label).slice(0, 8)
-}
-
 function mandatoryCredentials(text: string): string[] {
-  const patterns: Array<[string, RegExp]> = [
-    ['Licensed physician/advanced-practice clinician', /\b(?:licensed|board[- ]certified)\s+(?:physician|medical doctor|md|do|nurse practitioner|physician assistant)\b/i],
-    ['CAOHC-certified audiometry personnel', /\bcaohc\b|\bcaooch\b/i],
-    ['NIOSH-approved spirometry training', /\bniosh\b[^.;]{0,60}\bspirom/i],
-    ['CLIA-certified laboratory', /\bclia\b/i],
-    ['FMCSA-certified medical examiner', /\bfmcsa\b[^.;]{0,70}\bcertif/i],
-    ['HIPAA compliance', /\bhipaa\b/i],
-    ['Accreditation or specific clinical licensure', /\b(?:accreditation|required licensure|professional license|state licensure)\b/i],
-  ]
-  return patterns.filter(([, pattern]) => pattern.test(text)).map(([label]) => label)
+  return unique(text.match(/[^.;\n]{0,80}\b(?:required licensure|mandatory qualifications|must be certified|shall be licensed)\b[^.;\n]{0,120}/gi) || [])
 }
 
 function contacts(text: string): Array<{ name?: string; email?: string; phone?: string }> {
@@ -254,21 +227,6 @@ function deliveryModel(text: string): RfpDeliveryModel {
   return 'unknown'
 }
 
-function concernSignals(text: string, relevanceExclusions: string[], model: RfpDeliveryModel): string[] {
-  const concerns = [...relevanceExclusions]
-  const patterns: Array<[string, RegExp]> = [
-    ['May require ownership or continuous staffing of a dedicated on-site clinic', /\b(?:own|operate|staff|manage)\s+(?:a\s+)?(?:dedicated\s+)?on[- ]?site clinic\b/i],
-    ['May require direct clinical staffing rather than coordinated examinations', /\b(?:nursing|physician|clinical)\s+staffing\b|\bstaff augmentation\b/i],
-    ['May require insurance billing or health-plan administration', /\b(?:insurance billing|health plan|benefits administration|claims administration)\b/i],
-    ['May require immediate or unusually short turnaround', /\b(?:same[- ]day|within 24 hours|24[- ]hour turnaround|immediate turnaround)\b/i],
-    ['May include treatment responsibilities beyond evaluation and documentation', /\b(?:ongoing treatment|primary care|patient treatment|therapeutic services)\b/i],
-    ['May require a local physical facility in the buyer jurisdiction', /\b(?:must maintain|shall maintain|required to have)\s+(?:a\s+)?(?:local|physical)\s+(?:office|clinic|facility)\b/i],
-  ]
-  for (const [label, pattern] of patterns) if (pattern.test(text)) concerns.push(label)
-  if (model === 'on-site') concerns.push('On-site delivery model requires operational review')
-  return unique(concerns, 8)
-}
-
 function evidenceExcerpts(text: string, terms: string[]): string[] {
   const normalized = clean(text)
   const lower = normalized.toLowerCase()
@@ -286,17 +244,10 @@ function keyPart(value: string | undefined): string {
   return normalize(value || '').replace(/\s+/g, '-').slice(0, 90)
 }
 
-function fitBand(score: number): RfpFitBand {
-  if (score >= 86) return 'strong'
-  if (score >= 68) return 'good'
-  if (score >= 45) return 'review'
-  return 'poor'
-}
-
 export function extractRfpOpportunityIntelligence(input: IntelligenceInput): RfpOpportunityIntelligence {
   const text = clean(`${input.title || ''} ${input.text}`)
-  const relevance = assessOccuMedRfpText(text)
-  const services = serviceSummary(text)
+  const relevance = assessCanonicalRelevance({ title: input.title, description: input.text })
+  const services = relevance.matchedCapabilities
   const organization = extractOrganization(text, input.url)
   const solicitationNumber = extractSolicitationNumber(text)
   const title = clean(input.title || firstCapture(text, [
@@ -309,19 +260,13 @@ export function extractRfpOpportunityIntelligence(input: IntelligenceInput): Rfp
     .filter(date => ['posted', 'modified'].includes(date.kind) && date.iso)
     .sort((left, right) => String(right.iso).localeCompare(String(left.iso)))[0]?.iso?.slice(0, 10)
   const model = deliveryModel(text)
-  const concerns = concernSignals(text, relevance.exclusions, model)
-  const activeBonus = ['open', 'active'].includes(input.lifecycle.status) ? 12 : input.lifecycle.status === 'unknown' ? 0 : -40
-  const serviceBonus = Math.min(20, services.length * 4)
-  const networkBonus = model === 'distributed-provider-network' || model === 'hybrid' ? 8 : 0
-  const concernPenalty = Math.min(28, concerns.length * 6)
-  const rawScore = Math.round(relevance.score * 70 + activeBonus + serviceBonus + networkBonus - concernPenalty)
-  const score = Math.max(0, Math.min(100, rawScore))
+  const concerns = relevance.exclusions
   const docs = input.documents || []
   const documentUrls = unique([input.url, ...docs.map(document => document.url)], 20)
   const mandatory = mandatoryCredentials(text)
   const evidence = evidenceExcerpts(text, [
-    'due date', 'deadline', 'occupational health', 'medical examination', 'medical surveillance',
-    'fitness for duty', 'deployment', 'provider network', 'place of performance', 'period of performance',
+    'due date', 'deadline', 'place of performance', 'period of performance',
+    ...relevance.evidence.matchedExplicitPhrases,
   ])
   const confidenceSignals = [
     solicitationNumber, organization, dueDate, services.length > 0 ? 'services' : undefined,
@@ -354,8 +299,8 @@ export function extractRfpOpportunityIntelligence(input: IntelligenceInput): Rfp
     mandatoryCredentials: mandatory,
     procurementContacts: contacts(text),
     deliveryModel: model,
-    fitScore: score,
-    fitBand: fitBand(score),
+    fitScore: relevance.score,
+    fitBand: relevance.verdict === 'accept' ? 'good' : relevance.verdict === 'review' ? 'review' : 'poor',
     matchedCapabilities: relevance.matchedCapabilities,
     matchedBuyerSegments: relevance.matchedBuyerSegments,
     concerns,

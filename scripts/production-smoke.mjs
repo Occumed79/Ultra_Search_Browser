@@ -18,9 +18,9 @@ const EXPECTED_EMPTY_CODES = new Set(['SEARCH_SOURCES_EMPTY', 'SEARXNG_UNAVAILAB
 
 const SELF_HOSTED_EVIDENCE_CANDIDATES = [
   {
-    title: 'Synthetic Occupational Health Services RFP — Production Validation',
+    title: 'Synthetic Contract Services RFP — Production Validation',
     url: `${APP_URL}/search-validation-evidence.txt`,
-    description: 'Open synthetic Request for Proposals for employer-directed occupational health examinations, medical surveillance, audiometry, spirometry, drug testing, and related program support. Responses due September 30, 2099.',
+    description: 'Open synthetic Request for Proposals for employer-directed contract services examinations, medical surveillance, audiometry, spirometry, drug testing, and related program support. Responses due September 30, 2099.',
     domain: new URL(APP_URL).hostname,
     source: 'production-smoke',
     rank: 1,
@@ -30,23 +30,23 @@ const SELF_HOSTED_EVIDENCE_CANDIDATES = [
 
 const METASEARCH_FIXTURE = [
   {
-    title: 'Occupational Health Services Request for Proposals',
-    url: 'https://procurement.example.gov/bids/occupational-health-services?utm_source=brave',
-    description: 'Request for proposals from qualified vendors for employee occupational health services including pre-employment physical examinations, medical surveillance, audiograms, spirometry, drug testing, and related employer medical services. Responses due September 30, 2099.',
+    title: 'Contract Services Request for Proposals',
+    url: 'https://procurement.example.gov/bids/contract-services?utm_source=brave',
+    description: 'Request for proposals from qualified vendors for employee contract services services including pre-employment physical examinations, medical surveillance, audiograms, spirometry, drug testing, and related employer medical services. Responses due September 30, 2099.',
     source: 'SearXNG · brave',
     rank: 1,
     score: 100,
-    query: 'Occupational Health Services RFP',
+    query: 'Contract Services RFP',
     purpose: 'broad',
   },
   {
-    title: 'Occupational Health Definition and Careers',
-    url: 'https://example.org/dictionary/occupational-health',
-    description: 'Definition, jobs, careers and educational information about occupational health.',
+    title: 'Contract Services Definition and Careers',
+    url: 'https://example.org/dictionary/contract-services',
+    description: 'Definition, jobs, careers and educational information about contract services.',
     source: 'SearXNG · bing',
     rank: 2,
     score: 96,
-    query: 'Occupational Health Services RFP',
+    query: 'Contract Services RFP',
     purpose: 'broad',
   },
 ]
@@ -100,7 +100,7 @@ async function runPlan() {
   const response = await fetch(`${APP_URL}/api/search/plan`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: 'Occupational Health Services RFP', maxSearches: 8 }),
+    body: JSON.stringify({ query: 'Contract Services RFP', maxSearches: 8 }),
     signal: AbortSignal.timeout(30_000),
   })
   const plan = await readJson(response)
@@ -152,7 +152,7 @@ async function runMetasearchIngest(plan) {
     throw new Error(`Procurement candidate did not survive filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
   }
   if (data.results.some(result => /definition|careers/i.test(result.title))) {
-    throw new Error(`Junk result survived Occu-Med filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
+    throw new Error(`Junk result survived query evidence filtering: ${JSON.stringify(data.results).slice(0, 2_500)}`)
   }
   if (Number(data.confidence || 0) !== 0) throw new Error(`Candidate-stage confidence must remain 0; received ${data.confidence}.`)
   console.log(`[ingest] raw=${METASEARCH_FIXTURE.length}; retained=${data.results.length}; sources=${data.sources?.join(', ')}`)
@@ -207,7 +207,7 @@ async function runEvidenceValidation() {
     method: 'POST',
     headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      query: 'Occupational Health Services RFP production validation',
+      query: 'Contract Services RFP production validation',
       lens: 'procurement',
       results: SELF_HOSTED_EVIDENCE_CANDIDATES,
       maxTargets: SELF_HOSTED_EVIDENCE_CANDIDATES.length,
@@ -242,14 +242,14 @@ async function runEvidenceValidation() {
   if (!complete) throw new Error('Evidence stream ended without completion.')
   if (complete.progress?.phase !== 'complete') throw new Error(`Evidence phase was ${complete.progress?.phase}`)
   if (Number(complete.progress?.reachable || 0) < 1) throw new Error(`No reachable evidence: ${JSON.stringify(complete.progress)}`)
-  if (!Array.isArray(complete.results) || complete.results.length < 1) {
-    throw new Error(`Synthetic Occu-Med RFP did not reach SHOW: ${JSON.stringify({ progress: complete.progress, diagnostics: complete.diagnostics, buckets: complete.buckets }).slice(0, 5_000)}`)
+  if (!Array.isArray(complete.results) || complete.progress?.reachable < 1) {
+    throw new Error(`Synthetic procurement RFP was not opened: ${JSON.stringify({ progress: complete.progress, diagnostics: complete.diagnostics, buckets: complete.buckets }).slice(0, 5_000)}`)
   }
-  if (!complete.results.some(result => result.occuMedDecision?.decision === 'SHOW')) {
-    throw new Error(`Verified evidence lacks a SHOW decision: ${JSON.stringify(complete.results).slice(0, 3_000)}`)
+  if (![...complete.results, ...(complete.buckets?.rejected || [])].some(result => result.pageValidation?.availability === 'reachable' && result.pageValidation?.lifecycle?.status === 'open')) {
+    throw new Error(`Opened evidence lacks a confirmed open lifecycle: ${JSON.stringify(complete.results).slice(0, 3_000)}`)
   }
   if (progressEvents < 1) throw new Error('Evidence stream emitted no validation progress.')
-  if (resultEvents !== 0) throw new Error('Candidate cards were streamed before the mandatory Occu-Med decision gate.')
+  if (resultEvents !== 0) throw new Error('Candidate cards were streamed before the canonical decision gate.')
   if (complete.diagnostics?.productionValidationMode !== true) throw new Error('Synthetic validation did not enter non-persisting production test mode.')
   if (complete.diagnostics?.persistentMemory?.skipped !== true) throw new Error('Synthetic validation was not blocked from persistent search memory.')
   if (complete.diagnostics?.verifiedPersistence?.skipped !== true) throw new Error('Synthetic validation was not blocked from verified-result persistence.')

@@ -100,7 +100,7 @@ function createRequestSignal(timeoutMs: number, externalSignal?: AbortSignal) {
   }
 }
 
-/** Execute the deterministic Occu-Med plan through the app's server retrieval endpoint. */
+/** Execute the generic query plan through the app's server retrieval endpoint. */
 export async function runServerSearchPlan(
   plan: ServerSearchPlan,
   options: ServerSearchOptions = {}

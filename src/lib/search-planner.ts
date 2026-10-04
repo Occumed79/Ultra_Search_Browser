@@ -178,7 +178,7 @@ export function buildQueryVariants(
       : lens === 'pricing'
         ? /fee schedule|pricing|cash pay|self-pay|cost|rate/i
         : lens === 'provider'
-          ? /clinic|provider|occupational medicine|services offered/i
+          ? /clinic|provider|services offered/i
           : /information|overview|research|report|guide|official/i
   ) || expanded.expansions[0]
 

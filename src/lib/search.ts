@@ -77,13 +77,6 @@ function scoreResultForLens(result: ScrapedResult, lens: SearchLens): number {
     if (hasProcurementTerm) boost += 25
   }
 
-  // Occupational health specific boosts for procurement/pricing/provider lenses
-  if (['procurement', 'pricing', 'provider'].includes(lens)) {
-    const healthTerms = ['occupational health', 'occupational medicine', 'employee health', 'dot physical', 'pft', 'pulmonary function', 'drug screen', 'fit test', 'audiogram']
-    const hasHealthTerm = healthTerms.some(term => title.includes(term) || description.includes(term))
-    if (hasHealthTerm) boost += 20
-  }
-
   // Penalize junk directories
   const junkPatterns = ['directory', 'listing', 'aggregator', 'portal', 'marketplace']
   const isJunk = junkPatterns.some(pattern => domain.includes(pattern) && !domain.includes('.gov'))

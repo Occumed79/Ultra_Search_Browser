@@ -109,7 +109,7 @@ export default function SettingsPage() {
     { key: 'serverSideSearchRetrieval', label: 'Website-only retrieval', icon: Globe },
     { key: 'searxngSearch', label: 'Private SearXNG', icon: Globe },
     { key: 'zeroKeyDirectRescue', label: 'Direct fallback', icon: ShieldCheck },
-    { key: 'deterministicIntent', label: 'Occu-Med query planner', icon: Zap },
+    { key: 'deterministicIntent', label: 'Query planner', icon: Zap },
     { key: 'evidenceValidation', label: 'Deep evidence validation', icon: ShieldCheck },
     { key: 'database', label: 'Pursuit memory', icon: Database },
     { key: 'localEmbeddings', label: 'Local embeddings', icon: Cpu },
@@ -170,7 +170,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
                 <p className="text-[12px] leading-relaxed text-white/50">
-                  Ultra Search fans targeted Occu-Med procurement queries across private SearXNG plus every configured live-search API, merges the independent result pools, then applies the same relevance, exclusion, deduplication, validation, and learning gates.
+                  Ultra Search fans targeted procurement queries across private SearXNG plus every configured live-search API, merges the independent result pools, then validates evidence, dates, and duplicates. Occu-Med relevance comes from the shared Neon profile.
                 </p>
               </div>
 

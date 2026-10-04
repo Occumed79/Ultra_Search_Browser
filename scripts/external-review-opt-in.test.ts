@@ -2,12 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
-const smartFilter = readFileSync(new URL('../src/lib/occumed-smart-filter.ts', import.meta.url), 'utf8')
+const smartFilter = readFileSync(new URL('../src/lib/smart-filter.ts', import.meta.url), 'utf8')
 const envExample = readFileSync(new URL('../.env.example', import.meta.url), 'utf8')
 
 test('Occu-Med procurement external reviewers require explicit feature opt-in', () => {
   assert.match(smartFilter, /ENABLE_EXTERNAL_SMART_FILTER === 'true'/)
-  assert.match(smartFilter, /options\.useExternalProviders === true\s*&&\s*externalSemanticReviewEnabled\(\)/)
+  assert.match(smartFilter, /options\.useExternalProviders === true\s*&&\s*process\.env\.ENABLE_EXTERNAL_SMART_FILTER === 'true'/)
 })
 
 test('semantic reviewer keys remain optional while live search keys are documented separately', () => {

@@ -1,4 +1,6 @@
-import { applyOccuMedSmartFilter } from './occumed-smart-filter'
+import { applyIntentCandidateGate } from './search-intent-gate'
+import { alignCanonicalIntent, ensureRelevanceProfile, getRelevanceProfile } from './canonical-relevance'
+import { applySmartFilter } from './smart-filter'
 import {
   coerceBrowserIntent,
   normalizeBrowserSerpCandidates,
@@ -63,20 +65,22 @@ function zeroResultSummary(rawCount: number, smartCandidateCount: number): strin
     return 'Live retrieval completed without any usable search candidates. Check source health and retrieval diagnostics.'
   }
   if (smartCandidateCount === 0) {
-    return `Live retrieval returned ${rawCount} candidates, but none matched the Occu-Med relevance layer strongly enough to rank as useful results.`
+    return `Live retrieval returned ${rawCount} candidates, but none matched the query evidence enough to rank as useful results.`
   }
   return 'No candidate survived the current relevance-ranking pipeline.'
 }
 
 export async function processSearchCandidates(input: ProcessSearchCandidatesInput) {
+  await ensureRelevanceProfile()
   const startedAt = Date.now()
   const plan = buildSearchPlan(input.settings)
-  const intent = coerceBrowserIntent(input.intent, input.query)
+  const intent = alignCanonicalIntent(input.query, coerceBrowserIntent(input.intent, input.query))
   const normalizedCandidates = normalizeBrowserSerpCandidates(input.results)
-  const smartFilter = await applyOccuMedSmartFilter(
+  const intentGate = applyIntentCandidateGate(input.query, 'procurement', normalizedCandidates, intent)
+  const smartFilter = await applySmartFilter(
     input.query,
     'procurement',
-    normalizedCandidates,
+    intentGate.results,
     Math.max(plan.resultsPerPage, 40),
     {
       useLocalTransformer: false,
@@ -207,6 +211,10 @@ export async function processSearchCandidates(input: ProcessSearchCandidatesInpu
       apiKeysRequired: false,
       [input.rawCandidateLabel || 'rawCandidates']: normalizedCandidates.length,
       smartFilter: smartFilter.diagnostics,
+      intentGate: intentGate.diagnostics,
+      intentRetained: intentGate.results.length,
+      smartCandidates: smartFilter.results.length,
+      canonicalRelevance: { source: getRelevanceProfile().source, version: getRelevanceProfile().version },
       productMode: input.productMode,
       persistenceAttempted: shouldPersist,
       persistenceFailures,

@@ -314,6 +314,10 @@ function mergeConceptGroups(
     const overlaps = merged.some(group =>
       group.id === candidate.id
       || group.terms.some(term => candidateTerms.has(normalizeIntentText(term)))
+      || (candidate.kind === 'subject' && candidate.terms.some(term => group.terms.some(alias => {
+        const token = normalizeIntentText(term).replace(/s$/, '')
+        return normalizeIntentText(alias).split(' ').some(word => word.replace(/s$/, '') === token)
+      })))
     )
     if (!overlaps) merged.push(candidate)
     if (merged.length >= 12) break

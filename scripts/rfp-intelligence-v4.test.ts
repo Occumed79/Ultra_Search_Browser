@@ -18,7 +18,7 @@ const openLifecycle: ResultStatusAssessment = {
   }],
 }
 
-test('extracts structured active Occu-Med RFP intelligence', () => {
+test('extracts procurement fields without inferring service fit from local vocabulary', () => {
   const intelligence = extractRfpOpportunityIntelligence({
     url: 'https://example.gov/rfp/26-104',
     title: 'Employee Occupational Health Services',
@@ -46,9 +46,9 @@ test('extracts structured active Occu-Med RFP intelligence', () => {
   assert.equal(intelligence.solicitationNumber?.replace(/[.,;:]+$/, ''), '26-104')
   assert.equal(intelligence.dueDate, '2026-08-30')
   assert.equal(intelligence.deliveryModel, 'distributed-provider-network')
-  assert.ok(intelligence.serviceSummary.length >= 4)
-  assert.ok(intelligence.fitScore >= 68)
-  assert.ok(['strong', 'good'].includes(intelligence.fitBand))
+  assert.deepEqual(intelligence.serviceSummary, [])
+  assert.equal(intelligence.fitScore, 0)
+  assert.equal(intelligence.fitBand, 'review')
   assert.equal(intelligence.documentUrls.length, 2)
 })
 

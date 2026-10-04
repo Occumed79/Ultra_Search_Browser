@@ -1,5 +1,3 @@
-import { matchOccuMedCapabilityGroups } from './occumed-capability-matching'
-import { assessOccuMedRfpText } from './occumed-rfp-profile'
 import type { SemanticIntentPlan } from './semantic-intent'
 import type { ScrapedResult, SearchLens } from '../types/search'
 
@@ -13,11 +11,9 @@ export interface IntentGateDiagnostics {
 const PROCUREMENT_TERMS = /\b(?:request for proposals?|rfp|request for quot(?:e|es|ation|ations)|rfq|request for information|rfi|request for tenders?|rft|invitation (?:to|for) bids?|ifb|sources sought|solicitation|tender|bid(?:ding)?|procurement|contract (?:opportunity|notice)|bid opportunity|business opportunity|vendor opportunity|notice of intent|competitive sealed proposal|notice inviting bids)\b/i
 const PROCUREMENT_PORTALS = /(?:sam\.gov|ebuy\.gsa\.gov|piee\.eb\.mil|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com|bidsandtenders\.com|bidexpress\.com|demandstar\.com|vendorregistry\.com|jaggaer\.com|sciquest\.com|ariba\.com|coupa\.com|periscopeholdings\.com)/i
 const PROCUREMENT_DESTINATION_HINTS = /(?:^|[\/_-])(?:opp(?:s|ortunit(?:y|ies))?|procurement|purchasing|bids?|rfps?|rfqs?|rfis?|solicitations?|tenders?|vendor|suppliers?|contract-opportunit(?:y|ies)|business-opportunit(?:y|ies)|opportunities|notices?|events?|sourcing|acquisition)(?:[\/_?.#=-]|$)/i
-const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|occupational outlook handbook|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory|therapy)\b/i
+const GENERIC_PAGE_TITLE = /\b(?:definition|meaning|dictionary|encyclopedia|licensing|license lookup|career guide|jobs?|home|a[- ]?z index|topic index|directory)\b/i
 const EDITORIAL_MARKETING_TITLE = /\b(?:strategic guide|buyers? guide|guide to|how to|explainer|blog|article|best practices|insider (?:guide|note)|what is)\b/i
 const EDITORIAL_MARKETING_PATH = /(?:\/(?:blog|articles?|resources?|guides?|insights?|news)\/|\/\d{4}\/\d{1,2}\/|(?:^|[\/_-])(?:strategic-guide|buyers?-guide|how-to|best-practices|explainer)(?:[\/_-]|$))/i
-const BROAD_OCCUMED_SERVICE_QUERY = /\b(?:employment|employee|occupational|workforce|pre employment|medical|fitness for duty|fit for duty)\b.*\b(?:evaluation|evaluations|exam|exams|examination|examinations|physical|physicals|screening|screenings|health|medicine|clearance)\b/i
-const NON_MEDICAL_EMPLOYMENT_QUERY = /\b(?:performance|appraisal|employee review|human resources|hr evaluation|training evaluation)\b/i
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'by', 'for', 'from', 'in', 'is', 'of', 'on', 'or', 'the', 'to', 'with',
   'find', 'search', 'show', 'request', 'requests', 'proposal', 'proposals', 'quotation', 'quotations', 'tender', 'tenders',
@@ -48,27 +44,6 @@ function subjectMatches(
   text: string,
   semanticIntent?: SemanticIntentPlan
 ): boolean {
-  const normalizedQuery = normalize(query)
-  const queryCapabilities = new Set(
-    matchOccuMedCapabilityGroups(query, 3).map(group => group.label)
-  )
-  const candidateCapability = assessOccuMedRfpText(text)
-
-  if (
-    queryCapabilities.size > 0
-    && candidateCapability.matchedCapabilities.some(label => queryCapabilities.has(label))
-  ) {
-    return true
-  }
-
-  if (
-    BROAD_OCCUMED_SERVICE_QUERY.test(normalizedQuery)
-    && !NON_MEDICAL_EMPLOYMENT_QUERY.test(normalizedQuery)
-    && candidateCapability.status !== 'irrelevant'
-  ) {
-    return true
-  }
-
   const subjectGroups = semanticIntent?.conceptGroups.filter(group =>
     group.required && group.kind !== 'format' && group.kind !== 'geography' && group.kind !== 'time'
   ) || []
@@ -159,11 +134,6 @@ function rejectReason(
   }
 
   if (!subjectMatches(query, text, semanticIntent)) return 'missing-query-subject'
-
-  const occuMed = assessOccuMedRfpText(originalText)
-  if (occuMed.status === 'irrelevant' && occuMed.exclusions.length > 0) {
-    return 'outside-occumed-service-model'
-  }
 
   if (!title && !result.description.trim()) return 'empty-result'
   return undefined

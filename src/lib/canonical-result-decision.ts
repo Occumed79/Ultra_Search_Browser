@@ -1,14 +1,6 @@
 import type { DeepValidationOutcome } from './deep-validation'
-import {
-  OCCUMED_PROFILE_VERSION,
-  assessOccuMedRfpText,
-  type OccuMedRelevanceAssessment,
-} from './occumed-rfp-profile'
-import { matchOccuMedHistoricalPatterns } from './occumed-historical-pursuits'
-import {
-  structuredRfpReviewText,
-  type RfpOpportunityIntelligence,
-} from './rfp-opportunity-intelligence'
+import { assessCanonicalRelevance, getRelevanceProfile, type CanonicalRelevanceAssessment } from './canonical-relevance'
+import type { RfpOpportunityIntelligence } from './rfp-opportunity-intelligence'
 import type {
   ResultBucket,
   ScrapedResult,
@@ -16,10 +8,10 @@ import type {
   SearchValidationProgress,
 } from '../types/search'
 
-export type OccuMedDisplayDecision = 'SHOW' | 'REVIEW' | 'REJECT'
+export type CanonicalDisplayDecision = 'SHOW' | 'REVIEW' | 'REJECT'
 
-export interface OccuMedResultDecision {
-  decision: OccuMedDisplayDecision
+export interface CanonicalResultDecision {
+  decision: CanonicalDisplayDecision
   reason: string
   procurementConfirmed: boolean
   activeConfirmed: boolean
@@ -27,13 +19,13 @@ export interface OccuMedResultDecision {
   noHardDisqualifier: boolean
   lifecycleStatus: string
   profileVersion: string
-  relevance: OccuMedRelevanceAssessment
-  historicalMatches: ReturnType<typeof matchOccuMedHistoricalPatterns>
+  profileSource: CanonicalRelevanceAssessment['profileSource']
+  relevance: CanonicalRelevanceAssessment
   opportunityFitScore?: number
   opportunityFitBand?: RfpOpportunityIntelligence['fitBand']
 }
 
-export interface OccuMedDecisionGateDiagnostics {
+export interface CanonicalDecisionGateDiagnostics {
   profileVersion: string
   show: number
   review: number
@@ -41,9 +33,9 @@ export interface OccuMedDecisionGateDiagnostics {
   reasons: Record<string, number>
 }
 
-export interface OccuMedGatedOutcome extends DeepValidationOutcome {
+export interface CanonicalGatedOutcome extends DeepValidationOutcome {
   diagnostics: DeepValidationOutcome['diagnostics'] & {
-    occuMedDecisionGate: OccuMedDecisionGateDiagnostics
+    canonicalDecisionGate: CanonicalDecisionGateDiagnostics
   }
 }
 
@@ -58,9 +50,12 @@ const ACTIVE_LIFECYCLE = new Set(['open', 'active'])
 const HARD_REJECT_AVAILABILITY = new Set(['dead', 'generic', 'search-page', 'thin'])
 const REVIEW_AVAILABILITY = new Set(['blocked', 'login', 'unsupported', 'error'])
 
+function pageEvidence(result: RfpDecisionCandidate): string {
+  return result.pageValidation?.evidence.join(' ') || ''
+}
+
 function resultEvidenceText(result: RfpDecisionCandidate): string {
   return [
-    result.rfpIntelligence ? structuredRfpReviewText(result.rfpIntelligence) : undefined,
     result.title,
     result.description,
     result.url,
@@ -114,20 +109,19 @@ export function hasAffirmativeProcurementEvidence(text: string): boolean {
   return false
 }
 
-function decisionReasonKey(decision: OccuMedResultDecision): string {
+function decisionReasonKey(decision: CanonicalResultDecision): string {
   if (decision.decision === 'SHOW') return 'active-relevant-opportunity'
   if (!decision.procurementConfirmed) return 'not-a-procurement-opportunity'
   if (!decision.noHardDisqualifier) return 'hard-exclusion'
   if (FINAL_LIFECYCLE.has(decision.lifecycleStatus)) return `lifecycle-${decision.lifecycleStatus}`
   if (!decision.activeConfirmed) return 'open-status-not-confirmed'
-  if (!decision.capabilityConfirmed) return 'not-an-occumed-capability'
+  if (!decision.capabilityConfirmed) return 'canonical-service-evidence-incomplete'
   return decision.decision === 'REVIEW' ? 'needs-human-review' : 'rejected-by-evidence'
 }
 
 function decisionFields(
   result: RfpDecisionCandidate,
-  relevance: OccuMedRelevanceAssessment,
-  historicalMatches: ReturnType<typeof matchOccuMedHistoricalPatterns>,
+  relevance: CanonicalRelevanceAssessment,
   procurementConfirmed: boolean,
   activeConfirmed: boolean,
   capabilityConfirmed: boolean,
@@ -140,19 +134,18 @@ function decisionFields(
     capabilityConfirmed,
     noHardDisqualifier,
     lifecycleStatus,
-    profileVersion: OCCUMED_PROFILE_VERSION,
+    profileVersion: relevance.profileVersion,
     relevance,
-    historicalMatches,
+    profileSource: relevance.profileSource,
     opportunityFitScore: result.rfpIntelligence?.fitScore,
     opportunityFitBand: result.rfpIntelligence?.fitBand,
   }
 }
 
-export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDecision {
+export function evaluateCanonicalResult(rawResult: ScrapedResult): CanonicalResultDecision {
   const result = rawResult as RfpDecisionCandidate
   const text = resultEvidenceText(result)
-  const relevance = assessOccuMedRfpText(text)
-  const historicalMatches = matchOccuMedHistoricalPatterns(text)
+  const relevance = assessCanonicalRelevance({ title: result.title, description: [result.description, result.content, pageEvidence(result)].filter(Boolean).join(' ') })
   const intelligence = result.rfpIntelligence
   const page = result.pageValidation
   const lifecycleStatus = page?.lifecycle.status || intelligence?.status || 'unknown'
@@ -163,19 +156,11 @@ export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDe
     || (page?.finalUrl ? PROCUREMENT_DESTINATION.test(page.finalUrl) : false)
   )
   const activeConfirmed = ACTIVE_LIFECYCLE.has(lifecycleStatus)
-  const structuredCapabilityFit = Boolean(
-    intelligence
-    && ['strong', 'good'].includes(intelligence.fitBand)
-    && intelligence.matchedCapabilities.length > 0
-  )
-  const capabilityConfirmed = structuredCapabilityFit
-    || relevance.status === 'relevant'
-    || (relevance.status === 'uncertain' && relevance.matchedCapabilities.length > 0 && historicalMatches.length > 0)
+  const capabilityConfirmed = relevance.verdict === 'accept'
   const noHardDisqualifier = relevance.exclusions.length === 0
   const common = decisionFields(
     result,
     relevance,
-    historicalMatches,
     procurementConfirmed,
     activeConfirmed,
     capabilityConfirmed,
@@ -207,21 +192,17 @@ export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDe
     }
   }
 
-  // Hard exclusions are decisive even when a page incidentally contains medical
-  // or occupational-health words. An EHR/software or pharmaceutical-product
-  // procurement is not an Occu-Med opportunity merely because its package text
-  // mentions examinations, clinics, vaccines, or other medical vocabulary.
   if (!noHardDisqualifier) {
     return {
       decision: 'REJECT',
       reason: relevance.exclusions.length
-        ? `Outside Occu-Med's service model: ${relevance.exclusions.slice(0, 3).join(', ')}.`
+        ? `Outside canonical profile's service model: ${relevance.exclusions.slice(0, 3).join(', ')}.`
         : relevance.reason,
       ...common,
     }
   }
 
-  if (relevance.status === 'irrelevant' && !structuredCapabilityFit) {
+  if (relevance.verdict === 'reject') {
     return {
       decision: 'REJECT',
       reason: relevance.reason,
@@ -253,50 +234,37 @@ export function evaluateOccuMedResult(rawResult: ScrapedResult): OccuMedResultDe
     }
   }
 
-  if (!capabilityConfirmed || intelligence?.fitBand === 'review' || relevance.status === 'uncertain' || result.validation?.status === 'uncertain') {
-    return {
-      decision: 'REVIEW',
-      reason: intelligence?.fitBand === 'review'
-        ? `Structured fit score is ${intelligence.fitScore}/100 and requires pursuit review.`
-        : relevance.status === 'uncertain'
-          ? relevance.reason
-          : (result.validation?.reason || 'Occu-Med capability fit requires review.'),
-      ...common,
-    }
+  if (relevance.verdict === 'review' || result.validation?.status === 'uncertain') {
+    return { decision: 'REVIEW', reason: relevance.verdict === 'review' ? relevance.reason : result.validation!.reason, ...common }
   }
-
-  const reason = intelligence
-    ? `Confirmed active ${intelligence.opportunityType} with ${intelligence.fitBand} Occu-Med fit (${intelligence.fitScore}/100). ${relevance.reason}`
-    : relevance.reason
-  return {
-    decision: 'SHOW',
-    reason,
-    ...common,
-  }
+  return { decision: 'SHOW', reason: relevance.reason, ...common }
 }
 
 type DecisionResult = ScrapedResult & {
-  occuMedDecision: OccuMedResultDecision
+  canonicalDecision: CanonicalResultDecision
   rfpIntelligence?: RfpOpportunityIntelligence
 }
 
-function annotateResult(result: ScrapedResult, decision: OccuMedResultDecision, bucket: ResultBucket): DecisionResult {
-  const enriched = result as RfpDecisionCandidate
+function annotateResult(result: ScrapedResult, decision: CanonicalResultDecision, bucket: ResultBucket): DecisionResult {
   const status = decision.decision === 'SHOW'
     ? 'valid' as const
     : decision.decision === 'REVIEW'
       ? 'uncertain' as const
       : 'rejected' as const
-  const historicalConcepts = decision.historicalMatches.map(match => `${match.client}: ${match.program}`)
-  const structuredCapabilities = enriched.rfpIntelligence?.matchedCapabilities || []
-  const relevanceScore = Math.max(
-    decision.relevance.score,
-    (decision.opportunityFitScore || 0) / 100
-  )
+  const relevanceScore = decision.relevance.score / 100
 
   return {
     ...result,
     bucket,
+    ...((result as RfpDecisionCandidate).rfpIntelligence ? { rfpIntelligence: {
+      ...(result as RfpDecisionCandidate).rfpIntelligence!,
+      fitScore: decision.relevance.score,
+      fitBand: decision.relevance.verdict === 'accept' ? 'good' as const : decision.relevance.verdict === 'review' ? 'review' as const : 'poor' as const,
+      serviceSummary: decision.relevance.matchedCapabilities,
+      matchedCapabilities: decision.relevance.matchedCapabilities,
+      matchedBuyerSegments: decision.relevance.matchedBuyerSegments,
+      concerns: decision.relevance.exclusions,
+    } } : {}),
     validation: {
       status,
       relevance: relevanceScore,
@@ -304,16 +272,14 @@ function annotateResult(result: ScrapedResult, decision: OccuMedResultDecision, 
       matchedConcepts: Array.from(new Set([
         ...(result.validation?.matchedConcepts || []),
         ...decision.relevance.matchedCapabilities,
-        ...structuredCapabilities,
-        ...historicalConcepts,
       ])),
       mode: result.validation?.mode || 'local-rules',
     },
-    occuMedDecision: decision,
+    canonicalDecision: decision,
   }
 }
 
-function rejectionBucket(result: ScrapedResult, decision: OccuMedResultDecision): ResultBucket {
+function rejectionBucket(result: ScrapedResult, decision: CanonicalResultDecision): ResultBucket {
   if (result.pageValidation?.availability === 'dead' || decision.lifecycleStatus === 'dead') return 'dead'
   if (FINAL_LIFECYCLE.has(decision.lifecycleStatus) && !['dead', 'junk'].includes(decision.lifecycleStatus)) return 'expired'
   return 'rejected'
@@ -335,7 +301,7 @@ function rerank(results: ScrapedResult[]): ScrapedResult[] {
     .map((result, index) => ({ ...result, rank: index + 1 }))
 }
 
-export function applyOccuMedDecisionGate(outcome: DeepValidationOutcome): OccuMedGatedOutcome {
+export function applyCanonicalDecisionGate(outcome: DeepValidationOutcome): CanonicalGatedOutcome {
   const buckets: SearchResultBuckets = {
     valid: [],
     uncertain: [],
@@ -358,7 +324,7 @@ export function applyOccuMedDecisionGate(outcome: DeepValidationOutcome): OccuMe
   let reject = 0
 
   for (const result of sourceResults) {
-    const decision = evaluateOccuMedResult(result)
+    const decision = evaluateCanonicalResult(result)
     const reasonKey = decisionReasonKey(decision)
     reasons[reasonKey] = (reasons[reasonKey] || 0) + 1
 
@@ -396,15 +362,13 @@ export function applyOccuMedDecisionGate(outcome: DeepValidationOutcome): OccuMe
 
   return {
     ...outcome,
-    // The normal result list is deliberately SHOW-only. REVIEW and REJECT
-    // remain available in their evidence buckets but never appear as matches.
-    results: buckets.valid,
+    results: rerank([...buckets.valid, ...buckets.uncertain]),
     buckets,
     progress,
     diagnostics: {
       ...outcome.diagnostics,
-      occuMedDecisionGate: {
-        profileVersion: OCCUMED_PROFILE_VERSION,
+      canonicalDecisionGate: {
+        profileVersion: getRelevanceProfile().version,
         show,
         review,
         reject,
