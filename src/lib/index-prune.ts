@@ -1,13 +1,13 @@
 /**
  * Clean old non–Occu-Med rows from the local index.
  * Modes:
- *   prune  — delete entries that fail isOccuMedRelevant (keep the rest)
+ *   prune  — delete entries that fail the canonical Neon decision (keep the rest)
  *   clear  — delete all feed_entries (sources kept)
  *   wipe   — delete all entries + sources
  */
 
 import pg from 'pg'
-import { isOccuMedRelevant } from './occumed-index-filters'
+import { assessCanonicalRelevance, ensureRelevanceProfile, getRelevanceProfile } from './canonical-relevance'
 import { getIndexStats, type IndexStats } from './small-web'
 
 const { Pool: PgPool } = pg
@@ -40,6 +40,8 @@ export async function pruneNonOccuMedEntries(): Promise<{
   kept: number
   stats: IndexStats
 }> {
+  await ensureRelevanceProfile()
+  if (getRelevanceProfile().source === 'unavailable') throw new Error('Canonical relevance profile unavailable; pruning disabled')
   const client = getPool()
   const result = await client.query(
     `SELECT id, title, description, content FROM feed_entries`
@@ -50,7 +52,7 @@ export async function pruneNonOccuMedEntries(): Promise<{
   for (const row of result.rows) {
     const blob = `${row.title || ''} ${row.description || ''} ${row.content || ''}`
     const naics = extractNaics(blob)
-    if (isOccuMedRelevant({ title: row.title, description: blob, naics })) {
+    if (assessCanonicalRelevance({ title: row.title, description: blob, naics }).verdict !== 'reject') {
       kept += 1
       continue
     }

@@ -1,4 +1,4 @@
-import { buyerLanguageTermsForQuery } from './occumed-capability-matching'
+import { canonicalBuyerTerms } from './canonical-relevance'
 import type { SemanticIntentPlan } from './semantic-intent'
 
 const PROCUREMENT_WORDS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/gi
@@ -33,7 +33,7 @@ export function procurementSubject(query: string): string {
       .replace(/^pre-/, 'pre ')
   )
   if (cleaned.length < 5) {
-    return 'occupational health services'
+    return cleaned || normalizeSpace(query)
   }
   return cleaned
 }
@@ -57,7 +57,7 @@ export function buildProcurementRescueQueries(
   const currentYear = new Date().getUTCFullYear()
   const semanticAliases = semanticSubjects(intent)
     .filter(value => normalize(value) !== normalize(subject))
-  const buyerAliases = buyerLanguageTermsForQuery(subject, 10)
+  const buyerAliases = canonicalBuyerTerms(subject, 10)
   const discoveryTerms = Array.from(new Map(
     [...buyerAliases, ...semanticAliases]
       .filter(Boolean)
@@ -88,7 +88,6 @@ export function buildProcurementRescueQueries(
     `site:dla.mil ${subjectFamily} procurement`,
     `${subjectFamily} "defense logistics agency" solicitation`,
     `${subjectFamily} "department of defense" solicitation`,
-    `${subjectFamily} "military medical" contract`,
   ] : []
 
   const diversifiedFront = [
@@ -117,8 +116,6 @@ export function buildProcurementRescueQueries(
     `${quotedSubject} "vendor opportunities" ${currentYear}`,
     `${quotedSubject} "sources sought" ${currentYear}`,
     `${quotedSubject} "bid opportunities" ${currentYear}`,
-    `${quotedSubject} "healthcare procurement" ${currentYear}`,
-    `${quotedSubject} "medical services contract" ${currentYear}`,
   ]
 
   return Array.from(new Set([

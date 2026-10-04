@@ -3,11 +3,8 @@ import { databaseSchemaState } from '../../../lib/database-schema-lifecycle'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { headlessRecoveryCapabilities } from '../../../lib/headless-page-recovery'
 import { isKeenableConfigured, keenableKeyCount } from '../../../lib/keenable'
-import {
-  OCCUMED_HISTORICAL_PURSUIT_SEEDS,
-  OCCUMED_VERIFIED_AWARD_SEEDS,
-} from '../../../lib/occumed-historical-pursuits'
-import { OCCUMED_OFFICIAL_SOURCES, OCCUMED_PROFILE_VERSION } from '../../../lib/occumed-rfp-profile'
+import { ensureRelevanceProfile, getRelevanceProfile } from '../../../lib/canonical-relevance'
+import { isOccuMedAwareConfigured } from '../../../lib/canonical/occumedAware/db'
 import { pageValidationCacheStats } from '../../../lib/page-validation'
 import {
   exaKeyCount,
@@ -41,9 +38,6 @@ function healthPayload() {
   const headless = headlessRecoveryCapabilities()
   const schema = databaseSchemaState()
   const externalSemanticReviewEnabled = process.env.ENABLE_EXTERNAL_SMART_FILTER === 'true'
-  const verifiedPrimeAwardSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-prime-award').length
-  const verifiedSubawardSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-subcontract-award').length
-  const verifiedPerformanceSeedCount = OCCUMED_VERIFIED_AWARD_SEEDS.filter(seed => seed.evidenceType === 'verified-performance-record').length
   const liveSearchSources = {
     searxng: {
       configured: searxngConfigured,
@@ -101,17 +95,9 @@ function healthPayload() {
       structuredIntentPlanning: true,
       procurementOnly: true,
       sourceAgnosticRfpSearch: true,
-      occuMedRelevanceProfile: true,
-      occuMedRelevanceProfileVersion: OCCUMED_PROFILE_VERSION,
-      occuMedOfficialSources: OCCUMED_OFFICIAL_SOURCES,
-      historicalPursuitSeedCount: OCCUMED_HISTORICAL_PURSUIT_SEEDS.length,
-      verifiedHistoricalAwardSeedCount: OCCUMED_VERIFIED_AWARD_SEEDS.length,
-      verifiedPrimeAwardSeedCount,
-      verifiedHistoricalSubawardSeedCount: verifiedSubawardSeedCount,
-      verifiedHistoricalPerformanceSeedCount: verifiedPerformanceSeedCount,
-      historicalAwardsAreSimilarityEvidenceOnly: true,
+      canonicalRelevance: { configured: isOccuMedAwareConfigured(), source: getRelevanceProfile().source, version: getRelevanceProfile().version },
       mandatoryShowReviewRejectGate: true,
-      primaryResultsRequireShowDecision: true,
+      primaryResultsRequireShowDecision: false,
       expiredAndIrrelevantHiddenFromPrimaryResults: true,
       completeSolicitationPackageInspection: true,
       attachmentAndAmendmentInspection: true,
@@ -155,6 +141,7 @@ function healthPayload() {
 }
 
 export async function GET() {
+  await ensureRelevanceProfile()
   return Response.json(healthPayload(), {
     headers: { 'Cache-Control': 'no-store, max-age=0' },
   })

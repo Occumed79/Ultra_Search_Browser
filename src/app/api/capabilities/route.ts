@@ -58,7 +58,7 @@ export async function GET() {
     },
     deterministicIntent: {
       configured: true,
-      label: 'Occu-Med query planning and buyer-language expansion run without an external AI planner',
+      label: 'Query planning runs without an external AI planner; buyer terms come from the canonical profile',
     },
     serverSideSearchRetrieval: {
       configured: true,

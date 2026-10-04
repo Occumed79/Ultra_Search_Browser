@@ -1,3 +1,4 @@
+import { alignCanonicalIntent } from './canonical-relevance'
 import {
   cosineSimilarity,
   generateLocalEmbedding,
@@ -123,9 +124,10 @@ export function analyzeSearchIntent(
   lens: SearchLens = 'web',
   semanticIntent?: SemanticIntentPlan
 ): SearchIntent {
-  const semanticPlan = semanticIntent
+  const rawPlan = semanticIntent
     ? coerceSemanticIntentPlan(semanticIntent, query, lens)
     : buildDeterministicSemanticIntent(query, lens)
+  const semanticPlan = alignCanonicalIntent(query, rawPlan)
   const requiredConcepts = semanticPlan.conceptGroups
     .filter(group => group.required)
     .map(group => group.label)
@@ -355,7 +357,7 @@ export async function applySmartFilter(
     semanticByUrl.get(result.url)
   ))
 
-  const external = options.useExternalProviders === true
+  const external = options.useExternalProviders === true && process.env.ENABLE_EXTERNAL_SMART_FILTER === 'true'
     ? await runExternalSmartFilterPool(query, lens, intent, results, localDecisions)
     : {
         configured: Boolean(process.env.CEREBRAS_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim()),

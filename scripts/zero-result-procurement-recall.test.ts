@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { buildBrowserSearchPlan } from '../src/lib/browser-search-pipeline'
 import { applyIntentCandidateGate } from '../src/lib/search-intent-gate'
-import { applyOccuMedSmartFilter } from '../src/lib/occumed-smart-filter'
+import { applySmartFilter } from '../src/lib/smart-filter'
 import { buildDeterministicSemanticIntent } from '../src/lib/semantic-intent'
 import type { ScrapedResult } from '../src/types/search'
 
@@ -10,7 +10,7 @@ function sparseTargetedCandidate(query: string): ScrapedResult {
   return {
     title: 'Employee Occupational Health Medical Surveillance Examinations',
     url: 'https://supplier.example.com/public/event/7f5c2a91',
-    description: 'Employee medical surveillance examinations, audiometry, spirometry, respirator evaluations, and occupational health testing.',
+    description: `RFP for ${query}. Employee medical surveillance examinations, audiometry, spirometry, respirator evaluations, and occupational health testing.`,
     domain: 'supplier.example.com',
     source: 'Exa',
     rank: 1,
@@ -45,7 +45,7 @@ for (const query of [
     assert.deepEqual(gated.results.map(result => result.url), [candidate.url])
     assert.equal(gated.diagnostics.rejected, 0)
 
-    const filtered = await applyOccuMedSmartFilter(query, 'procurement', gated.results, 40, {
+    const filtered = await applySmartFilter(query, 'procurement', gated.results, 40, {
       useLocalTransformer: false,
       useExternalProviders: false,
       semanticIntent: intent,

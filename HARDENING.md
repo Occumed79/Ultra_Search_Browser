@@ -10,8 +10,8 @@ Ultra Search is an internal Occu-Med procurement intelligence application. Core 
 - Google/Bing/DuckDuckGo are therefore normal primary sources through SearXNG; the separate direct Google/DuckDuckGo/Bing path is fallback only.
 - Keenable, Tavily, and Exa support rotating four-key pools with full same-request auth/quota failover when all numbered keys are configured.
 - Search-provider API keys are optional; core operation cannot become dependent on them.
-- Search candidates must pass procurement shape and Occu-Med capability gates before deep validation.
-- `SHOW` requires affirmative procurement evidence, confirmed active/open lifecycle, confirmed Occu-Med capability fit, and no hard exclusion.
+- Search candidates pass generic query and procurement evidence checks before deep validation.
+- `SHOW` requires affirmative procurement evidence, confirmed active/open lifecycle, an accept decision from the loaded canonical profile.
 - Unreadable, blocked, login-gated, scanned, or client-rendered procurement evidence may become `REVIEW`; uncertainty must never become `SHOW`.
 - Expired, closed, cancelled, awarded, stale, dead, generic, and clearly irrelevant results never enter the primary list.
 - Optional database, feedback, semantic review, OCR, headless recovery, and individual live-source failures must not hold the evidence decision path hostage.
@@ -32,34 +32,14 @@ The production build is driven in Chromium at 1280×720, 1440×900, and 1920×10
 - horizontal overflow;
 - same-origin HTTP failures and browser runtime errors.
 
-### Occu-Med golden benchmark
+### Canonical relevance
 
-The locked benchmark contains positive, negative, review, and final-lifecycle cases across occupational medicine, medical surveillance, audiometry/hearing conservation, respirator clearance, drug/alcohol testing, employment examinations, fitness-for-duty, deployment readiness, provider-network, and OCONUS scenarios.
-
-The benchmark must maintain:
-
-- SHOW recall >= 90%;
-- zero non-SHOW leakage into SHOW;
-- REVIEW safety = 100%;
-- REJECT accuracy >= 90%.
-
-### Production canaries
-
-Production verification runs nine real retrieval→ingest capability searches:
-
-1. occupational health services
-2. medical surveillance services
-3. audiometry hearing conservation services
-4. respirator medical clearance services
-5. employee medical examinations
-6. drug and alcohol testing services
-7. deployment medical readiness examinations
-8. fitness for duty occupational medicine services
-9. OCONUS occupational health services
-
-The canary may accept a clean zero when all available source pools return no real procurement evidence. It must never manufacture or leak provider/clinic pages into the procurement list.
-
-The production transport allow-list must include every transport the live router can emit, including SearXNG-only, Keenable-only, multi-source, direct-rescue, and their combined variants.
+- Service categories, buyer terms, rules, discovery codes, and decision floors must come from OCCU_MED_AWARE.
+- No local capability matrix, historical seeds, domain exclusion list, or fit scoring may decide relevance.
+- The profile loader uses the same SQL, completeness checks, hashing and signed cache format as Insight-Hub.
+- A missing/incomplete profile holds candidates for REVIEW and disables relevance-based pruning.
+- Generic query evidence, page availability, lifecycle and dedupe remain independent checks.
+- Live canary queries are operator-configurable through `CANARY_QUERIES`.
 
 ### Evidence recovery
 

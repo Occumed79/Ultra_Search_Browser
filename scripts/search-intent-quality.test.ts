@@ -121,7 +121,7 @@ test('procurement rescue queries remove duplicate RFP language and preserve sema
   const queries = buildProcurementRescueQueries(query, intent)
   assert.ok(queries.length >= 4)
   assert.ok(queries.some(rescueQuery => /employment evaluation/i.test(rescueQuery)))
-  assert.ok(queries.some(rescueQuery => /pre-employment physical/i.test(rescueQuery)))
+  assert.ok(queries.every(rescueQuery => !/pre-employment physical/i.test(rescueQuery)))
   assert.ok(queries.some(query => /site:\.gov/i.test(query)))
   assert.ok(queries.every(query => !/RFP\s+RFP/i.test(query)))
 })
@@ -131,7 +131,7 @@ test('employment evaluation RFPs match common procurement wording', () => {
   const intent = buildDeterministicSemanticIntent(query)
   const candidates = [
     result(
-      'RFP 901634 – Pre-Employment Physical Exams and Occupational Health Services',
+      'RFP 901634 – Employment Evaluation Services',
       'https://example.gov/procurement/rfp-901634.doc',
       'The County requests proposals for pre-employment physical examinations and employee health services.'
     ),
@@ -144,10 +144,7 @@ test('employment evaluation RFPs match common procurement wording', () => {
   const gated = applyIntentCandidateGate(query, 'procurement', candidates, intent)
 
   assert.deepEqual(gated.results.map(item => item.url), [candidates[0].url])
-  assert.ok(intent.conceptGroups.some(group =>
-    group.id === 'employment-medical-evaluation'
-    && group.terms.some(term => /pre-employment physical/i.test(term))
-  ))
+  assert.ok(intent.conceptGroups.every(group => group.id !== 'employment-medical-evaluation'))
 })
 
 test('zero verified results produce zero confidence and an honest summary', () => {

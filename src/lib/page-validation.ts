@@ -207,7 +207,7 @@ function evidenceExcerpts(text: string, query: string, lifecycle: ResultStatusAs
   if (!normalized) return []
   const terms = Array.from(new Set([
     ...query.toLowerCase().split(/[^a-z0-9]+/).filter(term => term.length >= 4),
-    'deadline', 'due date', 'scope of work', 'medical', 'occupational', 'solicitation',
+    'deadline', 'due date', 'scope of work', 'solicitation',
   ]))
   const lower = normalized.toLowerCase()
   const excerpts: string[] = []

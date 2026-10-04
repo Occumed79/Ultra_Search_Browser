@@ -1,3 +1,4 @@
+import { getRelevanceProfile } from '../../canonical-relevance'
 // Simple rule-based pricing extraction for pricing vertical
 
 export interface PricingFinding {
@@ -12,11 +13,6 @@ export interface PricingFinding {
   evidence_text?: string
   confidence?: number
 }
-
-// Common occupational health service terms
-const SERVICE_TERMS = [
-  'dot physical', 'physical exam', 'respirator physical', 'audiogram', 'hearing test', 'spirometry', 'pulmonary function test', 'pft', 'fit test', 'drug screen', 'urine drug screen', 'breath alcohol', 'tb test', 'x-ray', 'chest x-ray', 'ekg', 'immunization', 'vaccine', 'venipuncture', 'lab draw'
-]
 
 const moneyRegex = /\$\s?([0-9,]+(?:\.[0-9]{1,2})?)/g
 const numericMoneyRegex = /([0-9]{2,6}(?:\.[0-9]{1,2})?)(?:\s?(USD|usd|dollars))?/g
@@ -62,7 +58,7 @@ export function extractPricingFindings(text: string, sourceUrl: string, title?: 
     // Find nearest service term in evidence
     const lower = evidence.toLowerCase()
     let service: string | undefined
-    for (const term of SERVICE_TERMS) {
+    for (const term of getRelevanceProfile().allServiceTerms) {
       if (lower.includes(term)) {
         service = term
         break

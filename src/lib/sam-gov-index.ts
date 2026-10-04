@@ -1,5 +1,5 @@
 /**
- * SAM.gov Get Opportunities Public API → Occu-Med–relevant index entries
+ * SAM.gov Get Opportunities Public API → profile-targeted index entries
  * https://open.gsa.gov/api/get-opportunities-public-api/
  *
  * Env: SAM_API_KEY or SAM_GOV_API_KEY
@@ -9,11 +9,7 @@
 import crypto from 'crypto'
 import type { FeedEntry } from './small-web'
 import { addFeedSource, storeFeedEntries, updateFeedLastFetched } from './small-web'
-import {
-  OCCUMED_NAICS,
-  OCCUMED_SAM_TITLE_QUERIES,
-  isOccuMedRelevant,
-} from './occumed-index-filters'
+import { assessCanonicalRelevance, ensureRelevanceProfile, getRelevanceProfile } from './canonical-relevance'
 
 const SAM_SEARCH = 'https://api.sam.gov/opportunities/v2/search'
 
@@ -107,7 +103,7 @@ function mapOpportunity(row: Record<string, unknown>, feedUrl: string, feedTitle
     .join(' — ')
     .slice(0, 2000)
 
-  if (!isOccuMedRelevant({ title, description, naics })) return null
+  if (assessCanonicalRelevance({ title, description, naics }).verdict === 'reject') return null
 
   return {
     id: entryId(noticeId || solNum || url, solNum, title),
@@ -119,7 +115,7 @@ function mapOpportunity(row: Record<string, unknown>, feedUrl: string, feedTitle
     publishedAt,
     feedUrl,
     feedTitle,
-    category: 'healthcare_procurement',
+    category: 'procurement',
   }
 }
 
@@ -128,14 +124,14 @@ interface SamQuery {
   ncode?: string
 }
 
-function buildOccuMedQueries(maxQueries: number): SamQuery[] {
+function buildProfileQueries(maxQueries: number): SamQuery[] {
   const queries: SamQuery[] = []
   // Prefer NAICS first (high precision), then title keywords
-  for (const ncode of OCCUMED_NAICS) {
+  for (const ncode of getRelevanceProfile().discoveryCodes.filter(code => code.system === 'NAICS 2022' && code.effect.startsWith('include')).map(code => code.code)) {
     if (queries.length >= maxQueries) break
     queries.push({ ncode })
   }
-  for (const title of OCCUMED_SAM_TITLE_QUERIES) {
+  for (const title of getRelevanceProfile().categories.flatMap(category => category.explicit)) {
     if (queries.length >= maxQueries) break
     queries.push({ title })
   }
@@ -193,7 +189,7 @@ async function fetchSamPage(
 }
 
 /**
- * Fetch Occu-Med–relevant SAM opportunities (multiple targeted API queries).
+ * Fetch profile-targeted SAM opportunities (multiple targeted API queries).
  */
 export async function fetchSamOpportunities(options: SamIngestOptions = {}): Promise<FeedEntry[]> {
   const apiKey = getApiKey()
@@ -211,10 +207,11 @@ export async function fetchSamOpportunities(options: SamIngestOptions = {}): Pro
   const postedTo = formatMmDdYyyy(to)
 
   const sourceUrl = 'https://api.sam.gov/opportunities/v2/search'
-  const feedTitle = 'SAM.gov — Occu-Med relevant'
+  const feedTitle = 'SAM.gov — profile-targeted'
   const byId = new Map<string, FeedEntry>()
 
-  const queries = buildOccuMedQueries(maxQueries)
+  await ensureRelevanceProfile()
+  const queries = buildProfileQueries(maxQueries)
   for (const q of queries) {
     try {
       const rows = await fetchSamPage(apiKey, postedFrom, postedTo, limit, q)
@@ -241,20 +238,20 @@ export async function ingestSamGov(
   }
 
   const sourceUrl = 'https://api.sam.gov/opportunities/v2/search'
-  const feedTitle = 'SAM.gov — Occu-Med relevant'
+  const feedTitle = 'SAM.gov — profile-targeted'
 
   try {
     await addFeedSource({
       url: sourceUrl,
       title: feedTitle,
-      category: 'healthcare_procurement',
+      category: 'procurement',
       active: true,
       lastFetched: null,
     })
 
     const entries = await fetchSamOpportunities(options)
     if (!entries.length) {
-      return { attempted: true, stored: 0, error: 'no Occu-Med–relevant opportunities in window' }
+      return { attempted: true, stored: 0, error: 'no profile-targeted opportunities in window' }
     }
     const stored = await storeFeedEntries(entries)
     await updateFeedLastFetched(sourceUrl)

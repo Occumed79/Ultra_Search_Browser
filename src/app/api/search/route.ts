@@ -1,3 +1,4 @@
+import { ensureRelevanceProfile } from '../../../lib/canonical-relevance'
 import { NextRequest, NextResponse } from 'next/server'
 import {
   buildBrowserSearchPlan,
@@ -397,7 +398,7 @@ function transportFor(
 }
 
 function providerDefinitions(): ProviderDefinition[] {
-  const purpose = 'Find current, real procurement opportunities relevant to Occu-Med occupational health, medical readiness, employee examinations, surveillance, testing, vaccination, and related services.'
+  const purpose = 'Find current, real procurement opportunities matching the supplied search query.'
   return [
     {
       name: 'TinyFish',
@@ -464,6 +465,7 @@ export async function POST(request: NextRequest) {
     )
     recordSearchFlightStage(traceId, 'retrieval.start', { query })
 
+    await ensureRelevanceProfile()
     const plan = suppliedPlan || buildBrowserSearchPlan(query, 8)
     const variants = plan.searches.slice(0, 8)
     const diagnostics: RetrievalDiagnostic[] = []

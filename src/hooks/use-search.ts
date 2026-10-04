@@ -434,7 +434,7 @@ export function useSearch(): UseSearchReturn {
         detail?: string
       }) | null
       if (!planResponse.ok || !searchPlan?.query || !Array.isArray(searchPlan.searches)) {
-        throw new Error(searchPlan?.detail || searchPlan?.error || 'Ultra Search could not build the Occu-Med search plan.')
+        throw new Error(searchPlan?.detail || searchPlan?.error || 'Ultra Search could not build the search plan.')
       }
       if (searchSequence.current !== sequence) return
 

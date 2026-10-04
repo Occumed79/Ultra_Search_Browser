@@ -66,7 +66,7 @@ function taskEvidence(
   normalizedText: string
 ): { matched: boolean; reason: string } {
   const url = result.url.toLowerCase()
-  const providerEvidence = /\b(?:clinic|medical center|health center|hospital|physician|doctor|practice|occupational health|occupational medicine|employee health|services offered|appointments?)\b/i.test(normalizedText)
+  const providerEvidence = /\b(?:clinic|medical center|health center|hospital|physician|doctor|practice|services offered|appointments?)\b/i.test(normalizedText)
   const procurementEvidence = /\b(?:rfp|rfq|rft|ifb|solicitation|tender|invitation to bid|request for proposals?|request for quotations?|procurement opportunity|contract opportunity|responses due|bid due)\b/i.test(normalizedText)
     || /(?:sam\.gov|ionwave\.net|bonfirehub\.com|planetbids\.com|bidnetdirect\.com|publicpurchase\.com|opengov\.com)/i.test(url)
   const pricingEvidence = /(?:\$|€|£|¥)\s?\d/i.test(textForResult(result))
@@ -106,12 +106,6 @@ function collisionReason(
     plan.intentKind !== 'explain'
     && /\b(?:definition|dictionary|meaning|encyclopedia)\b/i.test(normalizedText)
   ) return 'generic definition instead of the requested outcome'
-
-  if (
-    plan.intentKind === 'find-provider'
-    && /\b(?:jobs?|careers?|salary|occupational therapy|therapist)\b/i.test(normalizedText)
-    && !/\b(?:occupational health|occupational medicine|employee health)\b/i.test(normalizedText)
-  ) return 'job or occupational-therapy collision'
 
   const rejectsDirectories = plan.exclusions.some(value => /\b(?:directory|directories|aggregator|aggregators)\b/i.test(value))
     || plan.sourcePreferences.some(value => /official provider pages/i.test(value))

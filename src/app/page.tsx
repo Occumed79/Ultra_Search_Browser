@@ -65,7 +65,7 @@ type ResultWithId = ScrapedResult & {
   id?: string
   rfpIntelligence?: RfpOpportunityIntelligence
   packageAnalysis?: SolicitationPackageAnalysis
-  occuMedDecision?: {
+  canonicalDecision?: {
     decision: 'SHOW' | 'REVIEW' | 'REJECT'
     reason: string
   }
@@ -89,9 +89,9 @@ function daysUntil(value?: string): number | undefined {
   return Math.ceil((parsed.getTime() - Date.now()) / 86_400_000)
 }
 
-function fitStyle(score?: number): string {
-  if ((score || 0) >= 86) return 'border-emerald-300/25 bg-emerald-300/[0.09] text-emerald-100/80'
-  if ((score || 0) >= 68) return 'border-teal-300/20 bg-teal-300/[0.07] text-teal-100/75'
+function fitStyle(band?: RfpOpportunityIntelligence['fitBand']): string {
+  if (band === 'strong') return 'border-emerald-300/25 bg-emerald-300/[0.09] text-emerald-100/80'
+  if (band === 'good') return 'border-teal-300/20 bg-teal-300/[0.07] text-teal-100/75'
   return 'border-amber-300/20 bg-amber-300/[0.06] text-amber-100/70'
 }
 
@@ -173,7 +173,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
             )}
             <span className={'rounded-full border px-2 py-0.5 text-[10px] ' + BUCKET_STYLES[bucket]}>{BUCKET_LABELS[bucket]}</span>
             {intelligence && (
-              <span className={'rounded-full border px-2 py-0.5 text-[10px] ' + fitStyle(intelligence.fitScore)}>
+              <span className={'rounded-full border px-2 py-0.5 text-[10px] ' + fitStyle(intelligence.fitBand)}>
                 {intelligence.fitBand} fit · {intelligence.fitScore}%
               </span>
             )}

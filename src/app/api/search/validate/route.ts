@@ -19,7 +19,7 @@ const VALID_LENSES = new Set<SearchLens>([
   'web', 'pdf', 'government', 'procurement', 'pricing', 'provider',
   'technical', 'news', 'legal', 'medical', 'academic', 'financial',
 ])
-const PRODUCTION_SMOKE_QUERY = 'Occupational Health Services RFP production validation'
+const PRODUCTION_SMOKE_QUERY = 'Contract Services RFP production validation'
 const VERIFIED_FEEDBACK_BUDGET_MS = 2_000
 const VERIFIED_PERSISTENCE_BUDGET_MS = 3_500
 
@@ -36,7 +36,7 @@ interface ValidationRequest {
 type PersistableRfpResult = ScrapedResult & {
   rfpIntelligence?: unknown
   packageAnalysis?: unknown
-  occuMedDecision?: unknown
+  canonicalDecision?: unknown
 }
 
 function sseEvent(event: string, value: unknown): string {
@@ -94,7 +94,7 @@ async function persistVerifiedResults(results: ScrapedResult[], lens: SearchLens
         entity: result.entity,
         rfpIntelligence: result.rfpIntelligence,
         packageAnalysis: result.packageAnalysis,
-        occuMedDecision: result.occuMedDecision,
+        canonicalDecision: result.canonicalDecision,
       },
     })
   }))
@@ -122,7 +122,7 @@ function isProductionSmokeFixture(result: ScrapedResult): boolean {
     const url = new URL(result.url)
     return result.source === 'production-smoke'
       && url.pathname === '/search-validation-evidence.txt'
-      && /^Synthetic Occupational Health Services RFP\b/i.test(result.title)
+      && /^Synthetic Contract Services RFP\b/i.test(result.title)
   } catch {
     return false
   }
@@ -189,11 +189,9 @@ export async function POST(request: NextRequest) {
           bucketCounts: Object.fromEntries(Object.entries(rawOutcome.buckets).map(([key, values]) => [key, values.length])),
         })
 
-        // No SHOW/REVIEW/REJECT judge gate. Deep validation enriches and annotates
-        // results, while Occu-Med relevance remains a ranking/honing signal rather
-        // than a second approval layer that can hide otherwise useful matches.
+        // Deep validation applies the canonical Neon decision after generic evidence/lifecycle checks.
         const outcome = rawOutcome
-        recordSearchFlightStage(traceId, 'validation.annotation-complete', {
+        recordSearchFlightStage(traceId, 'validation.decision-gate', {
           progress: outcome.progress,
           primaryResultCount: outcome.results.length,
           bucketCounts: Object.fromEntries(Object.entries(outcome.buckets).map(([key, values]) => [key, values.length])),
@@ -271,7 +269,7 @@ export async function POST(request: NextRequest) {
           results: outcome.results,
           summary: verifiedResults.length > 0
             ? verifiedSearchSummary(query, lens, verifiedResults)
-            : 'No matching procurement opportunities were returned after Occu-Med relevance ranking and evidence checks.',
+            : 'No matching procurement opportunities were returned after canonical relevance and evidence checks.',
           confidence: verifiedSearchConfidence(verifiedResults),
           lens,
           requestedLens,

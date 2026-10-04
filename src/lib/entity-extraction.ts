@@ -1,3 +1,5 @@
+import { getRelevanceProfile } from './canonical-relevance'
+import { matchEvidence } from './canonical/search/profileRules'
 import type { ProcurementIntelligence, ProviderIntelligence, PricingIntelligence, LegalIntelligence, MedicalIntelligence, AcademicIntelligence, FinancialIntelligence } from '../types/search'
 
 // ─── ENTITY EXTRACTION ───
@@ -190,7 +192,7 @@ export function extractProviderIntelligence(
 
   // Extract provider name with more patterns
   const namePatterns = [
-    /([A-Z][a-zA-Z\s]+(?:Clinic|Center|Health|Medicine|Medical|Occupational|Wellness|Care))/i,
+    /([A-Z][a-zA-Z\s]+(?:Clinic|Center|Health|Medicine|Medical|Wellness|Care))/i,
     /(?:provider|clinic|facility|practice|hospital)[:\s]+([A-Z][a-zA-Z\s]+)/i,
     /([A-Z][a-zA-Z\s]+(?:Associates|Group|Partners))/i,
   ]
@@ -249,26 +251,7 @@ export function extractProviderIntelligence(
     }
   }
 
-  // Extract services offered with more patterns
-  const servicePatterns = [
-    { pattern: /occupational health|occupational medicine|occ health/i, service: 'occupational health' },
-    { pattern: /dot physical|cdl physical|department of transportation/i, service: 'DOT physical' },
-    { pattern: /drug test|drug screening|drug screen|substance abuse/i, service: 'drug testing' },
-    { pattern: /pft|spirometry|pulmonary function|lung function/i, service: 'PFT' },
-    { pattern: /audiometry|hearing test|hearing screening/i, service: 'audiometry' },
-    { pattern: /respirator|fit test|respiratory protection/i, service: 'respirator fit test' },
-    { pattern: /physical exam|pre-employment|pre employment/i, service: 'physical exams' },
-    { pattern: /vaccination|immunization|flu shot|tb test/i, service: 'vaccinations' },
-    { pattern: /x-ray|radiology|imaging/i, service: 'x-ray services' },
-    { pattern: /lab|laboratory|blood work/i, service: 'laboratory services' },
-  ]
-  
-  const services: string[] = []
-  for (const { pattern, service } of servicePatterns) {
-    if (pattern.test(lowerText)) {
-      services.push(service)
-    }
-  }
+  const services = getRelevanceProfile().categories.filter(category => matchEvidence(text, [...category.explicit, ...category.component, ...category.regulatory]).length > 0).map(category => category.label)
 
   // Extract credentials with more patterns
   const credentialPatterns = [
@@ -288,14 +271,14 @@ export function extractProviderIntelligence(
 
   // Determine payment acceptance
   const acceptsSelfPay = /self-pay|cash pay|out-of-pocket|private pay/i.test(lowerText)
-  const acceptsEmployer = /employer|work comp|workers compensation|workers' comp/i.test(lowerText)
+  const acceptsEmployer = /employer/i.test(lowerText)
   const acceptsInsurance = /insurance|in-network|blue cross|aetna|cigna|united/i.test(lowerText)
 
   // Calculate source confidence
   const signals = [
     address ? 'physical address' : '',
     providerPhone ? 'contact information' : '',
-    services.length > 0 ? 'occupational services' : '',
+    services.length > 0 ? 'service evidence' : '',
     credentials.length > 0 ? 'credentials' : '',
     acceptsInsurance ? 'accepts insurance' : '',
   ].filter(Boolean)
@@ -344,30 +327,8 @@ export function extractPricingIntelligence(
     }
   }
 
-  // Determine service category with more patterns
-  const servicePatterns = [
-    { pattern: /pft|spirometry|pulmonary function|lung function/i, category: 'PFT' as const },
-    { pattern: /dot physical|cdl physical|department of transportation/i, category: 'DOT' as const },
-    { pattern: /physical exam|pre-employment|pre employment/i, category: 'physical' as const },
-    { pattern: /drug test|drug screening|drug screen|substance abuse/i, category: 'drug test' as const },
-    { pattern: /audiometry|hearing test|hearing screening/i, category: 'audiometry' as const },
-    { pattern: /respirator|fit test|respiratory protection/i, category: 'respirator' as const },
-    { pattern: /vaccination|immunization|flu shot/i, category: 'vaccination' as const },
-    { pattern: /x-ray|radiology|imaging/i, category: 'x-ray' as const },
-    { pattern: /lab|laboratory|blood work/i, category: 'lab' as const },
-  ]
-  
-  let serviceCategory: PricingIntelligence['service_category'] = 'unknown'
-  for (const { pattern, category } of servicePatterns) {
-    if (pattern.test(lowerText)) {
-      serviceCategory = category
-      break
-    }
-  }
-
-  const service = serviceCategory !== 'unknown' 
-    ? `${serviceCategory} testing` 
-    : 'occupational health services'
+  const serviceCategory = getRelevanceProfile().categories.find(category => matchEvidence(text, [...category.explicit, ...category.component]).length > 0)?.label
+  const service = serviceCategory || title || 'Service'
 
   // Extract cash price with more patterns
   const cashPatterns = [
@@ -386,7 +347,7 @@ export function extractPricingIntelligence(
 
   // Extract employer price with more patterns
   const employerPatterns = [
-    /(?:employer|work comp|workers comp|workers' comp)[:\s]*\$?([\d,]+(?:\.\d{2})?)/i,
+    /(?:employer)[:\s]*\$?([\d,]+(?:\.\d{2})?)/i,
     /\$([\d,]+(?:\.\d{2})?)\s*(?:employer|work comp)/i,
   ]
   
@@ -419,7 +380,7 @@ export function extractPricingIntelligence(
   if (/self-pay|cash|out-of-pocket|private pay/i.test(lowerText)) {
     paymentTypes.push('self-pay', 'cash')
   }
-  if (/employer|work comp|workers compensation|workers' comp/i.test(lowerText)) {
+  if (/employer/i.test(lowerText)) {
     paymentTypes.push('employer', 'work comp')
   }
   if (/insurance|in-network|blue cross|aetna|cigna|united/i.test(lowerText)) {
@@ -446,7 +407,7 @@ export function extractPricingIntelligence(
     document_url: url,
     matched_signals: signals,
     payment_types: paymentTypes.length > 0 ? paymentTypes : undefined,
-    service_category: serviceCategory !== 'unknown' ? serviceCategory : undefined,
+    service_category: serviceCategory,
   }
 }
 

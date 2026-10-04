@@ -1,7 +1,7 @@
 import { chromium } from 'playwright'
 
 const baseUrl = process.env.E2E_APP_URL || 'http://127.0.0.1:3000'
-const longTitle = `City of Example — Occupational Health, Medical Surveillance, Audiometry, Respirator Clearance, Drug Testing, Deployment Readiness, and Employee Medical Examination Services ${'scope '.repeat(24)}`.trim()
+const longTitle = `City of Example — Contract Services and Related Reporting, Coordination, Delivery, and Documentation Requirements ${'scope '.repeat(24)}`.trim()
 
 function isoDateInDays(days) {
   const date = new Date()
@@ -12,9 +12,9 @@ function isoDateInDays(days) {
 function candidate(index, query) {
   const id = String(index + 1).padStart(3, '0')
   return {
-    title: index === 0 ? longTitle : `Occupational Health Services Solicitation ${id} — ${query}`,
+    title: index === 0 ? longTitle : `Contract Services Solicitation ${id} — ${query}`,
     url: `https://procurement.example.gov/solicitations/${id}?source=ultra-search&description=${encodeURIComponent('very-long-procurement-url-segment-'.repeat(4))}`,
-    description: 'Request for proposals for occupational health services including employee medical examinations, audiometry, respirator clearance, medical surveillance, and related workforce health services.',
+    description: 'Request for proposals for contract services and related program support.',
     source: index % 2 === 0 ? 'SearXNG · brave' : 'SearXNG · bing',
     score: 100 - index,
     rank: index + 1,
@@ -35,11 +35,11 @@ function validated(result, index) {
     validation: {
       status: approved ? 'valid' : 'uncertain',
       relevance: approved ? 0.96 : 0.7,
-      reason: approved ? 'Verified open Occu-Med-fit procurement opportunity.' : 'Procurement shell requires manual evidence review.',
-      matchedConcepts: ['occupational health services'],
+      reason: approved ? 'Verified open Ultra Search-fit procurement opportunity.' : 'Procurement shell requires manual evidence review.',
+      matchedConcepts: ['contract services'],
       mode: 'local-rules',
     },
-    occuMedDecision: { decision, reason: approved ? 'Open and relevant.' : 'Manual evidence review required.' },
+    canonicalDecision: { decision, reason: approved ? 'Open and relevant.' : 'Manual evidence review required.' },
     pageValidation: {
       checkedAt: new Date().toISOString(),
       requestedUrl: result.url,
@@ -48,8 +48,8 @@ function validated(result, index) {
       contentType: 'text/html',
       availability: approved ? 'reachable' : 'unsupported',
       reason: approved ? 'Substantive procurement package verified.' : 'Client-rendered procurement portal requires review.',
-      evidence: approved ? ['Scope of work includes occupational health services and employee medical examinations.', 'The proposal deadline is confirmed and still open.'] : [],
-      extractedText: approved ? 'Request for proposals occupational health services with an active future proposal deadline.' : '',
+      evidence: approved ? ['Scope of work includes contract services and related reporting.', 'The proposal deadline is confirmed and still open.'] : [],
+      extractedText: approved ? 'Request for proposals contract services with an active future proposal deadline.' : '',
       extractedTextLength: approved ? 88 : 0,
       cached: false,
       lifecycle: {
@@ -67,10 +67,10 @@ function validated(result, index) {
       opportunityType: 'RFP',
       dueDate: dueSoon ? isoDateInDays(14) : isoDateInDays(75),
       placeOfPerformance: 'United States',
-      serviceSummary: ['Occupational health services', 'Employee medical examinations', 'Audiometry'],
+      serviceSummary: ['Contract services', 'Related program support'],
       fitScore: strongFit ? 94 : 76,
       fitBand: strongFit ? 'strong' : 'good',
-      matchedCapabilities: ['occupational health', 'audiometry'],
+      matchedCapabilities: ['Contract services'],
       concerns: [],
       deliveryModel: 'provider-network',
       documentUrls: [result.url],
@@ -179,7 +179,7 @@ async function installRoutes(page) {
     }
     const body = [
       `event: progress\ndata: ${JSON.stringify({ progress: { ...progress, phase: 'opening-pages', checked: 4 } })}\n\n`,
-      `event: complete\ndata: ${JSON.stringify({ results: validatedResults, buckets: { valid, uncertain, expired: [], dead: [], rejected: [], duplicate: [] }, progress, summary: 'Verified Occu-Med opportunities.', confidence: 94, lens: 'procurement' })}\n\n`,
+      `event: complete\ndata: ${JSON.stringify({ results: validatedResults, buckets: { valid, uncertain, expired: [], dead: [], rejected: [], duplicate: [] }, progress, summary: 'Verified Ultra Search opportunities.', confidence: 94, lens: 'procurement' })}\n\n`,
     ].join('')
     await route.fulfill({ status: 200, contentType: 'text/event-stream', body })
   })
@@ -239,7 +239,7 @@ async function runViewport(browser, width, height) {
   await page.goto(baseUrl, { waitUntil: 'networkidle' })
   const input = page.getByPlaceholder('Describe the RFPs you need, location, services, or buyer...')
   const findButton = page.getByRole('button', { name: 'Find RFPs' })
-  await input.fill('slow first occupational health services')
+  await input.fill('slow first contract services')
   await findButton.click()
   await input.fill('employee medical examinations')
   await page.getByRole('button', { name: /Find RFPs|Searching/ }).click()

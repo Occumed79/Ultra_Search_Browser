@@ -23,7 +23,7 @@ function result(overrides: Partial<ScrapedResult>): ScrapedResult {
 test('intent analysis protects meaning-bearing groups instead of filler words', () => {
   const intent = analyzeSearchIntent('occupational health services Fresno')
 
-  assert.deepEqual(intent.requiredConcepts, ['occupational health', 'fresno'])
+  assert.deepEqual(intent.requiredConcepts, ['occupational', 'health', 'fresno'])
   assert.equal(intent.minimumRequiredMatches, 2)
   assert.ok(intent.exactPhrases.includes('occupational health'))
   assert.ok(intent.exactPhrases.includes('health services'))
@@ -33,14 +33,14 @@ test('a whole-query occupational health match is valid', () => {
   const query = 'occupational health services Fresno'
   const intent = analyzeSearchIntent(query)
   const decision = classifyLocalCandidate(query, 'provider', intent, result({
-    title: 'Occupational Health Services in Fresno',
-    description: 'Employer physicals, testing, and occupational medicine services in Fresno, California.',
+    title: 'Occupational Health Services Clinic in Fresno',
+    description: 'Clinic providing employer physicals, testing, and occupational medicine services in Fresno, California.',
     url: 'https://clinic.example/fresno-occupational-health',
     domain: 'clinic.example',
   }))
 
   assert.equal(decision.status, 'valid')
-  assert.deepEqual(decision.matchedConcepts, ['occupational health', 'fresno'])
+  assert.deepEqual(decision.matchedConcepts, ['occupational', 'health', 'fresno'])
 })
 
 test('a one-word occupational match is rejected', () => {
@@ -54,10 +54,10 @@ test('a one-word occupational match is rejected', () => {
   }))
 
   assert.equal(decision.status, 'rejected')
-  assert.deepEqual(decision.matchedConcepts, [])
+  assert.deepEqual(decision.matchedConcepts, ['occupational'])
 })
 
-test('occupational medicine clinic language satisfies occupational health services intent', () => {
+test('undeclared aliases do not become a local relevance authority', () => {
   const query = 'occupational health services'
   const intent = analyzeSearchIntent(query)
   const decision = classifyLocalCandidate(query, 'web', intent, result({
@@ -67,8 +67,8 @@ test('occupational medicine clinic language satisfies occupational health servic
     domain: 'clinic.example',
   }))
 
-  assert.equal(decision.status, 'valid')
-  assert.deepEqual(decision.matchedConcepts, ['occupational health'])
+  assert.equal(decision.status, 'uncertain')
+  assert.deepEqual(decision.matchedConcepts, ['occupational'])
 })
 
 test('technical retailer collisions do not pass the smart filter', () => {
@@ -90,8 +90,8 @@ test('smart filter returns valid matches and removes weak candidates', async () 
     'provider',
     [
       result({
-        title: 'Occupational Health Services in Fresno',
-        description: 'Occupational medicine and employer health services in Fresno.',
+        title: 'Occupational Health Services Clinic in Fresno',
+        description: 'Clinic providing occupational medicine and employer health services in Fresno.',
         url: 'https://clinic.example/fresno',
         domain: 'clinic.example',
         score: 70,

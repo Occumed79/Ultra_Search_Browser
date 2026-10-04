@@ -9,7 +9,7 @@ The application remains usable without paid search credentials: private SearXNG 
 ```text
 User request
     ↓
-Deterministic Occu-Med intent + buyer-language planner
+Generic query planner + Neon buyer-term suggestions
     ↓
 Parallel live retrieval
     ├─ Private SearXNG primary metasearch
@@ -26,7 +26,7 @@ Direct Google / DuckDuckGo / Bing fallback
     ↓
 Merged raw candidates
     ↓
-Intent gate + hard exclusions + Occu-Med relevance filter
+Generic query evidence gate; canonical Neon relevance after page validation
     ↓
 Deep destination-page / document / lifecycle validation
     ↓
@@ -82,13 +82,13 @@ LangSearch provides another independent web-search path and feeds its snippets i
 ## What Ultra Search does
 
 - Models procurement intent without requiring an external AI planner.
-- Expands searches using the Occu-Med capability profile and buyer-language vocabulary.
+- Expands queries using generic procurement mechanics and buyer terms loaded from Neon.
 - Builds broad, official-source, direct-document, procurement-portal, freshness, and capability-specific query variants.
 - Fans those variants across independent live search sources.
 - Measures retrieval coverage using canonical distinct destinations and query diversity rather than raw result count.
 - Merges and deduplicates cross-query / cross-engine / cross-provider candidates.
 - Rejects generic pages, jobs, definitions, unrelated patient care, marketing noise, expired notices, and other known junk patterns.
-- Applies the Occu-Med relevance profile, hard exclusions, relevant/irrelevant examples, historical pursuit patterns, and feedback learning.
+- Loads the shared OCCU_MED_AWARE profile; no local capability vocabulary, historical seeds, exclusions, or fit thresholds. Generic feedback changes order only.
 - Opens promising destination pages and supported documents for evidence review.
 - Detects solicitation identity, lifecycle, due dates, amendments, attachments, and duplicate opportunities.
 - Sends scanned/image-only procurement documents and thin client-rendered procurement portals to REVIEW instead of falsely calling them junk.
@@ -99,7 +99,7 @@ LangSearch provides another independent web-search path and feeds its snippets i
 
 ### 1. Plan
 
-`POST /api/search/plan` creates the deterministic Occu-Med query plan.
+`POST /api/search/plan` creates the generic procurement query plan.
 
 ### 2. Retrieve
 
@@ -114,8 +114,8 @@ Search-provider API keys are optional accelerators, not a requirement for the ap
 - URL cleanup and tracking-parameter removal
 - cross-query / cross-engine / cross-provider deduplication
 - procurement intent gate
-- Occu-Med smart filter
-- hard exclusions
+- generic query evidence filter
+- exclusions loaded from the canonical profile
 - bounded feedback reranking
 
 Candidate confidence intentionally remains `0` until destination evidence is verified.
@@ -163,6 +163,8 @@ Open `http://localhost:3000`. No browser extension is required.
 | `TAVILY_API_KEY` … `_4` | No | Tavily renewable live-search pool |
 | `EXA_SEARCH_API_KEY` … `_4` | No | Exa renewable live-search pool |
 | `LANGSEARCH_API_KEY` | No | LangSearch live web retrieval |
+| `OCCU_MED_AWARE_DATABASE_URL` | For relevance | Existing Insight-Hub Neon profile; set in Render environment variables |
+| `RELEVANCE_PROFILE_CACHE_PATH` | No | Runtime-only signed last-known-good profile cache |
 | `DATABASE_URL` | No | Persistent bookmarks, feedback, pursuit learning, history, and search memory |
 | `ENABLE_LOCAL_EMBEDDINGS=true` | No | Enables the local MiniLM embedding model |
 | `ENABLE_OCR=true` | No | Enables OCR for images and scanned documents |
@@ -198,7 +200,7 @@ Or:
 npm run verify
 ```
 
-The production smoke contract verifies the exact deployed commit, deterministic planning, live multi-source retrieval, Occu-Med candidate filtering, deep SHOW validation, non-persistence of synthetic validation evidence, and nine live capability-family plan → retrieval → ingest canaries. It also preserves the live `occupational health services` plan → retrieval → ingest canary as the baseline end-to-end search check.
+Production smoke checks deployment identity, generic planning, multi-source retrieval, evidence validation, and non-persistence of synthetic evidence. Live canary queries are operator-configurable, rather than a locked capability matrix.
 
 ## Render deployment
 

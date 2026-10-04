@@ -2,7 +2,9 @@ import { deduplicateEntities } from './entity-dedupe'
 import { extractIntelligence } from './entity-extraction'
 import { pageValidationCacheStats, validateCandidatePage } from './page-validation'
 import type { SemanticIntentPlan } from './semantic-intent'
-import { applyOccuMedSmartFilter, type SmartFilterDiagnostics } from './occumed-smart-filter'
+import { applySmartFilter, type SmartFilterDiagnostics } from './smart-filter'
+import { ensureRelevanceProfile } from './canonical-relevance'
+import { applyCanonicalDecisionGate, evaluateCanonicalResult } from './canonical-result-decision'
 import { structuredRfpReviewText, type RfpOpportunityIntelligence } from './rfp-opportunity-intelligence'
 import { deduplicateSolicitations } from './solicitation-dedupe'
 import type { SolicitationPackageAnalysis } from './solicitation-package'
@@ -158,7 +160,6 @@ function validationPriority(result: ScrapedResult): number {
   if (/\.pdf(?:$|[?#])/i.test(result.url)) priority += 20
   if (/\.gov(?:\/|$)/i.test(result.url)) priority += 18
   if (/\b(?:rfp|rfq|rfi|ifb|solicitation|request for proposals?|sources sought)\b/i.test(text)) priority += 14
-  if (/\b(?:occupational health|medical surveillance|fitness for duty|medical readiness|employment physical)\b/i.test(text)) priority += 12
   priority += Math.min(16, Math.max(0, (result.retrieval?.overlap || 1) - 1) * 4)
   if (/\b(?:award notice|bid tabulation|closed|archived|cancelled)\b/i.test(text)) priority -= 25
   return priority
@@ -173,10 +174,7 @@ function likelyShowCandidate(result: EnrichedRfpResult): boolean {
   const intelligence = result.rfpIntelligence
   if (!page || page.availability !== 'reachable' || !intelligence) return false
   if (!['open', 'active'].includes(page.lifecycle.status)) return false
-  if (!['strong', 'good'].includes(intelligence.fitBand)) return false
-  if (intelligence.matchedCapabilities.length === 0) return false
-  if (intelligence.concerns.some(concern => /(?:equipment purchase|health insurance|general nursing staffing|patient treatment|information technology system)/i.test(concern))) return false
-  return true
+  return evaluateCanonicalResult(result).decision === 'SHOW'
 }
 
 function evidenceReviewCandidate(result: EnrichedRfpResult): ScrapedResult {
@@ -206,6 +204,7 @@ export async function deepValidateResults(
   inputResults: ScrapedResult[],
   options: DeepValidationOptions = {}
 ): Promise<DeepValidationOutcome> {
+  await ensureRelevanceProfile()
   const startedAt = Date.now()
   const maxTargets = Math.max(1, Math.min(options.maxTargets ?? MAX_DEEP_VALIDATION_TARGETS, 60))
   const concurrency = Math.max(1, Math.min(options.concurrency ?? VALIDATION_CONCURRENCY, 6))
@@ -298,7 +297,7 @@ export async function deepValidateResults(
   let reviewedByUrl = new Map<string, ScrapedResult>()
 
   if (reviewable.length > 0) {
-    const smart = await applyOccuMedSmartFilter(
+    const smart = await applySmartFilter(
       query,
       lens,
       reviewable.map(evidenceReviewCandidate),
@@ -354,7 +353,7 @@ export async function deepValidateResults(
     if (!reviewed) {
       buckets.rejected.push(bucketResult(rejectedByEvidence(
         original,
-        'The destination page and solicitation package did not pass the complete-query and Occu-Med capability evidence review.'
+        'The destination page and solicitation package did not pass the complete-query evidence review.'
       ), 'rejected'))
       continue
     }
@@ -432,6 +431,7 @@ export async function deepValidateResults(
       },
     },
   }
-  await emit({ type: 'complete', progress: { ...progress } })
-  return outcome
+  const finalized = lens === 'procurement' ? applyCanonicalDecisionGate(outcome) : outcome
+  await emit({ type: 'complete', progress: { ...finalized.progress } })
+  return finalized
 }

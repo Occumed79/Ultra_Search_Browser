@@ -1,16 +1,6 @@
 const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.com').replace(/\/$/, '')
 const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
-const CANARY_QUERIES = [
-  'occupational health services',
-  'medical surveillance services',
-  'audiometry hearing conservation services',
-  'respirator medical clearance services',
-  'employee medical examinations',
-  'drug and alcohol testing services',
-  'deployment medical readiness examinations',
-  'fitness for duty occupational medicine services',
-  'OCONUS occupational health services',
-]
+const CANARY_QUERIES = (process.env.CANARY_QUERIES || 'contract services').split('|').map(query => query.trim()).filter(Boolean)
 const VALID_RETRIEVAL_TRANSPORTS = new Set([
   'searxng',
   'keenable',

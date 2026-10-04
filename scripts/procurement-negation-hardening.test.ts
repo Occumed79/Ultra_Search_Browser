@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hasAffirmativeProcurementEvidence } from '../src/lib/occumed-result-decision'
+import { hasAffirmativeProcurementEvidence } from '../src/lib/canonical-result-decision'
 
 test('long provider-marketing negation cannot become procurement evidence after 180 characters', () => {
   const padding = 'occupational medicine clinic services employee physicals audiograms spirometry drug testing respirator clearance '.repeat(4)

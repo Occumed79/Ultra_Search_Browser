@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
         terminalStage: 'ingest',
         rawCandidateCount: body.results.length,
         retainedCandidateCount: 0,
-        reason: 'No candidates survived the procurement and Occu-Med candidate gates.',
+        reason: 'No candidates survived the procurement and query evidence checks.',
       })
     }
 
