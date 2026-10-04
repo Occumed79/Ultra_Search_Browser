@@ -244,9 +244,9 @@ async function runViewport(browser, width, height) {
   await input.fill('employee medical examinations')
   await page.getByRole('button', { name: /Find RFPs|Searching/ }).click()
 
-  await page.getByText(/approved opportunities/).waitFor({ timeout: 10_000 })
-  await page.getByText('49 approved opportunities', { exact: false }).waitFor({ timeout: 10_000 })
-  await page.getByText('1 opportunities withheld from the primary list', { exact: false }).waitFor({ timeout: 10_000 })
+  await page.getByText(/matching opportunities/).waitFor({ timeout: 10_000 })
+  await page.getByText('49 matching opportunities', { exact: false }).waitFor({ timeout: 10_000 })
+  await page.getByText('1 unavailable, expired, rejected, or duplicate results', { exact: false }).waitFor({ timeout: 10_000 })
   assert((await input.inputValue()) === 'employee medical examinations', 'newer search did not remain authoritative')
   assert(page.url().includes('q=employee+medical+examinations') || page.url().includes('q=employee%20medical%20examinations'), `shareable URL did not track final search: ${page.url()}`)
 
