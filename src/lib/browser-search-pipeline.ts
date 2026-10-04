@@ -171,9 +171,11 @@ const PROCUREMENT_PLAN_PURPOSE_WEIGHT: Record<QueryPurpose, number> = {
  */
 function orderProcurementBrowserVariants<T extends { purpose: QueryPurpose; priority: number }>(variants: T[]): T[] {
   return [...variants].sort((left, right) => {
-    const purposeDelta = PROCUREMENT_PLAN_PURPOSE_WEIGHT[right.purpose]
-      - PROCUREMENT_PLAN_PURPOSE_WEIGHT[left.purpose]
-    return purposeDelta || right.priority - left.priority
+    const leftAnchorBonus = left.purpose === 'ai-intent' && left.priority >= 90 ? 40 : 0
+    const rightAnchorBonus = right.purpose === 'ai-intent' && right.priority >= 90 ? 40 : 0
+    const scoreDelta = (right.priority + rightAnchorBonus) - (left.priority + leftAnchorBonus)
+    if (scoreDelta) return scoreDelta
+    return PROCUREMENT_PLAN_PURPOSE_WEIGHT[right.purpose] - PROCUREMENT_PLAN_PURPOSE_WEIGHT[left.purpose]
   })
 }
 
@@ -192,7 +194,8 @@ export function buildBrowserSearchPlan(rawQuery: string, maxSearches = 12, seman
     expanded,
     operators,
     new Date().getFullYear(),
-    intent
+    intent,
+    Math.max(1, Math.min(12, maxSearches))
   ))
 
   const searches = variants.slice(0, Math.max(1, Math.min(12, maxSearches))).map((variant, index) => ({
