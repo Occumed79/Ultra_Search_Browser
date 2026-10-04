@@ -136,12 +136,14 @@ export function buildQueryVariants(
   expanded: ExpandedQuery,
   operators: OperatorsResult,
   currentYear = new Date().getFullYear(),
-  semanticIntent?: SemanticIntentPlan
+  semanticIntent?: SemanticIntentPlan,
+  variantBudgetOverride?: number
 ): QueryVariant[] {
   const variants: QueryVariant[] = []
   const seen = new Set<string>()
   const explicitQuery = restoreExplicitOperators(query, operators)
   const budgets = semanticBudgets(semanticIntent)
+  const maxVariants = Math.max(budgets.variants, Math.min(20, Math.max(0, variantBudgetOverride || 0)))
   const procurementQueries = lens === 'procurement'
     ? buildProcurementRescueQueries(query, semanticIntent)
     : []
@@ -150,24 +152,24 @@ export function buildQueryVariants(
   // expansion. Previous procurement logic filled the entire variant budget with
   // operator-heavy site queries, making these two foundational strategies
   // unreachable.
-  addVariant(variants, seen, explicitQuery, 'broad', 100, budgets.variants)
+  addVariant(variants, seen, explicitQuery, 'broad', 100, maxVariants)
   addVariant(
     variants,
     seen,
     protectedIntentQuery(query, operators, semanticIntent),
     'intent-core',
     98,
-    budgets.variants
+    maxVariants
   )
 
   if (lens === 'procurement') {
     // buildProcurementRescueQueries guarantees slot 1 is the buyer-language
     // capability-family expansion. Reserve a planner slot for it rather than
     // broadcasting every rescue query through every engine.
-    addVariant(variants, seen, procurementQueries[1], 'ai-intent', 96, budgets.variants)
+    addVariant(variants, seen, procurementQueries[1], 'ai-intent', 96, maxVariants)
   } else {
     for (const candidate of semanticIntent?.searchVariants || []) {
-      addVariant(variants, seen, candidate, 'ai-intent', 92, budgets.variants)
+      addVariant(variants, seen, candidate, 'ai-intent', 92, maxVariants)
     }
   }
 
@@ -205,23 +207,22 @@ export function buildQueryVariants(
   )
 
   if (lens === 'procurement') {
-    // These four complementary strategies are more valuable than another
-    // synonym-only variant, so reserve them before the seven-slot simple-query
-    // budget can be exhausted.
-    addVariant(variants, seen, official, 'official', 94, budgets.variants)
-    addVariant(variants, seen, document, 'document', 92, budgets.variants)
-    addVariant(variants, seen, freshness, 'freshness', 90, budgets.variants)
-    addVariant(variants, seen, portal, 'portal', 88, budgets.variants)
+    // Reserve complementary source-shape strategies before the broader manual-style
+    // sweep fills the remaining canonical-profile-driven query budget.
+    addVariant(variants, seen, official, 'official', 94, maxVariants)
+    addVariant(variants, seen, document, 'document', 92, maxVariants)
+    addVariant(variants, seen, freshness, 'freshness', 90, maxVariants)
+    addVariant(variants, seen, portal, 'portal', 88, maxVariants)
   } else {
-    addVariant(variants, seen, semantic, 'semantic', 90, budgets.variants)
+    addVariant(variants, seen, semantic, 'semantic', 90, maxVariants)
     if (['government', 'legal', 'medical', 'academic'].includes(lens)) {
-      addVariant(variants, seen, official, 'official', 85, budgets.variants)
+      addVariant(variants, seen, official, 'official', 85, maxVariants)
     }
     if (['pdf', 'government', 'pricing', 'academic', 'financial'].includes(lens)) {
-      addVariant(variants, seen, document, 'document', 80, budgets.variants)
+      addVariant(variants, seen, document, 'document', 80, maxVariants)
     }
     if (lens === 'news') {
-      addVariant(variants, seen, freshness, 'freshness', 75, budgets.variants)
+      addVariant(variants, seen, freshness, 'freshness', 75, maxVariants)
     }
   }
 
@@ -229,12 +230,12 @@ export function buildQueryVariants(
   // variants only after the critical retrieval strategies are protected.
   if (lens === 'procurement') {
     for (const candidate of procurementQueries.filter(value => !/\b(?:site:|filetype:)/i.test(value))) {
-      addVariant(variants, seen, candidate, 'ai-intent', 70, budgets.variants)
+      addVariant(variants, seen, candidate, 'ai-intent', 70, maxVariants)
     }
   }
 
   for (const candidate of [...expanded.withOperators, ...expanded.expansions]) {
-    addVariant(variants, seen, candidate, 'semantic', 50, budgets.variants)
+    addVariant(variants, seen, candidate, 'semantic', 50, maxVariants)
   }
 
   return variants.sort((left, right) => right.priority - left.priority)

@@ -42,12 +42,12 @@ const SEARCH_BUDGET_MS = 50_000
 const SEARX_VARIANT_TIMEOUT_MS = 10_000
 const KEENABLE_VARIANT_TIMEOUT_MS = 12_000
 const EXTERNAL_VARIANT_TIMEOUT_MS = 10_000
-const MAX_DIRECT_RESCUE_VARIANTS = 5
-const MAX_KEENABLE_VARIANTS = boundedEnv('KEENABLE_MAX_VARIANTS', 4, 1, 8)
-const MAX_TINYFISH_VARIANTS = boundedEnv('TINYFISH_MAX_VARIANTS', 4, 1, 8)
-const MAX_TAVILY_VARIANTS = boundedEnv('TAVILY_MAX_VARIANTS', 3, 1, 8)
-const MAX_EXA_VARIANTS = boundedEnv('EXA_MAX_VARIANTS', 2, 1, 8)
-const MAX_LANGSEARCH_VARIANTS = boundedEnv('LANGSEARCH_MAX_VARIANTS', 2, 1, 8)
+const MAX_DIRECT_RESCUE_VARIANTS = 6
+const MAX_KEENABLE_VARIANTS = boundedEnv('KEENABLE_MAX_VARIANTS', 6, 1, 8)
+const MAX_TINYFISH_VARIANTS = boundedEnv('TINYFISH_MAX_VARIANTS', 6, 1, 8)
+const MAX_TAVILY_VARIANTS = boundedEnv('TAVILY_MAX_VARIANTS', 4, 1, 8)
+const MAX_EXA_VARIANTS = boundedEnv('EXA_MAX_VARIANTS', 3, 1, 8)
+const MAX_LANGSEARCH_VARIANTS = boundedEnv('LANGSEARCH_MAX_VARIANTS', 3, 1, 8)
 
 interface RetrievalCandidate {
   title: string
@@ -466,8 +466,8 @@ export async function POST(request: NextRequest) {
     recordSearchFlightStage(traceId, 'retrieval.start', { query })
 
     await ensureRelevanceProfile()
-    const plan = suppliedPlan || buildBrowserSearchPlan(query, 8)
-    const variants = plan.searches.slice(0, 8)
+    const plan = suppliedPlan || buildBrowserSearchPlan(query, 12)
+    const variants = plan.searches.slice(0, 12)
     const diagnostics: RetrievalDiagnostic[] = []
     const allCandidates: RetrievalCandidate[] = []
     const engines = new Set<string>()

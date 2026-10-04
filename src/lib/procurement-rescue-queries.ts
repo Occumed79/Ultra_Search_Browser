@@ -1,4 +1,9 @@
-import { canonicalBuyerTerms } from './canonical-relevance'
+import {
+  canonicalBuyerTerms,
+  canonicalSearchBundleTerms,
+  canonicalSearchPriorityAgencies,
+  canonicalTargetBuyerTypes,
+} from './canonical-relevance'
 import type { SemanticIntentPlan } from './semantic-intent'
 
 const PROCUREMENT_WORDS = /\b(?:request for proposals?|rfp|request for quotations?|rfq|request for tenders?|rft|invitation to bid|ifb|solicitation|tender|bid(?:ding)?|procurement|contract opportunity|vendor opportunity)\b/gi
@@ -32,10 +37,7 @@ export function procurementSubject(query: string): string {
       .replace(/^pre-employment/, 'pre employment')
       .replace(/^pre-/, 'pre ')
   )
-  if (cleaned.length < 5) {
-    return cleaned || normalizeSpace(query)
-  }
-  return cleaned
+  return cleaned.length < 5 ? cleaned || normalizeSpace(query) : cleaned
 }
 
 function semanticSubjects(intent?: SemanticIntentPlan): string[] {
@@ -55,48 +57,49 @@ export function buildProcurementRescueQueries(
   const subject = procurementSubject(query)
   const quotedSubject = quotedPhrase(subject)
   const currentYear = new Date().getUTCFullYear()
+
   const semanticAliases = semanticSubjects(intent)
     .filter(value => normalize(value) !== normalize(subject))
   const buyerAliases = canonicalBuyerTerms(subject, 10)
+  const bundleTerms = canonicalSearchBundleTerms(subject, 10)
   const discoveryTerms = Array.from(new Map(
-    [...buyerAliases, ...semanticAliases]
+    [...bundleTerms, ...buyerAliases, ...semanticAliases]
       .filter(Boolean)
       .filter(value => normalize(value) !== normalize(subject))
       .map(value => [normalize(value), value])
-  ).values()).slice(0, 8)
+  ).values()).slice(0, 12)
+
   const familyClause = discoveryTerms.length > 0
     ? `(${discoveryTerms.slice(0, 6).map(quotedPhrase).join(' OR ')})`
     : ''
   const bestAlias = discoveryTerms[0] ? quotedPhrase(discoveryTerms[0]) : ''
-  // Official buyers frequently use either the user's phrase OR a buyer-language
-  // synonym, not both. Requiring both made otherwise excellent .gov/PDF hits
-  // invisible. Keep them as alternatives while the later evidence gate restores
-  // precision from the actual destination/package.
   const subjectFamily = bestAlias
     ? `(${quotedSubject} OR ${bestAlias})`
     : quotedSubject
 
-  const individualAliasQueries = buyerAliases.map(alias =>
-    `${quotedPhrase(alias)} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
+  const profileTermQueries = discoveryTerms.slice(0, 6).map(term =>
+    `${quotedPhrase(term)} (RFP OR RFQ OR solicitation OR tender OR "sources sought") ${currentYear}`
   )
 
-  const militaryKeywords = ['deployment', 'military', 'defense', 'dod', 'overseas', 'clearance', 'readiness']
-  const isMilitaryQuery = militaryKeywords.some(keyword => query.toLowerCase().includes(keyword))
-  const militaryQueries = isMilitaryQuery ? [
-    `site:acquisition.gov ${subjectFamily} procurement`,
-    `site:defense.gov ${subjectFamily} procurement`,
-    `site:dla.mil ${subjectFamily} procurement`,
-    `${subjectFamily} "defense logistics agency" solicitation`,
-    `${subjectFamily} "department of defense" solicitation`,
-  ] : []
+  const buyerTypeQueries = canonicalTargetBuyerTypes(5).map(buyer =>
+    `${subjectFamily} ${quotedPhrase(buyer)} (RFP OR solicitation OR bid)`
+  )
 
+  const agencyQueries = canonicalSearchPriorityAgencies(5).map(agency =>
+    `${subjectFamily} ${quotedPhrase(agency)} (RFP OR solicitation OR "sources sought")`
+  )
+
+  // Manual-style sweep: vary source shape, document type, buyer type and lifecycle wording
+  // rather than repeatedly sending one synonym query to every provider.
   const diversifiedFront = [
     `${quotedSubject} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`,
     familyClause
-      ? `${familyClause} (RFP OR RFQ OR solicitation OR tender) ${currentYear}`
+      ? `${familyClause} (RFP OR RFQ OR solicitation OR tender OR "sources sought") ${currentYear}`
       : `${quotedSubject} "contract opportunities" ${currentYear}`,
     `site:.gov ${subjectFamily} (RFP OR solicitation OR "sources sought") ${currentYear}`,
-    `filetype:pdf ${subjectFamily} ("request for proposal" OR solicitation) ${currentYear}`,
+    `filetype:pdf ${subjectFamily} ("request for proposal" OR solicitation OR "statement of work") ${currentYear}`,
+    `${subjectFamily} ("vendor opportunities" OR "bid opportunities" OR "procurement opportunities") ${currentYear}`,
+    `${subjectFamily} ("responses due" OR "submission deadline" OR "closing date") ${currentYear}`,
   ]
 
   const officialAndPortalQueries = [
@@ -105,10 +108,12 @@ export function buildProcurementRescueQueries(
     `site:.gov ${quotedSubject} "contract opportunities"`,
     `site:.gov ${quotedSubject} "vendor opportunities"`,
     `site:.gov ${quotedSubject} "bid opportunities"`,
-    `site:bidnetdirect.com ${quotedSubject} "contract opportunities"`,
-    `site:rfpmart.com ${quotedSubject} RFP`,
-    `site:findrfp.com ${quotedSubject} solicitation`,
-    `site:govwin.com ${quotedSubject} "government contract"`,
+    `site:ionwave.net ${quotedSubject}`,
+    `site:bonfirehub.com ${quotedSubject}`,
+    `site:planetbids.com ${quotedSubject}`,
+    `site:bidnetdirect.com ${quotedSubject}`,
+    `site:publicpurchase.com ${quotedSubject}`,
+    `site:opengov.com ${quotedSubject}`,
   ]
 
   const naturalLanguageQueries = [
@@ -116,13 +121,16 @@ export function buildProcurementRescueQueries(
     `${quotedSubject} "vendor opportunities" ${currentYear}`,
     `${quotedSubject} "sources sought" ${currentYear}`,
     `${quotedSubject} "bid opportunities" ${currentYear}`,
+    `${quotedSubject} "request for qualifications" ${currentYear}`,
+    `${quotedSubject} "statement of work" ${currentYear}`,
   ]
 
   return Array.from(new Set([
     ...diversifiedFront,
-    ...individualAliasQueries,
+    ...profileTermQueries,
+    ...buyerTypeQueries,
+    ...agencyQueries,
     ...officialAndPortalQueries,
     ...naturalLanguageQueries,
-    ...militaryQueries,
   ]))
 }
