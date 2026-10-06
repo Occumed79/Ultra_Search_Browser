@@ -169,10 +169,22 @@ export function extractEntities(text: string) {
 export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocument {
   const $ = cheerio.load(html)
   const opportunityDetail = $('[data-opportunity-detail-title]').length > 0
+  let governmentContractsDetail = false
+  try {
+    const url = new URL(baseUrl || '')
+    governmentContractsDetail = /(?:^|\.)governmentcontracts\.us$/i.test(url.hostname)
+      && /\/opportunity-details\//i.test(url.pathname)
+      && $('.container.contents > .detail-contents').length > 0
+  } catch { /* HTML without a base URL uses the normal extraction path. */ }
   // Related notices are separate procurements, not evidence or attachments for
   // the notice being opened. Hydration state can contain the same unrelated bids.
   if (opportunityDetail) $('[data-similar-opportunities-section], [data-buyer-logo]').remove()
-  const embeddedState = opportunityDetail ? '' : extractEmbeddedClientState(html)
+  if (governmentContractsDetail) {
+    const detailHtml = $('.container.contents').children('h1, .detail-contents, .section-desc')
+      .toArray().map(element => $.html(element)).join(' ')
+    $('body').html(detailHtml)
+  }
+  const embeddedState = opportunityDetail || governmentContractsDetail ? '' : extractEmbeddedClientState(html)
   $('script, style, nav, header, footer, iframe, noscript').remove()
   const links = uniqueLinks(
     $('a[href]').map((_, element) => {
@@ -356,7 +368,7 @@ export async function extractFromPDFBuffer(
       }
     }
 
-    const title = data.text.split(/\r?\n/).map(line => line.trim()).find(Boolean)
+    const title = pdfTitle(data.text)
     return {
       success: true,
       document: {
@@ -378,9 +390,17 @@ export async function extractFromPDFBuffer(
   }
 }
 
+function pdfTitle(text: string): string | undefined {
+  const lines = text.split(/\r?\n/).map(line => normalizeText(line)).filter(Boolean)
+  if (/^(?:request for proposals?|invitation (?:for|to) bids?|notice to bidders|solicitation)$/i.test(lines[0] || '') && lines.length > 2) {
+    return lines.slice(1, 3).join(' — ').slice(0, 180)
+  }
+  return lines[0]
+}
+
 export function extractFromPDFText(pdfText: string, metadata?: any): ExtractedDocument {
   const text = normalizeText(pdfText)
-  const title = pdfText.split(/\r?\n/).map(line => line.trim()).find(Boolean)
+  const title = pdfTitle(pdfText)
   return {
     text,
     title,

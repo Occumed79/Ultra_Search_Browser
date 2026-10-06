@@ -10,6 +10,7 @@
  *     "physical" is satisfied by "physicals" and "examination" by "examinations".
  */
 import type { ProfileRule, RelevanceProfile } from "./relevanceProfile";
+import { hasAssertedStatusPhrase } from '../../status-language';
 
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const cache = new Map<string, RegExp>();
@@ -168,7 +169,9 @@ export function evaluateRules(profile: RelevanceProfile, ctx: RuleContext): Rule
       case "reject_post_award_notice":
       case "reject_as_out_of_scope": {
         if (out.hardReject || !declaresMatch(rule)) break;
-        const hit = matchTriggers(ctx.haystack, rule.triggers)[0];
+        const text = rule.scope.match === 'title_any_trigger' ? ctx.title : ctx.haystack;
+        const hit = matchTriggers(text, rule.triggers).find(trigger =>
+          rule.action !== 'reject_post_award_notice' || hasAssertedStatusPhrase(text, trigger));
         if (hit)
           out.hardReject = {
             ruleKey: rule.key,

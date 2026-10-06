@@ -1,4 +1,5 @@
 import type { SearchLens } from '../types/search'
+import { hasAssertedStatusPhrase } from './status-language'
 
 export type ResultLifecycleStatus =
   | 'active'
@@ -45,6 +46,8 @@ const MONTHS: Record<string, number> = {
 
 const DATE_PATTERN = /\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?[,]?\s+\d{4})\b/gi
 const CLOSED_DATE_LABEL = new RegExp(`\\b(?:closes|closing(?: date)?)\\s*:?\\s*${DATE_PATTERN.source}\\s*\\(closed\\)`, 'i')
+const MONTH_REPAIRS = Object.keys(MONTHS).filter(month => month.length > 3)
+  .map(month => [new RegExp(`\\b${month.split('').join('\\s*')}(?=\\s+\\d)`, 'gi'), month] as const)
 
 function clean(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -82,27 +85,38 @@ export function parseStatusDate(value: string): Date | undefined {
   return undefined
 }
 
-function classifyDateKind(context: string): ExtractedStatusDate['kind'] {
-  const value = context.toLowerCase()
-  if (/\b(?:response|proposal|bid|submission)s?\s+(?:are\s+)?due\b|\bdue\s+date\b|\bdeadline\b/.test(value)) return 'due'
-  if (/\bclos(?:e|es|ed|ing)\b|\bclosing\s+date\b/.test(value)) return 'closing'
-  if (/\bexpir(?:e|es|ed|ation)\b|\bvalid\s+through\b/.test(value)) return 'expiration'
-  if (/\baward(?:ed|\s+date)?\b/.test(value)) return 'award'
-  if (/\bmodified\b|\blast\s+updated\b|\bupdated\b/.test(value)) return 'modified'
-  if (/\bposted\b|\bpublished\b|\breleased\b|\bissued\b/.test(value)) return 'posted'
+function classifyDateKind(before: string): ExtractedStatusDate['kind'] {
+  // Flattened tables contain several labels and dates in one context window.
+  // Bind each date to its nearest preceding label, never a neighboring date's.
+  const labels = [...before.matchAll(/\b(?:due(?:\s+date)?|deadline|clos(?:e|es|ed|ing)(?:\s+date)?|expir(?:e|es|ed|ation)|valid\s+through|award(?:ed|\s+date)?|modified|last\s+updated|updated|posted|published|released|issued|issue\s+date)\b/gi)]
+  const label = labels.at(-1)
+  if (!label) return 'unknown'
+  const value = label[0].toLowerCase()
+  if (/due|deadline/.test(value)) {
+    if (/\bquestions?\b/i.test(before.slice(label.index))) return 'unknown'
+    return 'due'
+  }
+  if (/^clos/.test(value)) return 'closing'
+  if (/^expir|valid/.test(value)) return 'expiration'
+  if (/^award/.test(value)) return 'award'
+  if (/modified|updated/.test(value)) return 'modified'
+  if (/posted|published|released|issue/.test(value)) return 'posted'
   return 'unknown'
 }
 
 export function extractStatusDates(text: string): ExtractedStatusDate[] {
-  const normalized = clean(text).slice(0, 200_000)
+  let normalized = clean(text).slice(0, 200_000)
+  for (const [pattern] of MONTH_REPAIRS) normalized = normalized.replace(pattern, match => match.replace(/\s+/g, ''))
   const dates: ExtractedStatusDate[] = []
   const seen = new Set<string>()
+  let previousDateEnd = 0
 
   for (const match of normalized.matchAll(DATE_PATTERN)) {
     const value = match[0]
     const index = match.index ?? 0
     const context = normalized.slice(Math.max(0, index - 90), Math.min(normalized.length, index + value.length + 90))
-    const kind = classifyDateKind(context)
+    const kind = classifyDateKind(normalized.slice(Math.max(previousDateEnd, index - 90), index))
+    previousDateEnd = index + value.length
     const parsed = parseStatusDate(value)
     const key = `${kind}:${parsed?.toISOString().slice(0, 10) || value.toLowerCase()}`
     if (seen.has(key)) continue
@@ -137,7 +151,8 @@ export function classifyResultStatus(
   if (/\b(?:solicitation|opportunity|procurement|bid|rfp|rfq)\s+(?:has\s+been\s+)?cancelled\b|\bcancelled\s+(?:solicitation|opportunity|procurement|bid|rfp|rfq)\b/.test(normalized)) {
     return { status: 'cancelled', reason: 'The page explicitly says the opportunity was cancelled.', confidence: 0.98, dates }
   }
-  if (/\b(?:contract|bid|solicitation|opportunity)\s+(?:has\s+been\s+)?awarded\b|\bnotice\s+of\s+award\b|\bawardee\b/.test(normalized)) {
+  const awardPhrases = [...normalized.matchAll(/\b(?:contract|bid|solicitation|opportunity)\s+(?:has\s+been\s+|was\s+|is\s+)?awarded\b|\bnotice\s+of\s+award\b|\bawardee\b/gi)]
+  if (awardPhrases.some(match => hasAssertedStatusPhrase(normalized, match[0]))) {
     return { status: 'awarded', reason: 'The page identifies the item as awarded.', confidence: 0.96, dates }
   }
   if (/\b(?:submissions?|responses?|bidding)\s+(?:are\s+)?closed\b|\bclosed\s+(?:solicitation|opportunity|bid|itb|ifb|rfp|rfq)\b|\b(?:opportunity\s+status|solicitation\s+status|bid\s+status|status)\s*[:\-]?\s*closed\b|\bno\s+longer\s+accepting\b/.test(normalized)

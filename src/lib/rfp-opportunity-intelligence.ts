@@ -129,11 +129,13 @@ function opportunityType(text: string): RfpOpportunityType {
 }
 
 function extractOrganization(text: string, url: string): string | undefined {
+  const issuer = text.match(/(?:^|[.!?:]\s+|\bThe\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,5}\s+(?:District|Authority|Department|County|City))\s*(?:\([^)]{0,90}\))?\s+is\s+(?:soliciting|seeking|requesting)\b/)?.[1]
+  if (issuer) return clean(issuer).replace(/^The\s+/, '')
   const explicit = firstCapture(text, [
     /\b(?:issued by|issuing agency|issuing organization|contracting agency|procuring agency|buyer|department|agency)\s*[:\-]\s*([^.;|]{3,140})/i,
     /\b(?:city|county|town|village|state|department|authority|district|university) of\s+([A-Z][A-Za-z0-9 .,&'\-]{2,100})/,
   ], 140)
-  if (explicit) return explicit
+  if (explicit) return explicit.split(/\s+(?:type of government|category|solicitation(?:\s+(?:number|id))?|location|contact|description)\s*:/i)[0].trim()
 
   const buyerField = text.match(/\bbuyer\s*:?\s+(.{3,100}?)\s+(?:county|city|state|town|district)\s*[·|,]/i)?.[1]
   if (buyerField) return clean(buyerField)
