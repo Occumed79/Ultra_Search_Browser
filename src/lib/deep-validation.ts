@@ -6,6 +6,7 @@ import { applySmartFilter, type SmartFilterDiagnostics } from './smart-filter'
 import { ensureRelevanceProfile } from './canonical-relevance'
 import { applyCanonicalDecisionGate, evaluateCanonicalResult } from './canonical-result-decision'
 import { structuredRfpReviewText, type RfpOpportunityIntelligence } from './rfp-opportunity-intelligence'
+import { isEmbeddingsReady } from './embeddings'
 import { deduplicateSolicitations } from './solicitation-dedupe'
 import type { SolicitationPackageAnalysis } from './solicitation-package'
 import type {
@@ -239,7 +240,9 @@ export async function deepValidateResults(
         // selected candidate. Validation stops once enough likely SHOW records
         // exist, rather than skipping the best result because it ranked 25th.
         inspectPackage: lens === 'procurement',
-        timeoutMs: options.pageTimeoutMs,
+        timeoutMs: options.deadline
+          ? Math.max(1, Math.min(options.pageTimeoutMs ?? 10_000, options.deadline - Date.now() - 20_000))
+          : options.pageTimeoutMs,
         signal: options.signal,
       })
       progress.checked += 1
@@ -312,8 +315,11 @@ export async function deepValidateResults(
       reviewable.map(evidenceReviewCandidate),
       reviewable.length,
       {
-        useLocalTransformer: true,
-        useExternalProviders: true,
+        // A cold model load can consume the entire interactive request budget.
+        // Use the transformer when already initialized; the canonical evidence
+        // gate remains authoritative with deterministic/external review otherwise.
+        useLocalTransformer: isEmbeddingsReady(),
+        useExternalProviders: !options.signal?.aborted && (!options.deadline || options.deadline - Date.now() > 20_000),
         semanticCandidateLimit: Math.min(24, reviewable.length),
         semanticIntent: options.semanticIntent,
       }

@@ -7,18 +7,24 @@ import { createPortal } from 'react-dom'
 export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onTermSelect: (term: string) => void }) {
   const [portalHost, setPortalHost] = useState<HTMLElement | null>(null)
   const [buyerTerms, setBuyerTerms] = useState<string[]>([])
+  const [termState, setTermState] = useState<'idle' | 'loading' | 'empty' | 'error' | 'ready'>('idle')
 
   useEffect(() => {
     const controller = new AbortController()
     setBuyerTerms([])
+    setTermState(query.trim() ? 'loading' : 'idle')
     if (!query.trim()) return () => controller.abort()
     const timer = setTimeout(async () => {
       try {
         const response = await fetch(`/api/relevance/terms?query=${encodeURIComponent(query)}`, { signal: controller.signal })
-        if (!response.ok) return
+        if (!response.ok) throw new Error('Suggestions unavailable')
         const data = await response.json()
-        if (!controller.signal.aborted) setBuyerTerms(Array.isArray(data.terms) ? data.terms.filter((term: unknown) => typeof term === 'string') : [])
-      } catch { /* Suggestions are optional; search remains usable. */ }
+        if (!controller.signal.aborted) {
+          const terms = Array.isArray(data.terms) ? data.terms.filter((term: unknown) => typeof term === 'string') : []
+          setBuyerTerms(terms)
+          setTermState(data.source === 'unavailable' ? 'error' : terms.length ? 'ready' : 'empty')
+        }
+      } catch { if (!controller.signal.aborted) setTermState('error') }
     }, 250)
     return () => { clearTimeout(timer); controller.abort() }
   }, [query])
@@ -67,7 +73,7 @@ export function BuyerTermsDropdown({ query, onTermSelect }: { query: string; onT
         </div>
       ) : (
         <p className="min-w-0 flex-1 truncate text-[11px] text-white/35">
-          Type a search query and available buyer terms will appear here.
+          {termState === 'loading' ? 'Loading related terms…' : termState === 'error' ? 'Related terms are temporarily unavailable.' : termState === 'empty' ? 'No related terms found for this query.' : 'Type a search query and available buyer terms will appear here.'}
         </p>
       )}
     </section>,

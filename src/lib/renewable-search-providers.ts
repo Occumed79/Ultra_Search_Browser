@@ -236,7 +236,7 @@ export async function searchExa(
           type: 'auto',
           numResults: resultLimit,
           contents: {
-            highlights: { dynamic: true },
+            highlights: true,
           },
         }),
         signal: AbortSignal.timeout(timeoutMs(options)),

@@ -7,6 +7,7 @@ import {
 } from './document-extraction'
 import { recoverClientRenderedDocument } from './headless-page-recovery'
 import { classifyResultStatus, type ResultStatusAssessment } from './result-status'
+import { isProcurementListingUrl } from './procurement-listing'
 import {
   extractRfpOpportunityIntelligence,
   type RfpOpportunityIntelligence,
@@ -178,6 +179,9 @@ export function inspectPageSignals(
 
   if (requested && final && looksLikeGenericRedirect(requested, final)) {
     return { availability: 'generic', reason: 'The result redirected to a generic site homepage instead of the requested page.' }
+  }
+  if (isProcurementListingUrl(finalUrl)) {
+    return { availability: 'search-page', reason: 'The destination is an agency bid listing containing separate opportunities, rather than an individual solicitation. Open a specific bid before verifying its scope and deadline.' }
   }
   if (/\b(?:access denied|request blocked|attention required|verify you are human|checking your browser|captcha|cloudflare ray id|unusual traffic|bot detection)\b/.test(normalized)) {
     return { availability: 'blocked', reason: 'The destination returned a bot challenge or access-denied page.' }
@@ -412,6 +416,7 @@ export async function validateCandidatePage(
           attachmentTimeoutMs: 4_500,
           maxCombinedText: MAX_EXTRACTED_TEXT,
           fetchImpl,
+          signal: controller.signal,
         })
       } catch (error) {
         console.warn('Solicitation package inspection failed:', finalUrl, error)

@@ -11,7 +11,7 @@ import {
   verifiedSearchConfidence,
   verifiedSearchSummary,
 } from '../../../../lib/verified-search-intelligence'
-import { verifiedResultsOnly } from '../../../../lib/verified-results'
+import { verifiedOpportunitiesOnly } from '../../../../lib/verified-results'
 import type { ScrapedResult, SearchLens } from '../../../../types/search'
 
 export const dynamic = 'force-dynamic'
@@ -184,6 +184,7 @@ export async function POST(request: NextRequest) {
         const rawOutcome = await deepValidateResults(query, lens, results, {
           maxTargets,
           semanticIntent,
+          deadline: researchDeadline,
           signal: request.signal,
           onEvent: async (event: DeepValidationEvent) => {
             if (event.type === 'complete') return
@@ -228,7 +229,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const verifiedResults = verifiedResultsOnly(outcome.buckets.valid)
+        const verifiedResults = verifiedOpportunitiesOnly(outcome.buckets.valid)
         let persistenceTimedOut = false
         const persistence = testMode
           ? {
@@ -280,7 +281,7 @@ export async function POST(request: NextRequest) {
 
         const completion = {
           ...outcome,
-          results: outcome.results,
+          results: verifiedResults,
           summary: verifiedResults.length > 0
             ? verifiedSearchSummary(query, lens, verifiedResults)
             : 'No matching procurement opportunities were returned after canonical relevance and evidence checks.',
@@ -290,7 +291,7 @@ export async function POST(request: NextRequest) {
           traceId,
           diagnostics: {
             ...outcome.diagnostics,
-            verifiedOnly: false,
+            verifiedOnly: true,
             verifiedCount: verifiedResults.length,
             pursuitLearningApplied,
             pursuitLearningSkipped: testMode,

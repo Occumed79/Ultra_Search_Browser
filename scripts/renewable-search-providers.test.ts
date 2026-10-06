@@ -144,6 +144,8 @@ test('Exa, LangSearch, and TinyFish use their live web search APIs and normalize
     calls.push({ url, headers: new Headers(init?.headers), body: String(init?.body || '') })
 
     if (url.includes('api.exa.ai/search')) {
+      const request = JSON.parse(String(init?.body || '{}'))
+      if (request.contents?.highlights?.dynamic) return new Response('highlights.dynamic requires a beta header', { status: 400 })
       return new Response(JSON.stringify({
         results: [{
           title: 'Exa Procurement Result',
@@ -191,7 +193,7 @@ test('Exa, LangSearch, and TinyFish use their live web search APIs and normalize
 
   const exaBody = JSON.parse(exaCall?.body || '{}')
   assert.equal(exaBody.numResults, 10)
-  assert.deepEqual(exaBody.contents, { highlights: { dynamic: true } })
+  assert.deepEqual(exaBody.contents, { highlights: true })
 
   const langBody = JSON.parse(langCall?.body || '{}')
   assert.equal(langBody.count, 10)
