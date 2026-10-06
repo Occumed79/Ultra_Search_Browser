@@ -26,7 +26,7 @@ import { ResultActions } from '../components/result-actions'
 import { useSearch } from '../hooks/use-search'
 import type { RfpOpportunityIntelligence } from '../lib/rfp-opportunity-intelligence'
 import type { SolicitationPackageAnalysis } from '../lib/solicitation-package'
-import { isVerifiedResult } from '../lib/verified-results'
+import { isVerifiedOpportunity } from '../lib/verified-results'
 import type { ResultBucket, ScrapedResult, UserSettings } from '../types/search'
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -128,7 +128,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
   const sourceStyle = SOURCE_COLORS[result.source] ?? 'bg-white/5 text-white/40 border-white/10'
   const lifecycle = result.pageValidation?.lifecycle
   const bucket = result.bucket || (result.validation?.status === 'valid' ? 'valid' : 'uncertain')
-  const verified = isVerifiedResult(result)
+  const verified = isVerifiedOpportunity(result)
   const intelligence = result.rfpIntelligence
   const dueInDays = daysUntil(intelligence?.dueDate)
   const workspaceKey = intelligence?.opportunityKey || result.entity?.fingerprint || result.url
@@ -317,7 +317,7 @@ export default function Home() {
 
   const visibleResults = useMemo(() => {
     const filtered = (scrapedResults as ResultWithId[]).filter(result => {
-      if (!isVerifiedResult(result)) return false
+      if (!isVerifiedOpportunity(result)) return false
       if (filterSource && result.source !== filterSource) return false
       if (fitFilter !== 'all' && result.rfpIntelligence?.fitBand !== fitFilter) return false
       if (deadlineFilter !== 'all') {
@@ -455,7 +455,7 @@ export default function Home() {
             )}
 
             {error && <div className="mb-4 flex gap-2 rounded-xl border border-red-400/30 bg-red-400/5 p-4 text-sm text-red-300"><AlertTriangle className="h-4 w-4 flex-shrink-0" /> {error}</div>}
-            {enrichmentError && <div className="mb-4 flex gap-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3 text-xs text-amber-100/65"><AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />Complete-package validation did not finish. Search results are still shown with the evidence available.</div>}
+            {enrichmentError && <div className="mb-4 flex gap-2 rounded-xl border border-amber-300/20 bg-amber-300/[0.05] p-3 text-xs text-amber-100/65"><AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />Verification did not finish. Only opportunities with completed evidence checks appear below. Run the search again to retry.</div>}
 
             {settings.autoSummarize && intelligence?.summary && (
               <div className="glass-surface animate-in mb-5 rounded-xl p-4"><div className="mb-2 flex items-center gap-2"><Sparkles className="h-4 w-4 text-teal-300/80" /><h2 className="text-[13px] font-medium text-white/80">RFP intelligence</h2><span className="ml-auto text-[10px] text-white/40">{intelligence.confidence}% confidence</span></div><p className="text-[13px] leading-relaxed text-white/50">{intelligence.summary}</p></div>

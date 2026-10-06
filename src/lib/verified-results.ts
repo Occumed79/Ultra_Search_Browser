@@ -18,3 +18,15 @@ export function isVerifiedResult(result: ScrapedResult): boolean {
 export function verifiedResultsOnly(results: ScrapedResult[]): ScrapedResult[] {
   return results.filter(isVerifiedResult)
 }
+
+/** Procurement UI requires an open notice and the completed canonical verdict. */
+export function isVerifiedOpportunity(result: ScrapedResult): boolean {
+  const decision = (result as ScrapedResult & { canonicalDecision?: { decision: string } }).canonicalDecision
+  return isVerifiedResult(result)
+    && ['open', 'active'].includes(result.pageValidation!.lifecycle.status)
+    && decision?.decision === 'SHOW'
+}
+
+export function verifiedOpportunitiesOnly(results: ScrapedResult[]): ScrapedResult[] {
+  return results.filter(isVerifiedOpportunity)
+}

@@ -24,7 +24,7 @@ test('verified insert diagnostics count fulfilled null writes as failures', () =
 
 test('complete event remains the evidence decision output even if optional persistence fails', () => {
   assert.match(source, /write\('complete'/)
-  assert.match(source, /verifiedOnly:\s*false/)
+  assert.match(source, /verifiedOnly:\s*true/)
   assert.match(source, /pursuitLearningApplied/)
   assert.match(source, /verifiedPersistence:\s*persistence\.verifiedPersistence/)
 })

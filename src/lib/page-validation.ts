@@ -416,6 +416,7 @@ export async function validateCandidatePage(
           attachmentTimeoutMs: 4_500,
           maxCombinedText: MAX_EXTRACTED_TEXT,
           fetchImpl,
+          signal: controller.signal,
         })
       } catch (error) {
         console.warn('Solicitation package inspection failed:', finalUrl, error)

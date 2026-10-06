@@ -167,8 +167,13 @@ export function extractEntities(text: string) {
 }
 
 export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocument {
-  const embeddedState = extractEmbeddedClientState(html)
   const $ = cheerio.load(html)
+  const opportunityDetail = $('[data-opportunity-detail-title]').length > 0
+  // Related notices are separate procurements, not evidence or attachments for
+  // the notice being opened. Hydration state can contain the same unrelated bids.
+  if (opportunityDetail) $('[data-similar-opportunities-section], [data-buyer-logo]').remove()
+  const embeddedState = opportunityDetail ? '' : extractEmbeddedClientState(html)
+  $('script, style, nav, header, footer, iframe, noscript').remove()
   const links = uniqueLinks(
     $('a[href]').map((_, element) => {
       const href = String($(element).attr('href') || '').trim()
@@ -186,11 +191,9 @@ export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocume
     }).get().filter((link): link is { url: string; text: string } => Boolean(link))
   )
 
-  $('script, style, nav, header, footer, iframe, noscript').remove()
-
   // Adjacent HTML elements otherwise become "CLOSEDITB" or "BuyerPulaski".
   $('br').replaceWith(' ')
-  $('div, section, article, p, h1, h2, h3, h4, h5, h6, li, td, th, span').append(' ')
+  $('div, section, article, p, h1, h2, h3, h4, h5, h6, li, td, th, dt, dd, span, a').append(' ')
 
   const visibleText = normalizeText($('body').text())
   const text = normalizeText(`${visibleText} ${embeddedState}`)
@@ -463,9 +466,13 @@ export async function extractFromImage(imageBuffer: Buffer, timeout = 30_000): P
 export async function fetchAndExtractFromURL(
   url: string,
   timeout = 10_000,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal
 ): Promise<ExtractionResult> {
   const controller = new AbortController()
+  const abort = () => controller.abort(signal?.reason)
+  if (signal?.aborted) abort()
+  else signal?.addEventListener('abort', abort, { once: true })
   const timer = setTimeout(() => controller.abort(), timeout)
   try {
     const response = await fetchImpl(url, {
@@ -501,6 +508,7 @@ export async function fetchAndExtractFromURL(
     return { success: false, error: error instanceof Error ? error.message : 'Fetch failed', source: url }
   } finally {
     clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
   }
 }
 

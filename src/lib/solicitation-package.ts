@@ -17,6 +17,7 @@ interface PackageOptions {
   attachmentTimeoutMs?: number
   maxCombinedText?: number
   fetchImpl?: typeof fetch
+  signal?: AbortSignal
 }
 
 const PROCUREMENT_LINK_TEXT = /\b(?:rfp|rfq|rfi|ifb|solicitation|invitation to bid|bid documents?|request for proposals?|request for quotations?|attachment|amendment|addendum|exhibit|appendix|scope of work|statement of work|specifications?|pricing|price sheet|questions? and answers?|q\s*&\s*a|clarification|terms and conditions)\b/i
@@ -150,7 +151,9 @@ export async function inspectSolicitationPackage(
   const extractedTexts: string[] = [primaryDocument.text]
 
   const inspected = await mapWithConcurrency(selected, 2, async candidate => {
-    const result = await fetchAndExtractFromURL(candidate.url, timeoutMs, options.fetchImpl)
+    const result = options.signal?.aborted
+      ? { success: false, error: 'Page inspection budget expired.' }
+      : await fetchAndExtractFromURL(candidate.url, timeoutMs, options.fetchImpl, options.signal)
     if (!result.success || !result.document) {
       return {
         evidence: {

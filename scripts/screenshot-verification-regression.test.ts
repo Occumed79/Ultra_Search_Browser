@@ -4,6 +4,9 @@ import { validateCandidatePage } from '../src/lib/page-validation'
 import { classifyResultStatus } from '../src/lib/result-status'
 import { evaluateCanonicalResult } from '../src/lib/canonical-result-decision'
 import { extractRfpOpportunityIntelligence, structuredRfpReviewText } from '../src/lib/rfp-opportunity-intelligence'
+import { extractFromHTML } from '../src/lib/document-extraction'
+import { inspectSolicitationPackage } from '../src/lib/solicitation-package'
+import { isVerifiedOpportunity } from '../src/lib/verified-results'
 import type { ScrapedResult } from '../src/types/search'
 
 const candidate: ScrapedResult = {
@@ -65,4 +68,44 @@ test('document links are counted separately from successful extraction', () => {
   assert.equal(intelligence.documentUrls.length, 2)
   assert.equal(intelligence.extractedDocumentCount, 1)
   assert.match(structuredRfpReviewText(intelligence), /Document links: 2\. Documents extracted: 1/)
+})
+
+test('a detail notice excludes navigation and active alternatives from text, dates, hydration and attachments', async () => {
+  const document = extractFromHTML(`<html><head><title>Occupational Health Services</title></head><body><nav><a href="/catalog/rfp">RFP catalog</a></nav><span>Closed</span><h1 data-opportunity-detail-title="true">ITB 26-S-007 Occupational Health Services</h1><dl><dt>Buyer</dt><dd><span data-buyer-logo="true" aria-hidden="true">PC</span>Pulaski County</dd><dt>Closes</dt><dd>Oct 6, 2026 (Closed)</dd></dl><p>Pre-employment medical exams and drug testing for county employees.</p><a href="/files/addendum.pdf">Addendum 1</a><section data-similar-opportunities-section="true"><h2>Active alternatives</h2><p>Construction proposals due December 31, 2099</p><a href="/rfp/unrelated-construction">Construction RFP</a></section><script type="application/json">{"relatedBid":"Construction proposals due December 31, 2099"}</script></body></html>`, candidate.url)
+  assert.match(document.text, /Buyer Pulaski County/)
+  assert.doesNotMatch(document.text, /Construction|2099|RFP catalog/)
+  assert.deepEqual(document.links?.map(link => link.url), ['https://starbridge.ai/files/addendum.pdf'])
+  const opened: string[] = []
+  await inspectSolicitationPackage(candidate.url, document, { fetchImpl: async input => {
+    opened.push(String(input))
+    return new Response('Unavailable', { status: 404 })
+  } })
+  assert.deepEqual(opened, ['https://starbridge.ai/files/addendum.pdf'])
+})
+
+test('attachment requests stop with the page budget instead of extending validation', async () => {
+  const document = extractFromHTML('<body><p>Occupational Health Services RFP</p><a href="/files/rfp.pdf">RFP attachment</a></body>', candidate.url)
+  let opened = 0
+  const packageAnalysis = await inspectSolicitationPackage(candidate.url, document, {
+    signal: AbortSignal.abort(),
+    fetchImpl: async () => { opened++; return new Response('unrelated') },
+  })
+  assert.equal(opened, 0)
+  assert.equal(packageAnalysis.inspectedCount, 0)
+  assert.equal(packageAnalysis.failedCount, 1)
+  assert.equal(packageAnalysis.documents[1].extracted, false)
+})
+
+test('search snippets, timeless documents and unfinished decisions cannot receive an opportunity badge', () => {
+  const page = {
+    checkedAt: '2026-10-06T00:00:00Z', requestedUrl: candidate.url, finalUrl: candidate.url,
+    availability: 'reachable' as const, reason: 'Public notice opened', evidence: ['Response deadline'], extractedTextLength: 500, cached: false,
+    lifecycle: { status: 'open' as const, reason: 'Future deadline', confidence: .9, dates: [] },
+  }
+  const valid = { ...candidate, bucket: 'valid' as const, validation: { status: 'valid' as const, relevance: 1, reason: 'Scope matched', matchedConcepts: [], mode: 'local-rules' as const }, pageValidation: page, canonicalDecision: { decision: 'SHOW' } }
+  assert.equal(isVerifiedOpportunity(valid), true)
+  assert.equal(isVerifiedOpportunity({ ...valid, pageValidation: undefined }), false)
+  assert.equal(isVerifiedOpportunity({ ...valid, canonicalDecision: undefined }), false)
+  assert.equal(isVerifiedOpportunity({ ...valid, pageValidation: { ...page, lifecycle: { ...page.lifecycle, status: 'unknown' } } }), false)
+  assert.equal(isVerifiedOpportunity({ ...valid, pageValidation: { ...page, lifecycle: { ...page.lifecycle, status: 'closed' } } }), false)
 })
