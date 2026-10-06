@@ -1,6 +1,7 @@
 import type { DeepValidationOutcome } from './deep-validation'
 import { assessCanonicalRelevance, getRelevanceProfile, type CanonicalRelevanceAssessment } from './canonical-relevance'
 import type { RfpOpportunityIntelligence } from './rfp-opportunity-intelligence'
+import { isProcurementListingUrl } from './procurement-listing'
 import type {
   ResultBucket,
   ScrapedResult,
@@ -167,6 +168,10 @@ export function evaluateCanonicalResult(rawResult: ScrapedResult): CanonicalResu
     noHardDisqualifier,
     lifecycleStatus
   )
+
+  if (isProcurementListingUrl(page?.finalUrl || result.url)) {
+    return { decision: 'REJECT', reason: 'An agency bid listing is not an individual procurement opportunity; its combined deadlines and service descriptions cannot verify one solicitation.', ...common, procurementConfirmed: false }
+  }
 
   if (page && HARD_REJECT_AVAILABILITY.has(page.availability)) {
     return {

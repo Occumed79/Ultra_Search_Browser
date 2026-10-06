@@ -26,6 +26,7 @@ import { ResultActions } from '../components/result-actions'
 import { useSearch } from '../hooks/use-search'
 import type { RfpOpportunityIntelligence } from '../lib/rfp-opportunity-intelligence'
 import type { SolicitationPackageAnalysis } from '../lib/solicitation-package'
+import { isVerifiedResult } from '../lib/verified-results'
 import type { ResultBucket, ScrapedResult, UserSettings } from '../types/search'
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -127,7 +128,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
   const sourceStyle = SOURCE_COLORS[result.source] ?? 'bg-white/5 text-white/40 border-white/10'
   const lifecycle = result.pageValidation?.lifecycle
   const bucket = result.bucket || (result.validation?.status === 'valid' ? 'valid' : 'uncertain')
-  const verified = result.pageValidation?.availability === 'reachable'
+  const verified = isVerifiedResult(result)
   const intelligence = result.rfpIntelligence
   const dueInDays = daysUntil(intelligence?.dueDate)
   const workspaceKey = intelligence?.opportunityKey || result.entity?.fingerprint || result.url
@@ -168,7 +169,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
             <span className="flex items-center gap-1 text-[10px] text-white/30"><Clock className="h-2.5 w-2.5" />#{result.rank || index + 1}</span>
             {verified && (
               <span className="inline-flex items-center gap-1 rounded-full border border-emerald-300/20 bg-emerald-300/[0.07] px-2 py-0.5 text-[10px] text-emerald-100/75">
-                <ShieldCheck className="h-2.5 w-2.5" /> Package verified
+                <ShieldCheck className="h-2.5 w-2.5" /> Opportunity verified
               </span>
             )}
             <span className={'rounded-full border px-2 py-0.5 text-[10px] ' + BUCKET_STYLES[bucket]}>{BUCKET_LABELS[bucket]}</span>
@@ -215,7 +216,7 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
               </div>
               <div className="flex items-center gap-1 text-[11px] text-white/45">
                 <FileText className="h-3 w-3 text-cyan-200/55" />
-                <span className="text-white/70">Documents:</span> {intelligence.documentUrls.length} inspected/linked
+                <span className="text-white/70">Documents:</span> {intelligence.extractedDocumentCount ?? 0} read · {intelligence.documentUrls.length} linked
               </div>
               {intelligence.contractTerm && <div className="text-[11px] text-white/45"><span className="text-white/70">Term:</span> {intelligence.contractTerm}</div>}
               {intelligence.estimatedValue && <div className="text-[11px] text-white/45"><span className="text-white/70">Value:</span> {intelligence.estimatedValue}</div>}
@@ -316,6 +317,7 @@ export default function Home() {
 
   const visibleResults = useMemo(() => {
     const filtered = (scrapedResults as ResultWithId[]).filter(result => {
+      if (!isVerifiedResult(result)) return false
       if (filterSource && result.source !== filterSource) return false
       if (fitFilter !== 'all' && result.rfpIntelligence?.fitBand !== fitFilter) return false
       if (deadlineFilter !== 'all') {
@@ -424,7 +426,7 @@ export default function Home() {
           <section className="mt-5">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
               <div className="flex flex-wrap items-center gap-2 text-xs text-white/40">
-                <span>{visibleResults.length} matching opportunities · {searchTime.toFixed(0)}ms discovery</span>
+                <span>{isLoading || isEnriching ? `${scrapedResults.length} candidates under review` : `${visibleResults.length} verified opportunities`} · {(searchTime / 1000).toFixed(1)}s discovery</span>
                 {isEnriching && <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/15 bg-cyan-300/[0.06] px-2 py-1 text-[10px] text-cyan-100/65"><Sparkles className="h-3 w-3 animate-pulse" /> Opening pages, attachments, and amendments</span>}
               </div>
               <div className="flex items-center gap-2">

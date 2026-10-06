@@ -60,6 +60,7 @@ export interface RfpOpportunityIntelligence {
   evidence: string[]
   documentUrls: string[]
   attachmentCount: number
+  extractedDocumentCount?: number
   confidence: number
 }
 
@@ -112,6 +113,9 @@ function firstCapture(text: string, patterns: RegExp[], maxLength = 180): string
 
 function opportunityType(text: string): RfpOpportunityType {
   const value = text.toLowerCase()
+  // A numbered notice type takes precedence over portal branding such as "Bid & RFP".
+  const numberedType = value.match(/\b(itb|ifb|rfp|rfq|rfi)\s+[a-z0-9]*\d[a-z0-9]*(?:[-_/][a-z0-9]+)+\b/)?.[1]
+  if (numberedType) return numberedType === 'itb' || numberedType === 'ifb' ? 'IFB' : numberedType.toUpperCase() as RfpOpportunityType
   if (/\brequest for proposals?\b|\brfp\b/.test(value)) return 'RFP'
   if (/\brequest for quotations?\b|\brfq\b/.test(value)) return 'RFQ'
   if (/\brequest for information\b|\brfi\b/.test(value)) return 'RFI'
@@ -131,6 +135,11 @@ function extractOrganization(text: string, url: string): string | undefined {
   ], 140)
   if (explicit) return explicit
 
+  const buyerField = text.match(/\bbuyer\s*:?\s+(.{3,100}?)\s+(?:county|city|state|town|district)\s*[·|,]/i)?.[1]
+  if (buyerField) return clean(buyerField)
+  const namedCounty = text.match(/\b([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\s+County)\b/)?.[1]
+  if (namedCounty) return clean(namedCounty)
+
   try {
     const host = new URL(url).hostname.replace(/^www\./, '')
     if (/\.gov$/i.test(host)) {
@@ -147,6 +156,7 @@ function extractSolicitationNumber(text: string): string | undefined {
   return firstCapture(text, [
     /\b(?:solicitation|procurement|bid|rfp|rfq|rfi|ifb|tender|project|opportunity)\s*(?:number|no\.?|#|id)\s*[:#-]?\s*([A-Z0-9][A-Z0-9._\-/]{2,40})/i,
     /\b(?:number|no\.?|#)\s*[:#-]\s*([A-Z]{1,8}[-_/]\d{2,}[A-Z0-9._\-/]*)/i,
+    /\b(?:itb|ifb|rfp|rfq|rfi)\s+([A-Z0-9]*\d[A-Z0-9]*(?:[-_/][A-Z0-9]+)+)\b/i,
   ], 48)
 }
 
@@ -307,6 +317,7 @@ export function extractRfpOpportunityIntelligence(input: IntelligenceInput): Rfp
     evidence,
     documentUrls,
     attachmentCount: Math.max(0, documentUrls.length - 1),
+    extractedDocumentCount: docs.filter(document => document.extracted && document.textLength > 0).length,
     confidence: Number(confidence.toFixed(2)),
   }
 }
@@ -327,7 +338,7 @@ export function structuredRfpReviewText(intelligence: RfpOpportunityIntelligence
     `Occu-Med fit: ${intelligence.fitBand} (${intelligence.fitScore}/100).`,
     intelligence.matchedCapabilities.length ? `Matched capabilities: ${intelligence.matchedCapabilities.join('; ')}.` : '',
     intelligence.concerns.length ? `Potential disqualifiers or concerns: ${intelligence.concerns.join('; ')}.` : 'No hard scope concern detected.',
-    `Documents inspected: ${intelligence.documentUrls.length}.`,
+    `Document links: ${intelligence.documentUrls.length}. Documents extracted: ${intelligence.extractedDocumentCount ?? 'not confirmed'}.`,
     intelligence.evidence.length ? `Evidence: ${intelligence.evidence.join(' | ')}` : '',
   ].filter(Boolean).join(' '))
 }

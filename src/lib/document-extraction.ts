@@ -188,6 +188,10 @@ export function extractFromHTML(html: string, baseUrl?: string): ExtractedDocume
 
   $('script, style, nav, header, footer, iframe, noscript').remove()
 
+  // Adjacent HTML elements otherwise become "CLOSEDITB" or "BuyerPulaski".
+  $('br').replaceWith(' ')
+  $('div, section, article, p, h1, h2, h3, h4, h5, h6, li, td, th, span').append(' ')
+
   const visibleText = normalizeText($('body').text())
   const text = normalizeText(`${visibleText} ${embeddedState}`)
   const title = normalizeText($('title').text()) || normalizeText($('h1').first().text()) || undefined

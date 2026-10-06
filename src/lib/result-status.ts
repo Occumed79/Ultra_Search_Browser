@@ -44,6 +44,7 @@ const MONTHS: Record<string, number> = {
 }
 
 const DATE_PATTERN = /\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}|(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?[,]?\s+\d{4})\b/gi
+const CLOSED_DATE_LABEL = new RegExp(`\\b(?:closes|closing(?: date)?)\\s*:?\\s*${DATE_PATTERN.source}\\s*\\(closed\\)`, 'i')
 
 function clean(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -139,7 +140,8 @@ export function classifyResultStatus(
   if (/\b(?:contract|bid|solicitation|opportunity)\s+(?:has\s+been\s+)?awarded\b|\bnotice\s+of\s+award\b|\bawardee\b/.test(normalized)) {
     return { status: 'awarded', reason: 'The page identifies the item as awarded.', confidence: 0.96, dates }
   }
-  if (/\b(?:submissions?|responses?|bidding)\s+(?:are\s+)?closed\b|\bclosed\s+(?:solicitation|opportunity|bid)\b|\bno\s+longer\s+accepting\b/.test(normalized)) {
+  if (/\b(?:submissions?|responses?|bidding)\s+(?:are\s+)?closed\b|\bclosed\s+(?:solicitation|opportunity|bid|itb|ifb|rfp|rfq)\b|\b(?:opportunity\s+status|solicitation\s+status|bid\s+status|status)\s*[:\-]?\s*closed\b|\bno\s+longer\s+accepting\b/.test(normalized)
+    || CLOSED_DATE_LABEL.test(normalized)) {
     return { status: 'closed', reason: 'The page explicitly says submissions or bidding are closed.', confidence: 0.97, dates }
   }
   if (/\barchived\s+(?:solicitation|opportunity|notice)\b|\bthis\s+(?:notice|opportunity)\s+has\s+expired\b/.test(normalized)) {
