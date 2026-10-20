@@ -45,7 +45,7 @@ Neon/PostgreSQL persistence, bookmarks, feedback, pursuit learning
 
 For live procurement searches, **Neon OCCU_MED_AWARE relevance scores are distinct from source-backed verification**. A canonical SHOW candidate is now checked against the original public issuing portal before it can receive the green verified badge.
 
-The integration uses original MIT-licensed source code from [@cliwant/mcp-sam-gov](https://github.com/cliwant/mcp-sam-gov) (v1.17.0), copied unchanged with upstream license and provenance under `src/lib/vendor/cliwant`. Ultra Search adds only an adapter, not a new procurement crawler:
+The integration uses original MIT-licensed source code from [@cliwant/mcp-sam-gov](https://github.com/cliwant/mcp-sam-gov) (v1.17.0), copied unchanged with upstream license and provenance under `src/vendor/cliwant`. Ultra Search adds only an adapter, not a new procurement crawler:
 - **OpenGov:** Exact `/portal/:governmentCode/projects/:id` lookup using the existing OpenGov public project-list client. The source's `status=open` and a future `proposalDeadline` are required.
 - **Bonfire:** Exact original opportunity URL match in the issuing organization's active-opportunities RSS feed. Title similarity is not an identity match.
 - **SAM.gov:** Exact 32-hex notice ID using the upstream `SamGovClient`. Requires `active=Yes`, an eligible notice type, and a future response deadline. The existing Render `SAM_GOV_API_KEY` is read on the server only.
