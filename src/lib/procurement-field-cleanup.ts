@@ -3,7 +3,7 @@
  * titles or issuing agencies. Conservative: suppress doubtful buyer strings
  * rather than inventing an organization.
  */
-const UI_ARTIFACT = /\b(?:PrintArrow|LeftArrow|RightArrow|Slideshow|RightSlideshow|LeftSlideshow)\b/g
+const UI_ARTIFACT = /(?:PrintArrow|LeftArrow|RightArrow|Slideshow|RightSlideshow|LeftSlideshow)\b/g
 const BUYER_NOISE = /\b(?:via direct deposit|direct deposit|bank account|payment information|email alerts|subscription|privacy policy|terms of use|change your|proposal requested|browse opportunities|more results|search results|sign in|log in)\b/i
 const BUYER_NAV_PREFIX = /^(?:proposal requested|opportunity details|view procurement|search bids|bid postings)\b/i
 
