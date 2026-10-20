@@ -30,7 +30,7 @@ jobs:
 
           cat > "$targets_file" <<'EOF'
           # Ultra Search Browser
-          https://ultra-search-browser.onrender.com/api/health
+          https://ultra-search-browser-hsbn.onrender.com/api/health
 
           # Network and atlas apps
           https://network-map-tool-mqib.onrender.com/api/health

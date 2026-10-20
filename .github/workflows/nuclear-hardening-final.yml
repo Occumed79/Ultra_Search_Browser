@@ -62,7 +62,7 @@ jobs:
       - name: Wait for exact Render commit and verify positive production path
         if: github.event_name == 'push'
         env:
-          APP_URL: https://ultra-search-browser.onrender.com
+          APP_URL: https://ultra-search-browser-hsbn.onrender.com
           EXPECTED_COMMIT: ${{ github.sha }}
           MAX_WAIT_MS: 720000
           POLL_INTERVAL_MS: 15000
@@ -70,7 +70,7 @@ jobs:
       - name: Run configured live retrieval canaries
         if: github.event_name == 'push'
         env:
-          APP_URL: https://ultra-search-browser.onrender.com
+          APP_URL: https://ultra-search-browser-hsbn.onrender.com
           EXPECTED_COMMIT: ${{ github.sha }}
         run: node scripts/production-user-flow-smoke.mjs
       - name: Publish nuclear hardening success status

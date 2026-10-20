@@ -44,7 +44,7 @@ jobs:
         id: smoke
         continue-on-error: true
         env:
-          APP_URL: https://ultra-search-browser.onrender.com
+          APP_URL: https://ultra-search-browser-hsbn.onrender.com
           EXPECTED_COMMIT: ${{ github.sha }}
           MAX_WAIT_MS: 720000
           POLL_INTERVAL_MS: 15000

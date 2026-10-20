@@ -1,4 +1,4 @@
-const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.com').replace(/\/$/, '')
+const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser-hsbn.onrender.com').replace(/\/$/, '')
 const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
 const CANARY_QUERIES = (process.env.CANARY_QUERIES || 'contract services').split('|').map(query => query.trim()).filter(Boolean)
 const VALID_RETRIEVAL_TRANSPORTS = new Set([

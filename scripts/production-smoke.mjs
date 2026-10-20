@@ -1,4 +1,4 @@
-const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser.onrender.com').replace(/\/$/, '')
+const APP_URL = (process.env.APP_URL || 'https://ultra-search-browser-hsbn.onrender.com').replace(/\/$/, '')
 const EXPECTED_COMMIT = (process.env.EXPECTED_COMMIT || '').trim()
 const MAX_WAIT_MS = Number(process.env.MAX_WAIT_MS || 12 * 60 * 1000)
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 15_000)
