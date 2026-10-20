@@ -49,7 +49,7 @@ test('OpenGov award, evaluation, closed and unknown states cannot pass based on 
     assert.equal(response.verdict,status==='pending'?'unverified':'closed')
   }
 })
-test('OpenGov cannot borrow another project's matching title or deadline',async()=>{
+test('OpenGov cannot borrow another project matching title or deadline',async()=>{
   const candidate={...base,url:'https://procurement.opengov.com/portal/cityofexample/projects/34567',pageValidation:undefined}
   const response=await verifyOfficialOpportunity(candidate,{opengov:async()=>({data:{solicitations:[{id:99999,title:candidate.title,status:'open',proposalDeadline:'2099-11-20'}]},meta:{pagination:{hasMore:false}}})},now)
   assert.equal(response.verdict,'unverified')
