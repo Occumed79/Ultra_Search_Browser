@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { verifyOfficialOpportunity, gateOfficialOpportunities } from '../src/lib/authoritative-procurement'
 import type { ScrapedResult } from '../src/types/search'
-import type { SamOpportunity } from '../src/lib/vendor/cliwant/sam-gov/types'
+import type { SamOpportunity } from '../src/vendor/cliwant/sam-gov/types'
 
 const now = new Date('2026-10-20T05:00:00Z')
 const base: ScrapedResult = {
