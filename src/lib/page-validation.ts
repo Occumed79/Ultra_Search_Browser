@@ -236,7 +236,8 @@ function evidenceExcerpts(text: string, query: string, lifecycle: ResultStatusAs
 async function extractResponse(
   response: Response,
   type: 'pdf' | 'docx' | 'html',
-  baseUrl: string
+  baseUrl: string,
+  publicSolicitation: boolean
 ): Promise<ExtractedDocument> {
   const contentLength = Number(response.headers.get('content-length') || 0)
   if (contentLength > MAX_RESPONSE_BYTES) throw new Error(`Response exceeded ${MAX_RESPONSE_BYTES} bytes`)
@@ -251,7 +252,7 @@ async function extractResponse(
   if (bytes.byteLength > MAX_RESPONSE_BYTES) throw new Error(`Response exceeded ${MAX_RESPONSE_BYTES} bytes`)
   const buffer = Buffer.from(bytes)
   const extraction = type === 'pdf'
-    ? await extractFromPDFBuffer(buffer, { ocrTimeoutMs: 8_500, ocrMaxPages: 2 })
+    ? await extractFromPDFBuffer(buffer, { ocrTimeoutMs: 8_500, ocrMaxPages: 2, publicSolicitation })
     : await extractFromDOCXBuffer(buffer, PAGE_TIMEOUT_MS)
   if (!extraction.success || !extraction.document) throw new Error(extraction.error || `${type.toUpperCase()} extraction failed`)
   return extraction.document
@@ -373,7 +374,7 @@ export async function validateCandidatePage(
       return failureResult(result, 'unsupported', `Unsupported content type: ${contentType || 'unknown'}.`, 'unknown', response.status, finalUrl, contentType)
     }
 
-    let document = await extractResponse(response, type, finalUrl)
+    let document = await extractResponse(response, type, finalUrl, lens === 'procurement')
     let primaryText = clean(document.text).slice(0, MAX_EXTRACTED_TEXT)
     let initialSignal = inspectPageSignals(primaryText, finalUrl, result.url, document.title || result.title)
     let headlessRecovered = false
