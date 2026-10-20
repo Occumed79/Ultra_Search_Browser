@@ -1,4 +1,5 @@
 import { assessCanonicalRelevance } from './canonical-relevance'
+import { cleanOpportunityTitle, trustworthyBuyerCandidate } from './procurement-field-cleanup'
 import type { ResultStatusAssessment } from './result-status'
 
 export type RfpOpportunityType =
@@ -135,10 +136,17 @@ function extractOrganization(text: string, url: string): string | undefined {
     /\b(?:issued by|issuing agency|issuing organization|contracting agency|procuring agency|buyer|department|agency)\s*[:\-]\s*([^.;|]{3,140})/i,
     /\b(?:city|county|town|village|state|department|authority|district|university) of\s+([A-Z][A-Za-z0-9 .,&'\-]{2,100})/,
   ], 140)
-  if (explicit) return explicit.split(/\s+(?:type of government|category|solicitation(?:\s+(?:number|id))?|location|contact|description)\s*:/i)[0].trim()
+  if (explicit) {
+    const candidate = explicit.split(/\s+(?:type of government|category|solicitation(?:\s+(?:number|id))?|location|contact|description)\s*:/i)[0].trim()
+    const buyer = trustworthyBuyerCandidate(candidate)
+    if (buyer) return buyer
+  }
 
   const buyerField = text.match(/\bbuyer\s*:?\s+(.{3,100}?)\s+(?:county|city|state|town|district)\s*[·|,]/i)?.[1]
-  if (buyerField) return clean(buyerField)
+  if (buyerField) {
+    const buyer = trustworthyBuyerCandidate(clean(buyerField))
+    if (buyer) return buyer
+  }
   const namedCounty = text.match(/\b([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+){0,2}\s+County)\b/)?.[1]
   if (namedCounty) return clean(namedCounty)
 
@@ -262,9 +270,9 @@ export function extractRfpOpportunityIntelligence(input: IntelligenceInput): Rfp
   const services = relevance.matchedCapabilities
   const organization = extractOrganization(text, input.url)
   const solicitationNumber = extractSolicitationNumber(text)
-  const title = clean(input.title || firstCapture(text, [
+  const title = cleanOpportunityTitle(clean(input.title || firstCapture(text, [
     /\b(?:project title|solicitation title|opportunity title|title)\s*[:\-]\s*([^.;|]{5,180})/i,
-  ], 180) || services[0] || 'Procurement opportunity')
+  ], 180) || services[0] || 'Procurement opportunity'))
   const dueDate = input.lifecycle.dates
     .filter(date => ['due', 'closing', 'expiration'].includes(date.kind) && date.iso)
     .sort((left, right) => String(right.iso).localeCompare(String(left.iso)))[0]?.iso?.slice(0, 10)
