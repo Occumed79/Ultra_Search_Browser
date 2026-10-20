@@ -90,7 +90,7 @@ test('calendar-date only deadline is valid through its UTC day, not falsely expi
   const c=withIntelligence(ref([{url:samUrl,text:'Official solicitation'}]))
   const d={...notice,responseDeadLine:'2026-10-20'}
   assert.equal((await verifyOfficialOpportunity(c,{sam:async()=>d},now)).verdict,'open')
-  assert.equal((await verifyOfficialOpportunity(c,{sam:async()=>d},new Date('2026-10-21T03:00:00Z'))).verdict,'unverified')
+  assert.equal((await verifyOfficialOpportunity(c,{sam:async()=>d},new Date('2026-10-21T03:00:00Z'))).verdict,'closed')
 })
 test('unreachable official source does not validate a linked third-party listing',async()=>{
   const c=withIntelligence(ref([{url:samUrl,text:'Official solicitation'}]))
