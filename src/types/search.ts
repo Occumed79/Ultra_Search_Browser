@@ -101,6 +101,7 @@ export interface ScrapedResult {
     availability: PageAvailability;
     reason: string;
     evidence: string[];
+    officialSourceLinks?: Array<{ url: string; text: string }>;
     extractedTextLength: number;
     contentHash?: string;
     cached: boolean;
