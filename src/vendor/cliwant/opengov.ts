@@ -45,10 +45,10 @@
  *     (ToolErrorCarrier rethrow FIRST so a 429/5xx keeps its taxonomy).
  */
 
-import { ToolErrorCarrier } from "./errors.js";
-import { getJson, driftError } from "./datasource.js";
-import { num, str } from "./coerce.js";
-import { withMeta, type MetaBundle, type ResponseMeta } from "./meta.js";
+import { ToolErrorCarrier } from "./errors";
+import { getJson, driftError } from "./datasource";
+import { num, str } from "./coerce";
+import { withMeta, type MetaBundle, type ResponseMeta } from "./meta";
 
 // Re-export the shared honesty coercion (num-parity guard).
 export { num };
