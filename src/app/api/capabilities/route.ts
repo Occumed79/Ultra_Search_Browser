@@ -1,4 +1,5 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
+import { ocrSpaceCapabilities } from '../../../lib/ocr-space'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { isKeenableConfigured, keenableKeyCount } from '../../../lib/keenable'
 import {
@@ -83,6 +84,10 @@ export async function GET() {
     ocr: {
       configured: process.env.ENABLE_OCR === 'true',
       label: 'Optional image and scanned-document OCR',
+    },
+    ocrSpace: {
+      ...ocrSpaceCapabilities(),
+      label: 'Optional OCR.space recovery for public scanned procurement PDFs, with three-key rotation and Neon daily quotas',
     },
     optionalEnhancements: {
       cloudflare: {
