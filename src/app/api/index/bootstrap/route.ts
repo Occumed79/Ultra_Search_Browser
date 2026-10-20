@@ -17,13 +17,11 @@ export const maxDuration = 60
 
 function authorized(request: NextRequest): boolean {
   const secret = process.env.INDEX_BOOTSTRAP_SECRET || process.env.CRON_SECRET
-  if (!secret) {
-    return Boolean(process.env.DATABASE_URL)
-  }
+  // Fail closed: no maintenance API mutations are permitted unless an
+  // explicit server-side secret exists. Never accept secrets in URL queries.
+  if (!secret) return false
   const header = request.headers.get('authorization') || ''
-  const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
-  const query = request.nextUrl.searchParams.get('secret') || ''
-  return bearer === secret || query === secret
+  return header === `Bearer ${secret}`
 }
 
 export async function GET() {
@@ -68,6 +66,12 @@ export async function POST(request: NextRequest) {
   if (!process.env.DATABASE_URL) {
     return NextResponse.json(
       { error: 'DATABASE_URL not configured — cannot write index' },
+      { status: 503 }
+    )
+  }
+  if (!process.env.INDEX_BOOTSTRAP_SECRET?.trim() && !process.env.CRON_SECRET?.trim()) {
+    return NextResponse.json(
+      { error: 'Index maintenance is disabled until INDEX_BOOTSTRAP_SECRET or CRON_SECRET is configured' },
       { status: 503 }
     )
   }
