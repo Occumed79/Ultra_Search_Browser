@@ -36,10 +36,10 @@
  *     parsed as an empty set).
  */
 
-import { ToolErrorCarrier } from "./errors.js";
-import { getText, driftError } from "./datasource.js";
-import { num, str } from "./coerce.js";
-import { withMeta, type MetaBundle, type ResponseMeta } from "./meta.js";
+import { ToolErrorCarrier } from "./errors";
+import { getText, driftError } from "./datasource";
+import { num, str } from "./coerce";
+import { withMeta, type MetaBundle, type ResponseMeta } from "./meta";
 
 export { num };
 
