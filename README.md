@@ -34,6 +34,8 @@ Optional Cerebras → Groq post-validation evidence review
     ↓
 SHOW / REVIEW / REJECT
     ↓
+Optional Cloudflare semantic reranking of verified SHOW matches only
+    ↓
 Neon/PostgreSQL persistence, bookmarks, feedback, pursuit learning
 ```
 
