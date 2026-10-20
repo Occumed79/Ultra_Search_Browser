@@ -3,6 +3,7 @@ import { RESEARCH_LIMITS } from '../../../../lib/adaptive-research-planner'
 import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
+import { cloudflareRerankCapabilities, rerankWithCloudflare } from '../../../../lib/cloudflare-reranker'
 import { applyResultFeedbackRanking } from '../../../../lib/result-feedback-ranking'
 import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { createSearchTrace, finishSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
@@ -229,7 +230,27 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const verifiedResults = verifiedOpportunitiesOnly(outcome.buckets.valid)
+        // Semantic ranking is allowed to reorder only already-verified SHOW results.
+        // It must never promote REVIEW or REJECT candidates or alter canonical decisions.
+        let verifiedResults = verifiedOpportunitiesOnly(outcome.buckets.valid)
+        const cloudflareCapabilities = cloudflareRerankCapabilities()
+        let cloudflareRerank = {
+          ...cloudflareCapabilities,
+          used: false,
+          runtimeMs: 0,
+          candidateCount: verifiedResults.length,
+          scoredCount: 0,
+        }
+        if (!testMode && verifiedResults.length > 1 && cloudflareCapabilities.configured) {
+          const ranked = await rerankWithCloudflare(query, verifiedResults)
+          cloudflareRerank = ranked.diagnostics
+          if (ranked.diagnostics.used) {
+            verifiedResults = ranked.results
+              .slice()
+              .sort((left, right) => right.score - left.score)
+              .map((result, index) => ({ ...result, rank: index + 1 }))
+          }
+        }
         let persistenceTimedOut = false
         const persistence = testMode
           ? {
@@ -293,6 +314,7 @@ export async function POST(request: NextRequest) {
             ...outcome.diagnostics,
             verifiedOnly: true,
             verifiedCount: verifiedResults.length,
+            cloudflareRerank,
             pursuitLearningApplied,
             pursuitLearningSkipped: testMode,
             productionValidationMode: testMode,
@@ -305,6 +327,7 @@ export async function POST(request: NextRequest) {
         recordSearchFlightStage(traceId, 'validation.complete', {
           verifiedCount: verifiedResults.length,
           confidence: completion.confidence,
+          cloudflareRerank,
           persistenceTimedOut,
           pursuitLearningApplied,
           bucketCounts: Object.fromEntries(Object.entries(outcome.buckets).map(([key, values]) => [key, values.length])),
