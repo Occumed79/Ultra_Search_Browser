@@ -62,6 +62,17 @@ export interface ScrapedResult {
     overlap: number;
     research?: import('../lib/adaptive-research-planner').ResearchProvenance[];
   };
+  authoritativeVerification?: {
+    verdict: 'open' | 'closed' | 'unverified';
+    source: 'OpenGov' | 'Bonfire' | 'SAM.gov' | 'unsupported';
+    reason: string;
+    checkedAt: string;
+    sourceUrl?: string;
+    buyer?: string;
+    solicitationNumber?: string;
+    deadline?: string;
+    title?: string;
+  };
   semanticRerank?: {
     provider: "cloudflare";
     model: string;
