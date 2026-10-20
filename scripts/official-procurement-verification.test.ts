@@ -43,19 +43,19 @@ test('OpenGov exact project ID open with future proposalDeadline can be verified
   assert.equal(result.verified[0].authoritativeVerification?.source,'OpenGov')
 })
 test('OpenGov award, evaluation, closed and unknown states cannot pass based on a future deadline', async()=>{
-  const candidate={...base,url:'https://procurement.opengov.com/portal/cityofexample/projects/34567'}
+  const candidate={...base,url:'https://procurement.opengov.com/portal/cityofexample/projects/34567',pageValidation:undefined}
   for (const status of ['awarded','evaluation','closed','cancelled','pending']) {
     const response=await verifyOfficialOpportunity(candidate,{opengov:async()=>({data:{solicitations:[{id:34567,status,proposalDeadline:'2099-11-20'}]}})},now)
     assert.equal(response.verdict,status==='pending'?'unverified':'closed')
   }
 })
 test('OpenGov cannot borrow another project's matching title or deadline',async()=>{
-  const candidate={...base,url:'https://procurement.opengov.com/portal/cityofexample/projects/34567'}
+  const candidate={...base,url:'https://procurement.opengov.com/portal/cityofexample/projects/34567',pageValidation:undefined}
   const response=await verifyOfficialOpportunity(candidate,{opengov:async()=>({data:{solicitations:[{id:99999,title:candidate.title,status:'open',proposalDeadline:'2099-11-20'}]},meta:{pagination:{hasMore:false}}})},now)
   assert.equal(response.verdict,'unverified')
 })
 test('Bonfire open RSS must contain the exact opportunity URL',async()=>{
-  const candidate={...base,url:'https://examplecounty.bonfirehub.com/opportunities/80501'}
+  const candidate={...base,url:'https://examplecounty.bonfirehub.com/opportunities/80501',pageValidation:undefined}
   const yes=await verifyOfficialOpportunity(candidate,{bonfire:async()=>({data:{opportunities:[
     {link:'https://examplecounty.bonfirehub.com/opportunities/80501',name:'Medical RFP',referenceNumber:'80-501'}
   ]}})},now)
@@ -67,7 +67,7 @@ test('Bonfire open RSS must contain the exact opportunity URL',async()=>{
 })
 test('SAM.gov notice ID matching, inactive and award status override relevance',async()=>{
   const id='abcdef1234567890abcdef1234567890'
-  const candidate={...base,url:'https://sam.gov/opp/'+id+'/view'}
+  const candidate={...base,url:'https://sam.gov/opp/'+id+'/view',pageValidation:undefined}
   const record:SamOpportunity={noticeId:id,title:'Clinic medical exam award',responseDeadLine:'2099-10-20',type:'o',active:'Yes'}
   const yes=await verifyOfficialOpportunity(candidate,{sam:async()=>record},now)
   assert.equal(yes.verdict,'open')
@@ -86,7 +86,7 @@ test('unsupported Passaic city portal and Arvada file storage stay REVIEW rather
 })
 test('source outage never becomes open and source code is third-party, not a rewritten collector',async()=>{
   const url='https://procurement.opengov.com/portal/cityofexample/projects/34567'
-  const proof=await verifyOfficialOpportunity({...base,url},{opengov:async()=>{throw Error('rate limit')}},now)
+  const proof=await verifyOfficialOpportunity({...base,url,pageValidation:undefined},{opengov:async()=>{throw Error('rate limit')}},now)
   assert.equal(proof.verdict,'unverified')
   const src=readFileSync(new URL('../src/app/api/search/validate/route.ts',import.meta.url),'utf8')
   assert.match(src,/gateOfficialOpportunities/)
