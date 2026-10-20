@@ -54,7 +54,11 @@ The integration uses original MIT-licensed source code from [@cliwant/mcp-sam-go
 
 The source connectors have bounded lookups and fail conservatively. The application retains its existing discovery providers, OCR.space, Cloudflare ranking (applied after the new gate), and `OCCU_MED_AWARE` service relevance rules. Synthetic `testMode` leaves third-party calls disabled. Existing saved records may need revalidation before being labeled confirmed.
 
-This initially supports **exact direct portal URLs only**, not arbitrary citations to those portals from external pages. Wider official-source coverage should be added by integrating published connectors and running issuer-specific regression tests, not by inflating relevance scores or automatically interpreting any future date as an open deadline.
+The source-link enhancement also examines **explicitly labeled original/official record hyperlinks** extracted from third-party procurement pages. The link must point to a recognized exact OpenGov project, Bonfire opportunity, or SAM.gov notice, and the primary-source result must independently corroborate the listing using a strong solicitation number plus title, or independently agreeing title and buyer. A link to an unrelated open bid cannot promote a result. At most two original-source links are examined per candidate, with existing server-side lookup budgets.
+
+The review queue displays the source verification reason, and verified cards provide a separate **View original notice** link when found on an intermediary site. Date-only source deadlines remain eligible through their UTC calendar date; precise source deadlines retain their own timestamps. SAM.gov presolicitations, sources-sought, and other non-offer notice types cannot be labeled open solicitations merely because they are active and dated in the future.
+
+This integration still does not treat search-engine summaries, guessed source URLs, a numerical fit score, or third-party future dates as procurement verification. Wider official-source coverage should be added by integrating published connectors and running issuer-specific regression tests, not by inflating relevance scores or automatically interpreting any future date as an open deadline.
 
 ## OCR.space recovery for public procurement PDFs
 

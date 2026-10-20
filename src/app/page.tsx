@@ -264,6 +264,11 @@ function SearchResultCard({ result, index, settings }: { result: ResultWithId; i
               <ExternalLink className="h-3 w-3" /> Open opportunity
             </a>
             <span className="text-[11px] text-white/25">{domain}</span>
+            {verified && result.authoritativeVerification?.sourceUrl && result.authoritativeVerification.sourceUrl !== result.url && (
+              <a href={result.authoritativeVerification.sourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-[11px] text-emerald-300/75 hover:text-emerald-200">
+                <ShieldCheck className="h-3 w-3" /> View original {result.authoritativeVerification.source} notice
+              </a>
+            )}
             <div className="ml-auto flex items-center gap-2">
               <OpportunityWorkspace opportunityKey={workspaceKey} title={intelligence?.title || result.title} />
               <ResultActions url={result.url} resultId={result.id} domain={domain} feedbackContext={feedbackContext} />
@@ -468,7 +473,7 @@ export default function Home() {
                 <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] text-white/55"><ChevronDown className="h-4 w-4" />{excludedCount} leads needing verification, expired, rejected, or duplicate results<span className="ml-auto text-[10px] text-white/30">review evidence</span></summary>
                 <div className="mt-3 space-y-4">
                   {excludedBuckets.map(({ bucket, results }) => (
-                    <div key={bucket}><div className="mb-2 flex items-center gap-2"><span className={'rounded-full border px-2 py-1 text-[10px] ' + BUCKET_STYLES[bucket]}>{BUCKET_LABELS[bucket]} · {results.length}</span></div><div className="space-y-2">{results.slice(0, 20).map(result => <a key={`${bucket}-${result.url}`} href={result.url} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-white/[0.06] bg-black/10 px-3 py-2 hover:border-white/15"><p className="line-clamp-1 text-[11px] text-white/60">{result.title}</p><p className="mt-1 line-clamp-2 text-[10px] text-white/35">{result.pageValidation?.lifecycle.reason || result.pageValidation?.reason || result.validation?.reason}</p></a>)}</div></div>
+                    <div key={bucket}><div className="mb-2 flex items-center gap-2"><span className={'rounded-full border px-2 py-1 text-[10px] ' + BUCKET_STYLES[bucket]}>{BUCKET_LABELS[bucket]} · {results.length}</span></div><div className="space-y-2">{results.slice(0, 20).map(result => <a key={`${bucket}-${result.url}`} href={result.url} target="_blank" rel="noopener noreferrer" className="block rounded-lg border border-white/[0.06] bg-black/10 px-3 py-2 hover:border-white/15"><p className="line-clamp-1 text-[11px] text-white/60">{result.title}</p><p className="mt-1 line-clamp-2 text-[10px] text-white/35">{result.authoritativeVerification?.reason || result.pageValidation?.lifecycle.reason || result.pageValidation?.reason || result.validation?.reason}</p></a>)}</div></div>
                   ))}
                 </div>
               </details>
