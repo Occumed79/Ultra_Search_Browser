@@ -41,6 +41,21 @@ Neon/PostgreSQL persistence, bookmarks, feedback, pursuit learning
 
 **Google, Google CSE, Bing, and DuckDuckGo are not rescue-only sources.** Ultra Search explicitly requests them as part of its normal SearXNG engine ensemble. The separate direct Google/DuckDuckGo/Bing rescue pass is an additional fallback transport used only when aggregate primary coverage is unexpectedly sparse.
 
+## Source-backed procurement status verification
+
+For live procurement searches, **Neon OCCU_MED_AWARE relevance scores are distinct from source-backed verification**. A canonical SHOW candidate is now checked against the original public issuing portal before it can receive the green verified badge.
+
+The integration uses original MIT-licensed source code from [@cliwant/mcp-sam-gov](https://github.com/cliwant/mcp-sam-gov) (v1.17.0), copied with upstream license and minimal Next.js import-path compatibility edits under `src/vendor/cliwant`. Ultra Search adds only an adapter, not a new procurement crawler:
+- **OpenGov:** Exact `/portal/:governmentCode/projects/:id` lookup using the existing OpenGov public project-list client. The source's `status=open` and a future `proposalDeadline` are required.
+- **Bonfire:** Exact original opportunity URL match in the issuing organization's active-opportunities RSS feed. Title similarity is not an identity match.
+- **SAM.gov:** Exact 32-hex notice ID using the upstream `SamGovClient`. Requires `active=Yes`, an eligible notice type, and a future response deadline. The existing Render `SAM_GOV_API_KEY` is read on the server only.
+
+**Unsupported local-government portals, third-party aggregators (including HigherGov), inaccessible records, unknown deadlines, source errors, and candidates beyond the bounded lookup budget go to Needs verification**, not to green Verified. Official closed, awarded, or cancelled statuses override an earlier future-date guess and move the record to Expired/Closed. Real opportunities from other portals can therefore be found as research leads while they await a source adapter; they are not deleted.
+
+The source connectors have bounded lookups and fail conservatively. The application retains its existing discovery providers, OCR.space, Cloudflare ranking (applied after the new gate), and `OCCU_MED_AWARE` service relevance rules. Synthetic `testMode` leaves third-party calls disabled. Existing saved records may need revalidation before being labeled confirmed.
+
+This initially supports **exact direct portal URLs only**, not arbitrary citations to those portals from external pages. Wider official-source coverage should be added by integrating published connectors and running issuer-specific regression tests, not by inflating relevance scores or automatically interpreting any future date as an open deadline.
+
 ## OCR.space recovery for public procurement PDFs
 
 If `ENABLE_OCR_SPACE=true` and the existing `OCR_API_KEY`, `OCR_API_KEY_2`, and `OCR_API_KEY_3` are set in Render, Ultra Search can recover text from **publicly accessible solicitation PDFs** that contain too little selectable text. A server-side PDF validation fetch must succeed first; documents are uploaded as PDF bytes to OCR.space using a POST header, **never by passing a sensitive source URL**. Private files, local documents, medical records, and non-procurement searches are excluded.

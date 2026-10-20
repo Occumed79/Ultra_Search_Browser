@@ -49,9 +49,15 @@ function fileCandidate(absolute) {
 }
 
 function resolveImport(fromFile, specifier) {
-  if (specifier.startsWith('.')) return fileCandidate(path.resolve(path.dirname(fromFile), specifier))
-  if (specifier.startsWith('@/')) return fileCandidate(path.join(srcRoot, specifier.slice(2)))
-  return null
+  const absolute = specifier.startsWith('.')
+    ? path.resolve(path.dirname(fromFile), specifier)
+    : specifier.startsWith('@/')
+      ? path.join(srcRoot, specifier.slice(2))
+      : null
+  if (!absolute) return null
+  // TypeScript NodeNext source legitimately imports sibling .js paths which
+  // resolve to the corresponding .ts file before compilation.
+  return fileCandidate(absolute) || (/\.js$/.test(absolute) ? fileCandidate(absolute.slice(0, -3) + '.ts') : null)
 }
 
 function isLocalSpecifier(specifier) {

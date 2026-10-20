@@ -4,6 +4,7 @@ import { NextRequest } from 'next/server'
 import { deepValidateResults, type DeepValidationEvent } from '../../../../lib/deep-validation'
 import { indexResultsInPersistentMemory } from '../../../../lib/memory-indexing'
 import { cloudflareRerankCapabilities, rerankWithCloudflare } from '../../../../lib/cloudflare-reranker'
+import { gateOfficialOpportunities } from '../../../../lib/authoritative-procurement'
 import { applyResultFeedbackRanking } from '../../../../lib/result-feedback-ranking'
 import { coerceSemanticIntentPlan } from '../../../../lib/semantic-intent'
 import { createSearchTrace, finishSearchTrace, recordSearchFlightStage } from '../../../../lib/search-flight-recorder'
@@ -230,8 +231,25 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Semantic ranking is allowed to reorder only already-verified SHOW results.
-        // It must never promote REVIEW or REJECT candidates or alter canonical decisions.
+        // The canonical relevance threshold is NOT an authoritative procurement
+        // status. Third-party hits are leads until the issuing portal confirms
+        // the exact solicitation ID and the offer-accepting state.
+        let officialSourceGate = {
+          checked: 0, open: 0, closed: 0, review: 0, unsupported: 0, limited: 0, skipped: testMode,
+        }
+        if (!testMode && outcome.buckets.valid.length > 0) {
+          const official = await gateOfficialOpportunities(outcome.buckets.valid)
+          outcome.buckets.valid = official.verified
+          outcome.buckets.uncertain.push(...official.review)
+          outcome.buckets.expired.push(...official.closed)
+          officialSourceGate = { ...official.diagnostics, skipped: false }
+          outcome.progress.valid = official.verified.length
+          outcome.progress.uncertain += official.review.length
+          outcome.progress.expired += official.closed.length
+          recordSearchFlightStage(traceId, 'validation.official-records', officialSourceGate)
+        }
+
+        // Semantic reranking NEVER promotes a record past the official gate.
         let verifiedResults = verifiedOpportunitiesOnly(outcome.buckets.valid)
         const cloudflareCapabilities = cloudflareRerankCapabilities()
         let cloudflareRerank = {
@@ -314,6 +332,7 @@ export async function POST(request: NextRequest) {
             ...outcome.diagnostics,
             verifiedOnly: true,
             verifiedCount: verifiedResults.length,
+            officialSourceGate,
             cloudflareRerank,
             pursuitLearningApplied,
             pursuitLearningSkipped: testMode,

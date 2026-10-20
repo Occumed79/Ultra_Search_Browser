@@ -43,7 +43,8 @@
     "tailwindcss": "^3.4.17",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "tsx": "^4.23.1"

@@ -40,6 +40,7 @@ function validated(result, index) {
       mode: 'local-rules',
     },
     canonicalDecision: { decision, reason: approved ? 'Open and relevant.' : 'Manual evidence review required.' },
+    authoritativeVerification: approved ? { verdict: 'open', source: 'OpenGov', reason: 'Synthetic test fixture: official source matched', checkedAt: new Date().toISOString() } : undefined,
     pageValidation: {
       checkedAt: new Date().toISOString(),
       requestedUrl: result.url,
@@ -246,7 +247,7 @@ async function runViewport(browser, width, height) {
 
   await page.getByText(/verified opportunities/).waitFor({ timeout: 10_000 })
   await page.getByText('49 verified opportunities', { exact: false }).waitFor({ timeout: 10_000 })
-  await page.getByText('1 unavailable, expired, rejected, or duplicate results', { exact: false }).waitFor({ timeout: 10_000 })
+  await page.getByText('1 leads needing verification, expired, rejected, or duplicate results', { exact: false }).waitFor({ timeout: 10_000 })
   assert((await input.inputValue()) === 'employee medical examinations', 'newer search did not remain authoritative')
   assert(page.url().includes('q=employee+medical+examinations') || page.url().includes('q=employee%20medical%20examinations'), `shareable URL did not track final search: ${page.url()}`)
 
