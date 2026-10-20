@@ -1,4 +1,5 @@
 import { cloudflareRerankCapabilities } from '../../../lib/cloudflare-reranker'
+import { ocrSpaceCapabilities } from '../../../lib/ocr-space'
 import { databaseSchemaState } from '../../../lib/database-schema-lifecycle'
 import { externalSmartFilterCapabilities } from '../../../lib/external-smart-filter'
 import { headlessRecoveryCapabilities } from '../../../lib/headless-page-recovery'
@@ -132,6 +133,7 @@ function healthPayload() {
         maxPerMinute: headless.maxPerMinute,
         timeoutMs: headless.timeoutMs,
       },
+      ocrSpace: ocrSpaceCapabilities(),
       ocr: process.env.ENABLE_OCR === 'true',
       scannedPdfOcr: process.env.ENABLE_OCR === 'true',
       pdfOcrRasterizer: process.env.PDFTOPPM_PATH?.trim() ? 'configured-path' : 'system-path',
