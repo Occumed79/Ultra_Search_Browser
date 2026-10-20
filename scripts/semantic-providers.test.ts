@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   cloudflareRerankCapabilities,
   parseCloudflareRerankScores,
+  rerankWithCloudflare,
 } from '../src/lib/cloudflare-reranker'
 import {
   geminiResponseSchema,
@@ -175,6 +177,38 @@ test('Cloudflare reranker scores are parsed and normalized', () => {
   assert.equal(scores.size, 2)
   assert.equal(scores.get(1), 0.91)
   assert.ok((scores.get(0) || 0) > 0 && (scores.get(0) || 0) < 0.5)
+})
+
+test('Cloudflare reranking preserves verification data and reports a successful API call', async () => {
+  const results = [
+    { title: 'Qualified first provider', url: 'https://example.org/a', description: 'Medical services', domain: 'example.org', source: 'test', rank: 1, score: 10, bucket: 'valid', validation: { status: 'valid' } },
+    { title: 'Qualified second provider', url: 'https://example.org/b', description: 'Occupational health', domain: 'example.org', source: 'test', rank: 2, score: 10, bucket: 'valid', validation: { status: 'valid' } },
+  ]
+  const fetchImpl = (async (_url: string | URL | Request, _init?: RequestInit) =>
+    new Response(JSON.stringify({ success: true, result: { response: [
+      { id: 0, score: 0.1 },
+      { id: 1, score: 0.95 },
+    ] } }), { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+  const ranked = await rerankWithCloudflare('medical RFP', results as never, {
+    CLOUDFLARE_ACCOUNT_ID: 'fake-account',
+    CLOUDFLARE_API_TOKEN: 'fake-token',
+  }, fetchImpl)
+
+  assert.equal(ranked.diagnostics.used, true)
+  assert.equal(ranked.diagnostics.scoredCount, 2)
+  assert.ok(ranked.results[1].score > ranked.results[0].score)
+  assert.equal(ranked.results[0].validation?.status, 'valid')
+  assert.equal(ranked.results[1].bucket, 'valid')
+})
+
+test('production Cloudflare reranking is applied only after the verified SHOW gate', () => {
+  const source = readFileSync(new URL('../src/app/api/search/validate/route.ts', import.meta.url), 'utf8')
+  const verifiedIndex = source.indexOf('verifiedOpportunitiesOnly(outcome.buckets.valid)')
+  const rerankIndex = source.indexOf('await rerankWithCloudflare(query, verifiedResults)')
+  assert.ok(verifiedIndex >= 0)
+  assert.ok(rerankIndex > verifiedIndex)
+  assert.match(source, /if \(!testMode && verifiedResults\.length > 1 && cloudflareCapabilities\.configured\)/)
+  assert.match(source, /cloudflareRerank,\s*pursuitLearningApplied/)
 })
 
 test('complex Gemini intent expands the adaptive fan-out without losing original queries', () => {
