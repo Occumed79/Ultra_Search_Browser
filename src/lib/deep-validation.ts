@@ -276,6 +276,7 @@ export async function deepValidateResults(
           availability: page.availability,
           reason: page.reason,
           evidence: page.evidence,
+          officialSourceLinks: page.officialSourceLinks,
           extractedTextLength: page.extractedTextLength,
           contentHash: page.contentHash,
           cached: page.cached,
