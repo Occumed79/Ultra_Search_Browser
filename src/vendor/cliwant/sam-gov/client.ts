@@ -13,14 +13,14 @@
  * to layer 2 transparently. Callers don't have to care.
  */
 
-import { ToolErrorCarrier } from "../errors.js";
+import { ToolErrorCarrier } from "../errors";
 import type {
   EntitySearchResult,
   SamGovClientOptions,
   SamOpportunity,
   SamSearchFilters,
   SamSearchResult,
-} from "./types.js";
+} from "./types";
 
 const PROD_BASE = "https://api.sam.gov/opportunities/v2/search";
 const ENTITY_BASE = "https://api.sam.gov/entity-information/v3/entities";
