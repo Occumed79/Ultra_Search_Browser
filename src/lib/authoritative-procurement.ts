@@ -96,9 +96,11 @@ export async function verifyOfficialOpportunity(raw: ScrapedResult, lookups: Off
   if (!target) return result('unverified','unsupported','No supported issuing-portal record was identified. A search result or third-party listing cannot verify open status.')
   try {
     if (target.platform === 'opengov') {
-      const lookup = lookups.opengov || searchSolicitations
       for (let page=0;page<3;page++) {
-        const response = await bounded(()=>lookup({governmentCode:target.code,limit:100,offset:page*100}))
+        const args = {governmentCode:target.code,limit:100,offset:page*100}
+        const response = lookups.opengov
+          ? await bounded(()=>lookups.opengov!(args))
+          : await bounded(()=>searchSolicitations(args))
         const data = response.data as {solicitations: GovRecord[]}
         const match = data.solicitations.find(item=>item.id === target.id)
         if (!match) {
@@ -114,8 +116,10 @@ export async function verifyOfficialOpportunity(raw: ScrapedResult, lookups: Off
       return result('unverified','OpenGov','Exact project ID not found within bounded official OpenGov search.')
     }
     if (target.platform === 'bonfire') {
-      const lookup = lookups.bonfire || searchOpportunities
-      const response = await bounded(()=>lookup({org:target.org,limit:200,offset:0}))
+      const args = {org:target.org,limit:200,offset:0}
+      const response = lookups.bonfire
+        ? await bounded(()=>lookups.bonfire!(args))
+        : await bounded(()=>searchOpportunities(args))
       const data = response.data as {opportunities: BonRecord[]}
       const key = pathKey(candidate.pageValidation?.finalUrl || candidate.url)
       const hit = data.opportunities.find(item=>item.link && pathKey(item.link) === key)
