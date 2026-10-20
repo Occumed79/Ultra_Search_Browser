@@ -3,10 +3,10 @@
  * Procurement fit from Neon is independent from authoritative OPEN status.
  * Only an exact source-portal identity may carry an "Opportunity verified" badge.
  */
-import { searchSolicitations } from './vendor/cliwant/opengov'
-import { searchOpportunities } from './vendor/cliwant/bonfire'
-import { SamGovClient } from './vendor/cliwant/sam-gov/client'
-import type { SamOpportunity } from './vendor/cliwant/sam-gov/types'
+import { searchSolicitations } from '../vendor/cliwant/opengov'
+import { searchOpportunities } from '../vendor/cliwant/bonfire'
+import { SamGovClient } from '../vendor/cliwant/sam-gov/client'
+import type { SamOpportunity } from '../vendor/cliwant/sam-gov/types'
 import type { RfpOpportunityIntelligence } from './rfp-opportunity-intelligence'
 import type { ScrapedResult } from '../types/search'
 
