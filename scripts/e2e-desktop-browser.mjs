@@ -40,6 +40,7 @@ function validated(result, index) {
       mode: 'local-rules',
     },
     canonicalDecision: { decision, reason: approved ? 'Open and relevant.' : 'Manual evidence review required.' },
+    authoritativeVerification: approved ? { verdict: 'open', source: 'OpenGov', reason: 'Synthetic test fixture: official source matched', checkedAt: new Date().toISOString() } : undefined,
     pageValidation: {
       checkedAt: new Date().toISOString(),
       requestedUrl: result.url,
