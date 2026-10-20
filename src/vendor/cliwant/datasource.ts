@@ -38,7 +38,7 @@ import {
   ToolErrorCarrier,
   isHonorRetryAfter,
   type ToolError,
-} from "./errors.js";
+} from "./errors";
 
 export type GetJsonOptions = {
   /** fetchWithRetry taxonomy + error surface. HOST-ONLY, never a token. */
