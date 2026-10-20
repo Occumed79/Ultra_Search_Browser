@@ -70,6 +70,9 @@ function linkedRecordMatches(candidate: Candidate, proof: AuthorityEvidence): bo
   const title=similarity(candidate.rfpIntelligence?.title || candidate.title, proof.title)
   const candidateId=normalId(candidate.rfpIntelligence?.solicitationNumber)
   const officialId=normalId(proof.solicitationNumber)
+  // Conflicting reliable identifiers are disqualifying. Buyer/title similarity
+  // must never override an explicit disagreement about the solicitation ID.
+  if (isStrongId(candidateId) && isStrongId(officialId) && candidateId !== officialId) return false
   const idMatch=isStrongId(candidateId) && candidateId===officialId
   const buyerMatch=similarity(candidate.rfpIntelligence?.organization,proof.buyer)>=0.75
   return (idMatch && title>=0.40) || (title>=0.82 && buyerMatch)
