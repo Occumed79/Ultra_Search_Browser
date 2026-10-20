@@ -42,6 +42,39 @@ export interface OfficialGateResult {
 const MAX_LOOKUPS = 12
 const LOOKUP_MS = 3200
 const clean = (value: string | null | undefined) => (value || '').replace(/\s+/g, ' ').trim()
+
+const TITLE_STOP_WORDS = new Set(['and','the','for','with','from','of','a','an','by','on','to','rfp','rfq','ifb','bid','solicitation','opportunity','services','service','contract','request','proposal','proposals','project','notice'])
+function substantiveWords(input: string | null | undefined): Set<string> {
+  return new Set(clean(input).toLowerCase().normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .split(/[^a-z0-9]+/)
+    .filter(word => word.length >= 3 && !TITLE_STOP_WORDS.has(word)))
+}
+function similarity(left: string | null | undefined, right: string | null | undefined): number {
+  const a=substantiveWords(left),b=substantiveWords(right)
+  if(a.size < 2 || b.size < 2) return 0
+  let matches=0
+  for(const word of a) if(b.has(word)) matches++
+  if(matches < 2) return 0
+  return (2*matches)/(a.size+b.size)
+}
+function normalId(value: string | null | undefined): string {
+  return clean(value).toUpperCase().replace(/[^A-Z0-9]/g,'')
+}
+function isStrongId(value: string): boolean {
+  return value.length >= 6 && /\d/.test(value) && /[A-Z0-9]/.test(value)
+}
+/** A third-party link alone is never an identity proof: independent title and
+ * solicitation number, or title and buyer, must corroborate the original. */
+function linkedRecordMatches(candidate: Candidate, proof: AuthorityEvidence): boolean {
+  const title=similarity(candidate.rfpIntelligence?.title || candidate.title, proof.title)
+  const candidateId=normalId(candidate.rfpIntelligence?.solicitationNumber)
+  const officialId=normalId(proof.solicitationNumber)
+  const idMatch=isStrongId(candidateId) && candidateId===officialId
+  const buyerMatch=similarity(candidate.rfpIntelligence?.organization,proof.buyer)>=0.75
+  return (idMatch && title>=0.40) || (title>=0.82 && buyerMatch)
+}
+
 function pathKey(raw: string) {
   try {
     const u = new URL(raw)
@@ -70,8 +103,12 @@ function identifyTarget(raw: string): {platform:'opengov';code:string;id:number}
 }
 function future(value: string | null | undefined, now: Date) {
   if (!value) return false
+  const dateOnly = /^\d{4}-\d{1,2}-\d{1,2}$/.test(value.trim())
   const timestamp = new Date(value).getTime()
-  return Number.isFinite(timestamp) && timestamp >= now.getTime()
+  // A source that specifies only a calendar date has not supplied a time zone
+  // or an hour. Keep it eligible through that UTC calendar day; do not invent
+  // an exact local submission time.
+  return Number.isFinite(timestamp) && (dateOnly ? timestamp+86_400_000 : timestamp) > now.getTime()
 }
 function iso(value: string | null | undefined) {
   if (!value) return undefined
@@ -93,7 +130,23 @@ const samClient = new SamGovClient({apiKey:process.env.SAM_GOV_API_KEY || undefi
 export async function verifyOfficialOpportunity(raw: ScrapedResult, lookups: OfficialLookups = {}, now = new Date()): Promise<AuthorityEvidence> {
   const candidate = raw as Candidate
   const target = identifyTarget(candidate.pageValidation?.finalUrl || candidate.url)
-  if (!target) return result('unverified','unsupported','No supported issuing-portal record was identified. A search result or third-party listing cannot verify open status.')
+  if (!target) {
+    // Recover original procurement records ONLY from explicitly labeled links
+    // captured from this candidate's actual page. No guessed URLs or title
+    // searches, and never trust a related-item link without identity agreement.
+    const links = candidate.pageValidation?.officialSourceLinks?.slice(0,2) || []
+    for (const link of links) {
+      if (!identifyTarget(link.url)) continue
+      const officialCandidate: Candidate = {...candidate, url:link.url, pageValidation:undefined}
+      const proof=await verifyOfficialOpportunity(officialCandidate,lookups,now)
+      if (proof.source === 'unsupported' || proof.verdict === 'unverified') continue
+      if (!linkedRecordMatches(candidate,proof)) continue
+      return {...proof, reason: proof.reason+' Matched to original-source link using independent solicitation identity and title.'}
+    }
+    return result('unverified','unsupported',
+      links.length ? 'Original-source links were checked, but official status or solicitation identity could not be independently corroborated.'
+        : 'No supported issuing-portal record was identified. A search result or third-party listing cannot verify open status.')
+  }
   try {
     if (target.platform === 'opengov') {
       for (let page=0;page<3;page++) {
@@ -133,7 +186,7 @@ export async function verifyOfficialOpportunity(raw: ScrapedResult, lookups: Off
     if (!notice || notice.noticeId.replace(/-/g,'').toLowerCase()!==target.id) return result('unverified','SAM.gov','Exact SAM.gov notice ID was not confirmed.')
     const fields={sourceUrl:notice.uiLink || candidate.url,buyer:notice.fullParentPathName,solicitationNumber:notice.solicitationNumber,title:notice.title,deadline:iso(notice.responseDeadLine)}
     if (notice.active==='No' || notice.type==='a' || (notice.responseDeadLine && !future(notice.responseDeadLine,now))) return result('closed','SAM.gov','Official notice inactive, awarded or past deadline.',fields)
-    if (notice.active==='Yes' && future(notice.responseDeadLine,now)) return result('open','SAM.gov','Exact active SAM.gov notice with future deadline confirmed.',fields)
+    if (notice.active==='Yes' && (notice.type==='o' || notice.type==='k') && future(notice.responseDeadLine,now)) return result('open','SAM.gov','Exact active SAM.gov solicitation or combined notice with future response deadline confirmed.',fields)
     return result('unverified','SAM.gov','Official SAM.gov active status or deadline is incomplete.',fields)
   } catch {
     const source=target.platform==='sam'?'SAM.gov':target.platform==='bonfire'?'Bonfire':'OpenGov'
