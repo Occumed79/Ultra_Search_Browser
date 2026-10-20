@@ -7,6 +7,7 @@ import * as cheerio from 'cheerio'
 import pdfParse from 'pdf-parse'
 import Tesseract from 'tesseract.js'
 import mammoth from 'mammoth'
+import { recognizePublicSolicitationPdf } from './ocr-space'
 
 // Server-side only: this module uses binary parsers and must not be imported
 // into client components.
@@ -340,11 +341,35 @@ export async function extractScannedPdfWithOcr(
 
 export async function extractFromPDFBuffer(
   buffer: Buffer,
-  options: { ocrTimeoutMs?: number; ocrMaxPages?: number } = {}
+  options: { ocrTimeoutMs?: number; ocrMaxPages?: number; publicSolicitation?: boolean } = {}
 ): Promise<ExtractionResult> {
   try {
     const data = await pdfParse(buffer)
     const text = normalizeText(data.text)
+    if (text.length < 180 && options.publicSolicitation === true) {
+      const external = await recognizePublicSolicitationPdf(buffer, {
+        pageCount: data.numpages,
+        timeoutMs: options.ocrTimeoutMs ?? 8_500,
+      })
+      if (external.success && external.text.length > text.length) {
+        return {
+          success: true,
+          document: {
+            text: external.text,
+            title: external.text.slice(0, 180),
+            metadata: {
+              fileType: 'pdf-ocr-space',
+              pageCount: data.numpages,
+              author: data.info?.Author,
+              createdDate: data.info?.CreationDate,
+              modifiedDate: data.info?.ModDate,
+            },
+            entities: extractEntities(external.text),
+            sections: textSections(external.text, 30),
+          },
+        }
+      }
+    }
     if (text.length < 180 && isOCREnabled()) {
       const ocr = await extractScannedPdfWithOcr(
         buffer,
