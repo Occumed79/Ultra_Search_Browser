@@ -8,6 +8,7 @@ import {
 import { recoverClientRenderedDocument } from './headless-page-recovery'
 import { classifyResultStatus, type ResultStatusAssessment } from './result-status'
 import { isProcurementListingUrl } from './procurement-listing'
+import { officialSourceLinks, type SourceLink } from './official-source-links'
 import {
   extractRfpOpportunityIntelligence,
   type RfpOpportunityIntelligence,
@@ -38,6 +39,7 @@ export interface PageValidationResult {
   availability: PageAvailability
   reason: string
   evidence: string[]
+  officialSourceLinks?: SourceLink[]
   extractedText: string
   extractedTextLength: number
   title?: string
@@ -466,6 +468,7 @@ export async function validateCandidatePage(
         ? `${signal.reason} Inspected ${packageAnalysis.inspectedCount} linked solicitation document${packageAnalysis.inspectedCount === 1 ? '' : 's'}.`
         : signal.reason}${recoveryNote}`.trim(),
       evidence: evidenceExcerpts(extractedText, query, lifecycle),
+      officialSourceLinks: lens === 'procurement' ? officialSourceLinks(document.links, finalUrl) : undefined,
       extractedText,
       extractedTextLength: extractedText.length,
       title: document.title,
