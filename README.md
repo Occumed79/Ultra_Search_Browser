@@ -41,6 +41,16 @@ Neon/PostgreSQL persistence, bookmarks, feedback, pursuit learning
 
 **Google, Google CSE, Bing, and DuckDuckGo are not rescue-only sources.** Ultra Search explicitly requests them as part of its normal SearXNG engine ensemble. The separate direct Google/DuckDuckGo/Bing rescue pass is an additional fallback transport used only when aggregate primary coverage is unexpectedly sparse.
 
+## OCR.space recovery for public procurement PDFs
+
+If `ENABLE_OCR_SPACE=true` and the existing `OCR_API_KEY`, `OCR_API_KEY_2`, and `OCR_API_KEY_3` are set in Render, Ultra Search can recover text from **publicly accessible solicitation PDFs** that contain too little selectable text. A server-side PDF validation fetch must succeed first; documents are uploaded as PDF bytes to OCR.space using a POST header, **never by passing a sensitive source URL**. Private files, local documents, medical records, and non-procurement searches are excluded.
+
+The OCR.space free tier currently restricts each call to **1 MB** and **3 PDF pages**. Longer and larger PDFs are not sent to OCR.space. Existing local OCR remains an optional fallback when `ENABLE_OCR=true` and the PDF rasterizer is installed. OCR failure never validates or promotes a solicitation without substantive evidence.
+
+The three keys form a rotating pool: each key starts a subsequent request, a quota/authentication error blocks that account for the remainder of the *UTC* usage day, and failures try the next key within the bounded request timeout. Requests and successes are tracked in the application-owned Neon `ultra_search_ocr_key_usage` table by **SHA-256 key fingerprint**, not by plaintext key. Reservations are atomic across app instances and never exceed the local ceiling of **500 attempts per key per UTC day**; if the Neon accounting ledger is unavailable, external OCR fails closed. Provider-side anti-abuse and rate restrictions may be stricter, and the provider's actual reset time may differ from UTC; counts reset logically on the next UTC calendar day, not on app restart. Failed/timeout submissions count conservatively toward usage.
+
+API keys must be rotated if previously shared in screenshots. This integration does not use or alter any other provider's API keys.
+
 ## Live discovery sources
 
 ### SearXNG
