@@ -6,6 +6,18 @@ const dbSource = readFileSync(new URL('../src/lib/db.ts', import.meta.url), 'utf
 const storageSource = readFileSync(new URL('../src/lib/search-storage.ts', import.meta.url), 'utf8')
 const processingSource = readFileSync(new URL('../src/lib/search-candidate-processing.ts', import.meta.url), 'utf8')
 
+const bootstrapSource = readFileSync(new URL('../src/app/api/index/bootstrap/route.ts', import.meta.url), 'utf8')
+const nextConfigSource = readFileSync(new URL('../next.config.ts', import.meta.url), 'utf8')
+
+test('SAM.gov credentials stay server-side and index mutations require a bearer secret', () => {
+  assert.doesNotMatch(nextConfigSource, /SAM_GOV_API_KEY/)
+  assert.match(bootstrapSource, /if \(!secret\) return false/)
+  assert.match(bootstrapSource, /INDEX_BOOTSTRAP_SECRET/)
+  assert.match(bootstrapSource, /CRON_SECRET/)
+  assert.doesNotMatch(bootstrapSource, /searchParams\.get\('secret'\)/)
+  assert.match(bootstrapSource, /return header ===/)
+})
+
 test('database pool bounds connection, idle, query, and statement waits', () => {
   assert.match(dbSource, /connectionTimeoutMillis:\s*DATABASE_CONNECT_TIMEOUT_MS/)
   assert.match(dbSource, /idleTimeoutMillis:\s*DATABASE_IDLE_TIMEOUT_MS/)
